@@ -1,0 +1,22 @@
+KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE,OBS_STATUS,OBS_CONF,OBS_PRE_BREAK,OBS_COM,TIME_FORMAT,BREAKS,COLLECTION,COMPILING_ORG,DISS_ORG,DOM_SER_IDS,PUBL_ECB,PUBL_MU,PUBL_PUBLIC,UNIT_INDEX_BASE,COMPILATION,COVERAGE,DECIMALS,NAT_TITLE,SOURCE_AGENCY,SOURCE_PUB,TITLE,TITLE_COMPL,UNIT,UNIT_MULT
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-02,1.0321,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-03,1.0299,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-06,1.0426,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-07,1.0393,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-30,1.0420,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-01-31,1.0393,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2025-02-03,1.0255,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"US dollar/Euro","ECB reference exchange rate, US dollar/Euro, 2:15 pm (C.E.T.)",USD,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-02,6.3972,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-03,6.3524,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-06,6.3727,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-07,6.3418,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-30,6.0864,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-01-31,6.0682,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.BRL.EUR.SP00.A,D,BRL,EUR,SP00,A,2025-02-03,6.0251,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"Brazilian real/Euro","ECB reference exchange rate, Brazilian real/Euro, 2:15 pm (C.E.T.)",BRL,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-02,0.82850,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-03,0.83025,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-06,0.83193,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-07,0.83220,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-30,0.83603,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-01-31,0.83633,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0
+EXR.D.GBP.EUR.SP00.A,D,GBP,EUR,SP00,A,2025-02-03,0.83463,A,F,,,P1D,,A,,,,,,,,,,4,,4F0,,"UK pound sterling/Euro","ECB reference exchange rate, UK pound sterling/Euro, 2:15 pm (C.E.T.)",GBP,0

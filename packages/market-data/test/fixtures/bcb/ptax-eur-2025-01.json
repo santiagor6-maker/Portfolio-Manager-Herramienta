@@ -1,0 +1,133 @@
+{
+ "@odata.context": "https://was-p.bcnet.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata$metadata#_CotacaoMoedaPeriodo",
+ "value": [
+  {
+   "paridadeCompra": 1.0337,
+   "paridadeVenda": 1.0338,
+   "cotacaoCompra": 6.411,
+   "cotacaoVenda": 6.414,
+   "dataHoraCotacao": "2025-01-02 10:08:23.358",
+   "tipoBoletim": "Abertura"
+  },
+  {
+   "paridadeCompra": 1.0337,
+   "paridadeVenda": 1.0338,
+   "cotacaoCompra": 6.405,
+   "cotacaoVenda": 6.408,
+   "dataHoraCotacao": "2025-01-02 11:05:31.112",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0337,
+   "paridadeVenda": 1.0338,
+   "cotacaoCompra": 6.403,
+   "cotacaoVenda": 6.406,
+   "dataHoraCotacao": "2025-01-02 12:06:02.540",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0337,
+   "paridadeVenda": 1.0338,
+   "cotacaoCompra": 6.399,
+   "cotacaoVenda": 6.402,
+   "dataHoraCotacao": "2025-01-02 13:05:44.911",
+   "tipoBoletim": "Fechamento PTAX"
+  },
+  {
+   "paridadeCompra": 1.0295,
+   "paridadeVenda": 1.0296,
+   "cotacaoCompra": 6.3425,
+   "cotacaoVenda": 6.345,
+   "dataHoraCotacao": "2025-01-03 10:08:23.358",
+   "tipoBoletim": "Abertura"
+  },
+  {
+   "paridadeCompra": 1.0295,
+   "paridadeVenda": 1.0296,
+   "cotacaoCompra": 6.3365,
+   "cotacaoVenda": 6.339,
+   "dataHoraCotacao": "2025-01-03 11:05:31.112",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0295,
+   "paridadeVenda": 1.0296,
+   "cotacaoCompra": 6.3345,
+   "cotacaoVenda": 6.337,
+   "dataHoraCotacao": "2025-01-03 12:06:02.540",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0295,
+   "paridadeVenda": 1.0296,
+   "cotacaoCompra": 6.3305,
+   "cotacaoVenda": 6.333,
+   "dataHoraCotacao": "2025-01-03 13:05:44.911",
+   "tipoBoletim": "Fechamento PTAX"
+  },
+  {
+   "paridadeCompra": 1.043,
+   "paridadeVenda": 1.0431,
+   "cotacaoCompra": 6.376,
+   "cotacaoVenda": 6.3788,
+   "dataHoraCotacao": "2025-01-06 10:08:23.358",
+   "tipoBoletim": "Abertura"
+  },
+  {
+   "paridadeCompra": 1.043,
+   "paridadeVenda": 1.0431,
+   "cotacaoCompra": 6.37,
+   "cotacaoVenda": 6.3728,
+   "dataHoraCotacao": "2025-01-06 11:05:31.112",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.043,
+   "paridadeVenda": 1.0431,
+   "cotacaoCompra": 6.368,
+   "cotacaoVenda": 6.3708,
+   "dataHoraCotacao": "2025-01-06 12:06:02.540",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.043,
+   "paridadeVenda": 1.0431,
+   "cotacaoCompra": 6.364,
+   "cotacaoVenda": 6.3668,
+   "dataHoraCotacao": "2025-01-06 13:05:44.911",
+   "tipoBoletim": "Fechamento PTAX"
+  },
+  {
+   "paridadeCompra": 1.0381,
+   "paridadeVenda": 1.0382,
+   "cotacaoCompra": 6.068,
+   "cotacaoVenda": 6.071,
+   "dataHoraCotacao": "2025-01-31 10:08:23.358",
+   "tipoBoletim": "Abertura"
+  },
+  {
+   "paridadeCompra": 1.0381,
+   "paridadeVenda": 1.0382,
+   "cotacaoCompra": 6.062,
+   "cotacaoVenda": 6.065,
+   "dataHoraCotacao": "2025-01-31 11:05:31.112",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0381,
+   "paridadeVenda": 1.0382,
+   "cotacaoCompra": 6.06,
+   "cotacaoVenda": 6.063,
+   "dataHoraCotacao": "2025-01-31 12:06:02.540",
+   "tipoBoletim": "Intermedi\u00e1rio"
+  },
+  {
+   "paridadeCompra": 1.0381,
+   "paridadeVenda": 1.0382,
+   "cotacaoCompra": 6.056,
+   "cotacaoVenda": 6.059,
+   "dataHoraCotacao": "2025-01-31 13:05:44.911",
+   "tipoBoletim": "Fechamento PTAX"
+  }
+ ]
+}
