@@ -51,13 +51,17 @@ export const canonicalPreset: PresetDefinition = {
   description: 'Nuestra plantilla CSV: una fila por movimiento con columnas documentadas. Ida y vuelta sin pérdidas.',
   exportHelp: 'Descarga la plantilla desde Importar → Plantilla, llénala en Excel/Sheets y súbela (CSV UTF-8 o XLSX).',
   detect(table) {
-    const h = locateHeader(table, HEADER_GROUPS, 0.5, 5);
+    const h = locateHeader(table, HEADER_GROUPS, 0.15, 5);
     if (!h) return 0;
-    const must = h.header.has('date') && h.header.has('type') && h.header.has('currency');
-    return must ? Math.min(1, 0.6 + h.coverage * 0.4) : 0;
+    const must = ['date', 'type', 'currency'].every((c) => h.header.norm.includes(c));
+    if (!must) return 0;
+    // A subset of our columns (hand-edited template) is still our format.
+    const known = new Set(CANONICAL_COLUMNS.map((c) => c.column.replace(/_/g, ' ')));
+    const allKnown = h.header.norm.filter((x) => x !== '').every((x) => known.has(x));
+    return allKnown ? Math.min(1, 0.85 + h.coverage * 0.15) : h.coverage >= 0.5 ? 0.6 + h.coverage * 0.4 : 0;
   },
   parse(table, ctx) {
-    const h = locateHeader(table, HEADER_GROUPS, 0.3, 5);
+    const h = locateHeader(table, HEADER_GROUPS, 0.15, 5);
     if (!h) return [];
     const mapping: ColumnMapping = { headerRow: h.index, columns: {} };
     for (const col of CANONICAL_COLUMNS) {

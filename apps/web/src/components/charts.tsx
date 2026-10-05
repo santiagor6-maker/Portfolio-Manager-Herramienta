@@ -232,6 +232,8 @@ export function ReturnBars({
           name: t('chart.portfolio'),
           type: 'bar',
           barMaxWidth: 18,
+          // Bars are coloured per value (sign); the legend swatch stays neutral.
+          itemStyle: { color: tk.text2 },
           data: data.map((d) => ({
             value: d.twr,
             itemStyle: { color: d.twr >= 0 ? tk.pos : tk.neg, borderRadius: d.twr >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3] },

@@ -60,7 +60,7 @@ export const FIELD_SYNONYMS: Record<MappingField, string[]> = {
   currency: ['moneda', 'divisa', 'moeda', 'currency', 'ccy', 'currencyprimary', 'moneda de la operacion'],
   exchange: ['bolsa', 'exchange', 'venue', 'listing exchange', 'bolsa de referencia', 'listingexchange', 'mercado bolsa'],
   account: ['cuenta', 'conta', 'account', 'broker', 'corredor', 'comisionista', 'instituicao', 'institucion', 'corretora'],
-  note: ['nota', 'observacion', 'observaciones', 'notes', 'note', 'comentario', 'comentarios', 'memo', 'detalle'],
+  note: ['nota', 'observacion', 'observaciones', 'observacao', 'observacoes', 'obs', 'notes', 'note', 'comentario', 'comentarios', 'memo', 'detalle'],
   ratio: ['ratio', 'proporcion', 'factor', 'proporcao', 'split ratio'],
   assetClass: ['tipo de activo', 'clase de activo', 'asset class', 'categoria', 'tipo de ativo', 'asset type', 'assetclass'],
   instrumentId: ['instrument id', 'instrument_id', 'id activo', 'instrumentid'],

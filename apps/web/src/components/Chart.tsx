@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactEChartsCoreModule from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
 import { BarChart, HeatmapChart, LineChart, PieChart } from 'echarts/charts';
 import {
@@ -13,6 +13,10 @@ import {
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsOption } from 'echarts';
 import { useTheme } from '../hooks/useTheme';
+
+// The package ships CJS (`lib`) with `exports.default`; unwrap it for every bundler/interop mode.
+const ReactEChartsCore = ((ReactEChartsCoreModule as unknown as { default?: typeof ReactEChartsCoreModule }).default ??
+  ReactEChartsCoreModule) as typeof ReactEChartsCoreModule;
 
 echarts.use([
   LineChart,

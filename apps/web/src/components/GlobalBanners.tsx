@@ -26,7 +26,7 @@ export function GlobalBanners() {
           <Banner
             tone="warn"
             action={
-              <div className="flex gap-2 flex-wrap justify-end">
+              <div className="flex gap-2 flex-wrap sm:justify-end">
                 <button
                   className="btn btn-sm btn-primary"
                   onClick={async () => {

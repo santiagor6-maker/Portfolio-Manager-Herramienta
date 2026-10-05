@@ -109,18 +109,20 @@ export default function PositionsPage() {
       ),
     },
     {
-      id: 'valueLocal',
-      header: t('pos.valueLocal'),
-      align: 'right',
-      sortValue: (r) => r.marketValue,
-      cell: (r) => <Money value={r.marketValue} currency={r.currency} className="text-ink-2" />,
-    },
-    {
       id: 'value',
       header: t('pos.valueBase', { currency: f.currency }),
       align: 'right',
       sortValue: (r) => r.marketValueBase,
-      cell: (r) => <Money value={r.marketValueBase} className="font-semibold" />,
+      cell: (r) => (
+        <div>
+          <Money value={r.marketValueBase} className="font-semibold" />
+          {r.currency !== f.currency && (
+            <div className="text-[11px] text-muted">
+              <Money value={r.marketValue} currency={r.currency} />
+            </div>
+          )}
+        </div>
+      ),
       footer: <Money value={totalValue} />,
     },
     {

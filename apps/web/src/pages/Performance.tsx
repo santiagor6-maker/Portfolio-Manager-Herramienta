@@ -56,7 +56,11 @@ export default function PerformancePage() {
   }, [rows, benches.join(), t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ddSeries: LineSeries[] = useMemo(() => [{ name: t('perf.drawdown'), data: drawdowns(rows), area: true, tone: 'neg' }], [rows, t]);
-  const pctFmt = useCallback((v: number, axis?: boolean) => formatPct(v, f.locale, { decimals: axis ? 0 : 2, signed: !axis }), [f.locale]);
+  const pctFmt = useCallback(
+    (v: number, axis?: boolean) =>
+      formatPct(v, f.locale, { decimals: axis ? (v !== 0 && Math.abs(v) < 0.1 ? 1 : 0) : 2, signed: !axis }),
+    [f.locale],
+  );
 
   return (
     <div>
@@ -85,11 +89,11 @@ export default function PerformancePage() {
         {loading ? <Skeleton className="h-72" /> : cumSeries.length ? <LineChart series={cumSeries} valueFormat={pctFmt} ariaLabel={t('perf.cumulative')} height={300} scale={false} /> : <p className="text-muted text-sm text-center py-12">{t('common.noData')}</p>}
       </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
-        <Card title={t('perf.drawdown')} subtitle={t('perf.drawdownSub')}>
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-3 mt-3">
+        <Card className="xl:col-span-2" title={t('perf.drawdown')} subtitle={t('perf.drawdownSub')}>
           {loading ? <Skeleton className="h-56" /> : <LineChart series={ddSeries} valueFormat={pctFmt} ariaLabel={t('perf.drawdown')} height={230} scale={false} />}
         </Card>
-        <Card title={t('perf.periods')} bodyClassName="!p-0">
+        <Card className="xl:col-span-3" title={t('perf.periods')} bodyClassName="!p-0">
           <div className="overflow-x-auto">
             <table className="table">
               <thead>

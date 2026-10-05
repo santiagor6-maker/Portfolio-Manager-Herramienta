@@ -73,7 +73,10 @@ export default function MonthlyPage() {
     [rows, year],
   );
 
-  const last = rows[rows.length - 1];
+  const currentMonth = (a?.asOf ?? '').slice(0, 7);
+  // The KPI shows the last *closed* month; the running month is flagged "en curso" in the table.
+  const closedRows = rows.filter((r) => r.month < currentMonth);
+  const last = closedRows[closedRows.length - 1] ?? rows[rows.length - 1];
   const risk = a?.risk;
   const positive = rows.length ? rows.filter((r) => r.twr > 0).length / rows.length : undefined;
 
@@ -178,7 +181,7 @@ export default function MonthlyPage() {
           value={<Pct value={last?.twr} signed colored />}
           sub={<Money value={last?.gainBase} signed className="text-xs text-muted" />}
         />
-        <Kpi loading={loading} label={t('monthly.cumulative')} value={<Pct value={last?.cumulativeTwr} signed colored />} sub={<span className="text-xs text-muted">{t('monthly.sinceInception')}</span>} />
+        <Kpi loading={loading} label={t('monthly.cumulative')} value={<Pct value={rows[rows.length - 1]?.cumulativeTwr} signed colored />} sub={<span className="text-xs text-muted">{t('monthly.sinceInception')}</span>} />
         <Kpi
           loading={loading}
           label={t('monthly.best')}
@@ -230,7 +233,7 @@ export default function MonthlyPage() {
                 <tr>
                   <th className="text-left text-muted font-medium w-14 px-1">{t('monthly.year')}</th>
                   {Array.from({ length: 12 }, (_, i) => (
-                    <th key={i} className="text-muted font-medium capitalize">
+                    <th key={i} className="text-muted font-medium">
                       {monthName(i, f.locale)}
                     </th>
                   ))}
@@ -358,7 +361,10 @@ export default function MonthlyPage() {
                         </tr>
                       )}
                       <tr id={`m-${r.month}`} className={clsx(focus === r.month && '[&>td]:!bg-accent-soft')}>
-                        <td className="sticky left-0 bg-surface font-medium capitalize z-[1]">{formatMonth(r.month, f.locale)}</td>
+                        <td className="sticky left-0 bg-surface font-medium z-[1]">
+                          {formatMonth(r.month, f.locale)}
+                          {r.month === currentMonth && <span className="chip ml-2 !h-5">{t('monthly.inProgress')}</span>}
+                        </td>
                         <td className="r">
                           <Money value={r.startValueBase} className="text-ink-2" />
                         </td>

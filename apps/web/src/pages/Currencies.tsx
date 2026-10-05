@@ -99,8 +99,8 @@ export default function CurrenciesPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <Kpi loading={loading} label={t('fx.unrealized')} value={<Money value={unrealized} signed />} sub={<span className="text-xs text-muted">{t('fx.unrealizedSub')}</span>} />
-        <Kpi loading={loading} label={t('fx.fromPrice')} value={<Money value={priceGain} signed />} sub={<Pct value={unrealized ? priceGain / Math.abs(unrealized) : undefined} className="text-xs text-muted" decimals={0} />} />
-        <Kpi loading={loading} label={t('fx.fromFx')} value={<Money value={fxGain} signed />} sub={<Pct value={unrealized ? fxGain / Math.abs(unrealized) : undefined} className="text-xs text-muted" decimals={0} />} />
+        <Kpi loading={loading} label={t('fx.fromPrice')} value={<Money value={priceGain} signed />} sub={<span className="text-xs text-muted"><Pct value={unrealized ? priceGain / Math.abs(unrealized) : undefined} decimals={0} /> {t('fx.ofUnrealized')}</span>} />
+        <Kpi loading={loading} label={t('fx.fromFx')} value={<Money value={fxGain} signed />} sub={<span className="text-xs text-muted"><Pct value={unrealized ? fxGain / Math.abs(unrealized) : undefined} decimals={0} /> {t('fx.ofUnrealized')}</span>} />
         <Kpi
           loading={loading}
           label={t('fx.cumulativeSplit')}

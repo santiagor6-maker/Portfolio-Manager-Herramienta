@@ -149,13 +149,19 @@ export function formatDate(date: string | undefined, locale: string, style: 'sho
 /** "2025-03" → "mar 2025" / "Mar 2025". */
 export function formatMonth(month: string, locale: string, style: 'short' | 'long' = 'short'): string {
   const d = parseIso(`${month}-01`);
-  return df(locale, { month: style, year: 'numeric' }).format(d).replace('.', '');
+  return capitalize(df(locale, { month: style, year: 'numeric' }).format(d).replace('.', ''));
+}
+
+export function capitalize(s: string): string {
+  return s ? s.charAt(0).toLocaleUpperCase() + s.slice(1) : s;
 }
 
 export function monthName(monthIndex0: number, locale: string): string {
-  return df(locale, { month: 'short' })
-    .format(new Date(Date.UTC(2020, monthIndex0, 1)))
-    .replace('.', '');
+  return capitalize(
+    df(locale, { month: 'short' })
+      .format(new Date(Date.UTC(2020, monthIndex0, 1)))
+      .replace('.', ''),
+  );
 }
 
 export function formatDateTime(ts: number | undefined, locale: string): string {

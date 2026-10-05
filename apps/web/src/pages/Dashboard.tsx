@@ -9,8 +9,9 @@ import { seriesForPeriod, useAnalysis, useInstrumentLabel, type ChartPeriod } fr
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatRelative } from '../lib/format';
-import { addDays } from '../lib/ids';
+import { addDays, addMonths, monthEnd } from '../lib/ids';
 import { useInstrumentMap } from '../hooks/useData';
+import { previousBusinessDay } from '../services/analysis';
 import { benchmarkName } from '../lib/benchmarks';
 
 const DIMS: AllocationDimension[] = ['country', 'currency', 'assetClass', 'sector'];
@@ -32,6 +33,8 @@ export default function DashboardPage() {
   const ytd = a?.summaries.YTD;
   const si = a?.summaries.SI;
 
+  // Prices older than the previous business day: a "today" change would be meaningless.
+  const stalePrices = !!a?.latestPriceDate && a.latestPriceDate < previousBusinessDay(a.asOf);
   const periodSummary =
     period === 'MTD' ? mtd : period === 'YTD' ? ytd : period === '1Y' ? a?.summaries['1Y'] : period === '3Y' ? a?.summaries['3Y'] : si;
 
@@ -58,7 +61,9 @@ export default function DashboardPage() {
           label={t('dashboard.totalValue')}
           value={<Money value={v?.totalMarketValueBase} />}
           sub={
-            day ? (
+            stalePrices && a?.latestPriceDate ? (
+              <span className="text-muted text-xs">{t('dashboard.pricesAsOf', { date: formatDate(a.latestPriceDate, f.locale) })}</span>
+            ) : day ? (
               <span className="flex items-center gap-1.5">
                 <Delta amount={day.gainBase} pct={day.twr} size="sm" />
                 <span className="text-muted text-xs">{t('dashboard.today')}</span>
@@ -168,7 +173,10 @@ export default function DashboardPage() {
           )}
         </Card>
 
-        <Card title={t('dashboard.movers')} subtitle={t('dashboard.moversSub')}>
+        <Card
+          title={t('dashboard.movers')}
+          subtitle={a?.movers[0] ? t('dashboard.moversSub', { date: formatDate(a.movers[0].date, f.locale) }) : undefined}
+        >
           {loading ? (
             <Skeleton className="h-[200px]" />
           ) : a?.movers.length ? (
@@ -328,7 +336,8 @@ function WarningsCard() {
   const issues = [...(a?.issues.errors ?? []), ...(a?.issues.warnings ?? [])];
   const manualStale = (a?.valuation?.holdings ?? []).filter((h) => {
     const inst = map.get(h.instrumentId);
-    return inst?.pricing === 'manual' && h.priceDate && h.priceDate < addDays(a!.asOf, -35);
+    // Manual prices are due at every month end: flag when the last closed month has none.
+    return inst?.pricing === 'manual' && h.priceDate && h.priceDate < monthEnd(addMonths(a!.asOf.slice(0, 7), -1));
   });
   const total = missing.length + missingFx.length + issues.length + manualStale.length + market.failedSymbols.length;
   return (

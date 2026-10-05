@@ -13,7 +13,6 @@ import { deleteTransactions } from '../db/repo';
 import type { StoredTransaction } from '../db/schema';
 import { formatDate, formatMoney, formatPrice, formatQuantity } from '../lib/format';
 import { downloadText } from '../lib/export';
-import { exportTransactionsCsv } from '../services/importers';
 
 const TYPE_TONE: Partial<Record<TransactionType, string>> = {
   BUY: 'bg-info-soft text-info border-info/25',
@@ -92,7 +91,9 @@ export default function TransactionsPage() {
   const visible = filtered.slice(0, limit);
   const held = (id: string) => analysis?.valuation?.holdings.find((h) => h.instrumentId === id)?.quantity ?? 0;
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    // Lazy: the importers package (CSV/XLSX parsers) is only needed here and in /importar.
+    const { exportTransactionsCsv } = await import('../services/importers');
     downloadText('movimientos.csv', exportTransactionsCsv(filtered, [...map.values()], { bom: true }), 'text/csv');
   };
 
@@ -106,7 +107,7 @@ export default function TransactionsPage() {
         subtitle={txs ? t('tx.subtitle', { count: txs.length }) : undefined}
         actions={
           <>
-            <button className="btn" onClick={exportCsv} disabled={!filtered.length}>
+            <button className="btn" onClick={() => void exportCsv()} disabled={!filtered.length}>
               <Download size={15} /> CSV
             </button>
             <button

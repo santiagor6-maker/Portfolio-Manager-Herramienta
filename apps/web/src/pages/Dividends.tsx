@@ -59,7 +59,7 @@ export default function DividendsPage() {
   const byCountry = useMemo(() => {
     const m = new Map<string, { gross: number; taxes: number; net: number }>();
     for (const e of yearEvents) {
-      const c = label(e.instrumentId).inst?.country ?? '—';
+      const c = e.instrumentId ? (label(e.instrumentId).inst?.country ?? '—') : 'CASH';
       const r = m.get(c) ?? { gross: 0, taxes: 0, net: 0 };
       const b = toBase(e);
       r.gross += b.grossBase;
@@ -165,7 +165,13 @@ export default function DividendsPage() {
               {byCountry.map(([c, r]) => (
                 <tr key={c}>
                   <td>
-                    <span aria-hidden>{flagEmoji(c)}</span> {countryName(c, f.locale)}
+                    {c === 'CASH' ? (
+                      t('div.cashInterest')
+                    ) : (
+                      <>
+                        <span aria-hidden>{flagEmoji(c)}</span> {countryName(c, f.locale)}
+                      </>
+                    )}
                   </td>
                   <td className="r">
                     <Money value={r.gross} />

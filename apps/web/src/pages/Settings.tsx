@@ -35,9 +35,11 @@ export default function SettingsPage() {
       <PageHeader title={t('settings.title')} subtitle={t('settings.subtitle')} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Preferences />
-        <DataSource />
+        <div className="flex flex-col gap-3">
+          <DataSource />
+          <Backup />
+        </div>
         <Portfolios />
-        <Backup />
       </div>
     </div>
   );
@@ -176,6 +178,7 @@ function Portfolios() {
   return (
     <Card
       id="portafolios"
+      className="xl:col-span-2"
       title={t('settings.portfolios')}
       actions={
         <button
@@ -197,8 +200,8 @@ function Portfolios() {
       <ul className="flex flex-col gap-3">
         {portfolios.map((p) => (
           <li key={p.id} className="rounded-lg border border-line p-3">
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
-              <div className="col-span-2 sm:col-span-2">
+            <div className="grid grid-cols-2 sm:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto] gap-2 items-end">
+              <div className="col-span-2 sm:col-span-1">
                 <label className="label" htmlFor={`pn-${p.id}`}>
                   {t('settings.name')} {p.isDemo && <DemoBadge />}
                 </label>

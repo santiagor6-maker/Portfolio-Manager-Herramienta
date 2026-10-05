@@ -229,7 +229,7 @@ export async function seedData(data: SeedData, isDemo: boolean): Promise<void> {
 
 /** Removes the sample portfolio(s) and their transactions; keeps user data. */
 export async function removeDemoData(): Promise<void> {
-  await db.transaction('rw', [db.portfolios, db.transactions, db.instruments], async () => {
+  await db.transaction('rw', [db.portfolios, db.transactions, db.instruments, db.manualPrices], async () => {
     const demos = await db.portfolios.filter((p) => !!p.isDemo).toArray();
     for (const p of demos) {
       await db.transactions.where('portfolioId').equals(p.id).delete();
@@ -238,7 +238,9 @@ export async function removeDemoData(): Promise<void> {
     // Drop demo instruments no longer referenced by any transaction.
     const used = new Set((await db.transactions.toArray()).map((t) => t.instrumentId).filter(Boolean));
     const demoInstruments = await db.instruments.filter((i) => !!i.isDemo).toArray();
-    await db.instruments.bulkDelete(demoInstruments.filter((i) => !used.has(i.id)).map((i) => i.id));
+    const orphaned = demoInstruments.filter((i) => !used.has(i.id)).map((i) => i.id);
+    await db.instruments.bulkDelete(orphaned);
+    if (orphaned.length) await db.manualPrices.where('instrumentId').anyOf(orphaned).delete();
   });
 }
 

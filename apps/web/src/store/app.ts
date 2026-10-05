@@ -57,7 +57,9 @@ export const useApp = create<AppState>((set) => ({
 /** Convenience hook: everything a formatted figure needs. */
 export function useFmt() {
   const language = useApp((s) => s.settings.language);
-  const currency = useApp((s) => s.settings.reportingCurrency);
+  // Figures come from the analysis: label them with the currency they were computed in, so a
+  // switch never shows old numbers with the new currency symbol while the worker recomputes.
+  const currency = useApp((s) => s.analysis?.baseCurrency ?? s.settings.reportingCurrency);
   const privacy = useApp((s) => s.settings.privacy);
   return { locale: LOCALE_BY_LANG[language], currency, privacy, language };
 }

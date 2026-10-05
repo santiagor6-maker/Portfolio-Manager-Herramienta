@@ -56,6 +56,8 @@ export interface SeriesPoint {
 
 export interface Mover {
   instrumentId: string;
+  /** Date of the latest price; the change is versus the previous available close. */
+  date: ISODate;
   changePct: number;
   changeBase: number;
   price: number;
@@ -81,6 +83,8 @@ export interface Analysis {
   income: IncomeEvent[];
   realized: RealizedGain[];
   movers: Mover[];
+  /** Most recent price date across holdings (to flag stale data). */
+  latestPriceDate?: ISODate;
   issues: { errors: ValidationIssue[]; warnings: ValidationIssue[] };
   /** Engine failures by step (e.g. "monthlyPerformance not implemented yet"). */
   engineErrors: Record<string, string>;
@@ -89,7 +93,7 @@ export interface Analysis {
 
 const ALLOCATION_DIMS: AllocationDimension[] = ['country', 'currency', 'assetClass', 'sector', 'account', 'instrument'];
 
-function previousBusinessDay(date: ISODate): ISODate {
+export function previousBusinessDay(date: ISODate): ISODate {
   let d = addDays(date, -1);
   for (let i = 0; i < 4; i++) {
     const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
@@ -242,7 +246,11 @@ export function computeAnalysis(ds: Dataset): Analysis {
       const a = attempt(`allocation.${dim}`, () => core.allocation(valuation, ds.instruments, dim));
       if (a) out.allocations[dim] = a;
     }
-    out.movers = computeMovers(valuation, market, ds.asOf, prev, ds.reportingCurrency);
+    out.movers = computeMovers(valuation, ds, market);
+    out.latestPriceDate = valuation.holdings.reduce<string | undefined>(
+      (m, h) => (h.priceDate && (!m || h.priceDate > m) ? h.priceDate : m),
+      undefined,
+    );
   }
 
   out.income = attempt('incomeEvents', () => core.incomeEvents(input)) ?? [];
@@ -251,20 +259,29 @@ export function computeAnalysis(ds: Dataset): Analysis {
   return finish(out, t0);
 }
 
-function computeMovers(v: Valuation, market: MarketData, asOf: ISODate, prev: ISODate, base: CurrencyCode): Mover[] {
+function computeMovers(v: Valuation, ds: Dataset, market: MarketData): Mover[] {
+  // Change between each holding's last two available closes (manual prices override provider).
+  const series = new Map<string, Map<string, number>>();
+  for (const s of [...ds.prices, ...ds.manualPrices]) {
+    const m = series.get(s.instrumentId) ?? new Map<string, number>();
+    for (const p of s.points) if (p.date <= ds.asOf) m.set(p.date, p.close);
+    series.set(s.instrumentId, m);
+  }
   const movers: Mover[] = [];
   for (const h of v.holdings) {
     if (!h.quantity) continue;
-    const price = market.price(h.instrumentId, asOf);
-    const prevPrice = market.price(h.instrumentId, prev);
-    if (price === undefined || prevPrice === undefined || prevPrice === 0) continue;
-    const fx = market.fx(h.currency, base, asOf) ?? 0;
+    const pts = [...(series.get(h.instrumentId)?.entries() ?? [])].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const last = pts[pts.length - 1];
+    const prev = pts[pts.length - 2];
+    if (!last || !prev || !prev[1]) continue;
+    const fx = market.fx(h.currency, ds.reportingCurrency, last[0]) ?? 0;
     movers.push({
       instrumentId: h.instrumentId,
-      price,
-      prevPrice,
-      changePct: price / prevPrice - 1,
-      changeBase: (price - prevPrice) * h.quantity * fx,
+      date: last[0],
+      price: last[1],
+      prevPrice: prev[1],
+      changePct: last[1] / prev[1] - 1,
+      changeBase: (last[1] - prev[1]) * h.quantity * fx,
     });
   }
   return movers.sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));

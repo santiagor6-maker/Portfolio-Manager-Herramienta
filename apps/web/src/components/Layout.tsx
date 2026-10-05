@@ -221,6 +221,11 @@ function IconToggles() {
 export function Layout() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const stale = useApp(
+    (s) =>
+      !!s.analysis &&
+      (s.analysis.baseCurrency !== s.settings.reportingCurrency || s.analysis.portfolioId !== s.settings.selectedPortfolioId),
+  );
   const loc = useLocation();
   useTheme();
   useEffect(() => {
@@ -279,7 +284,12 @@ export function Layout() {
             </div>
           </div>
         </header>
-        <main id="main" tabIndex={-1} className="px-4 lg:px-8 py-6 max-w-[1440px] mx-auto outline-none">
+        <main
+          id="main"
+          tabIndex={-1}
+          aria-busy={stale}
+          className={clsx('px-4 lg:px-8 py-6 max-w-[1440px] mx-auto outline-none transition-opacity', stale && 'opacity-60')}
+        >
           <GlobalBanners />
           <Outlet />
         </main>

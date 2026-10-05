@@ -251,7 +251,7 @@ function BrazilView({ r, money }: { r: TaxReports; money: MoneyFn }) {
             <tbody>
               {a.months.map((m) => (
                 <tr key={m.month}>
-                  <td className="capitalize">{formatMonth(m.month, f.locale)}</td>
+                  <td>{formatMonth(m.month, f.locale)}</td>
                   <td className="r num">{money(m.salesAcoesSwing, 'BRL')}</td>
                   <td>{m.exempt ? <span className="chip !text-pos">{t('common.yes')}</span> : <span className="chip">{t('common.no')}</span>}</td>
                   <td className="r num">{money(m.comum.result, 'BRL')}</td>

@@ -217,7 +217,7 @@ export function Banner({
     <div
       role={tone === 'error' ? 'alert' : 'status'}
       className={clsx(
-        'flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-[13px]',
+        'flex flex-wrap sm:flex-nowrap items-start gap-2.5 rounded-lg border px-3 py-2.5 text-[13px]',
         tone === 'info' && 'bg-info-soft border-info/30 text-ink',
         tone === 'warn' && 'bg-warn-soft border-warn/30 text-ink',
         tone === 'error' && 'bg-neg-soft border-neg/30 text-ink',
@@ -235,8 +235,8 @@ export function Banner({
           tone === 'success' && 'text-pos',
         )}
       />
-      <div className="flex-1 min-w-0">{children}</div>
-      {action}
+      <div className="flex-1 min-w-[200px]">{children}</div>
+      {action && <div className="w-full sm:w-auto pl-[26px] sm:pl-0">{action}</div>}
       {onClose && (
         <button className="btn btn-ghost btn-sm btn-icon -my-1" onClick={onClose} aria-label={t('common.close')}>
           <X size={14} />

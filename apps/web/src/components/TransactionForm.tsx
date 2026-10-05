@@ -11,9 +11,10 @@ import { formatMoney } from '../lib/format';
 import { todayIso } from '../lib/ids';
 import { useFmt, useApp } from '../store/app';
 import { useInstrumentMap, usePortfolios } from '../hooks/useData';
-import { saveTransaction, upsertInstruments } from '../db/repo';
+import { createPortfolio, saveTransaction, upsertInstruments } from '../db/repo';
 import type { StoredTransaction } from '../db/schema';
 
+const NEW_PORTFOLIO = '__new';
 const QUICK: TransactionType[] = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FX_CONVERSION'];
 const OTHER: TransactionType[] = ['INTEREST', 'FEE', 'TAX', 'SPLIT', 'STOCK_DIVIDEND', 'TRANSFER_IN', 'TRANSFER_OUT', 'RETURN_OF_CAPITAL'];
 const MANUAL_CLASSES: AssetClass[] = ['fund', 'fixed_income', 'bond', 'equity', 'etf', 'reit', 'crypto', 'commodity', 'other'];
@@ -48,11 +49,17 @@ export function TransactionForm({
   const portfolios = usePortfolios();
   const instruments = useInstrumentMap();
   const selected = useApp((s) => s.settings.selectedPortfolioId);
+  const defaultCostMethod = useApp((s) => s.settings.defaultCostMethod);
+  const setSelected = useApp((s) => s.setSetting);
+  // With only the sample portfolio present, the first real transaction goes to a new portfolio.
   const defaultPortfolio =
-    portfolios.find((p) => p.id === selected)?.id ?? portfolios.find((p) => !p.isDemo)?.id ?? portfolios[0]?.id ?? '';
+    portfolios.find((p) => p.id === selected && !p.isDemo)?.id ?? portfolios.find((p) => !p.isDemo)?.id ?? NEW_PORTFOLIO;
 
   const [type, setType] = useState<TransactionType>('BUY');
-  const [portfolioId, setPortfolioId] = useState(defaultPortfolio);
+  const [portfolioChoice, setPortfolioId] = useState(defaultPortfolio);
+  // The live query may resolve after the form opens: fall back to the default until the choice is valid.
+  const portfolioId =
+    portfolioChoice === NEW_PORTFOLIO || portfolios.some((p) => p.id === portfolioChoice) ? portfolioChoice : defaultPortfolio;
   const [date, setDate] = useState(todayIso());
   const [instrument, setInstrument] = useState<Instrument>();
   const [currency, setCurrency] = useState(f.currency);
@@ -135,9 +142,21 @@ export function TransactionForm({
     try {
       const inst = draft.instrument;
       if (inst && !instruments.has(inst.id)) await upsertInstruments([inst]);
+      let targetPortfolio = portfolioId;
+      if (targetPortfolio === NEW_PORTFOLIO) {
+        const p = await createPortfolio({
+          name: t('portfolio.defaultName'),
+          baseCurrency: f.currency,
+          costMethod: defaultCostMethod,
+          taxResidence: f.currency === 'BRL' ? 'BR' : 'CO',
+          createdAt: date,
+        });
+        targetPortfolio = p.id;
+        setSelected('selectedPortfolioId', p.id);
+      }
       const row: Omit<StoredTransaction, 'id'> & { id?: string } = {
         id: editing?.id,
-        portfolioId,
+        portfolioId: targetPortfolio,
         type,
         date,
         currency,
@@ -255,6 +274,7 @@ export function TransactionForm({
                   {p.isDemo ? ` (${t('demo.badge')})` : ''}
                 </option>
               ))}
+              <option value={NEW_PORTFOLIO}>+ {t('tx.newPortfolio', { name: t('portfolio.defaultName') })}</option>
             </select>
           </Field>
           <Field label={t('tx.date')} htmlFor="f-date" error={showErr('date')}>
