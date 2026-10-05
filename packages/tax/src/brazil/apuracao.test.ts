@@ -83,7 +83,7 @@ describe('apuração mensal — ações e isenção R$ 20 mil', () => {
     // Mar: sales 25,000 > 20,000 -> taxable gain 24,990 - 5,000 = 19,990
     tx({ date: '2025-03-12', type: 'SELL', instrumentId: I.PETR4.id, quantity: 500, price: 50, fees: 10, currency: B }),
   ];
-  const r = brazilMonthlyApuracao(input(txs), { year: 2025 });
+  const r = brazilMonthlyApuracao(input(txs), { year: 2025, creditEstimatedIrrf: true });
   const m = (ym: string) => r.months.find((x) => x.month === ym)!;
 
   it('month under R$ 20k is exempt', () => {
@@ -146,7 +146,7 @@ describe('day trade', () => {
       tx({ date: '2025-05-05', type: 'BUY', instrumentId: I.VALE3.id, quantity: 100, price: 60, currency: B, account: 'XP' }),
       tx({ date: '2025-05-05', type: 'SELL', instrumentId: I.VALE3.id, quantity: 100, price: 62, currency: B, account: 'XP' }),
     ];
-    const r = brazilMonthlyApuracao(input(txs), { year: 2025 });
+    const r = brazilMonthlyApuracao(input(txs), { year: 2025, creditEstimatedIrrf: true });
     const may = r.months.find((x) => x.month === '2025-05')!;
     expect(may.results.dayTrade).toBeCloseTo(200, 8);
     expect(may.dayTrade.tax).toBeCloseTo(40, 8);
@@ -218,7 +218,7 @@ describe('loss carryforward', () => {
         tx({ date: '2025-02-10', type: 'SELL', instrumentId: I.BOVA11.id, quantity: 500, price: 90, currency: B }),
         tx({ date: '2025-03-10', type: 'SELL', instrumentId: I.BOVA11.id, quantity: 500, price: 120, currency: B }),
       ]),
-      { year: 2025 },
+      { year: 2025, creditEstimatedIrrf: true },
     );
     const feb = r.months.find((m) => m.month === '2025-02')!;
     const mar = r.months.find((m) => m.month === '2025-03')!;

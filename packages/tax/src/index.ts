@@ -13,6 +13,7 @@
 export * from './common/types';
 export { TAX_DISCLAIMER } from './common/disclaimer';
 export { toCsv, type CsvOptions, type CsvCell } from './common/csv';
+export * from './common/basis';
 export { lastBrazilBusinessDayOfMonth, brazilBankHolidays, addYears } from './common/dates';
 
 export * from './colombia/config';
@@ -23,6 +24,7 @@ export * from './brazil/config';
 export * from './brazil/classify';
 export * from './brazil/ledger';
 export * from './brazil/apuracao';
+export * from './brazil/darf';
 export * from './brazil/proventos';
 export * from './brazil/exterior';
 export * from './brazil/bensDireitos';

@@ -1,11 +1,22 @@
 import type { ISODate, YearMonth } from '@pm/core';
+import type { TransferBasisMap } from '../common/basis';
 import { lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthRange, nextMonth } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { round2, sum } from '../common/util';
-import type { BrCategory } from './classify';
+import { isApuracaoCategory, type BrCategory } from './classify';
 import { brazilConfig, type BrazilTaxYearConfig } from './config';
-import { runBrazilB3Ledger, type BrTrade } from './ledger';
+import {
+  darfLateCharges,
+  darfPaymentsFromTransactions,
+  matchDarfPayments,
+  sicalcData,
+  type DarfLateCharges,
+  type DarfPayment,
+  type DarfStatus,
+  type SicalcData,
+} from './darf';
+import { runBrazilB3Ledger, type BrShortPosition, type BrTrade } from './ledger';
 
 export interface BrApuracaoOptions {
   /** Shortcut for from = `${year}-01`, to = `${year}-12`. */
@@ -15,8 +26,21 @@ export interface BrApuracaoOptions {
   /** Losses accumulated before the first recorded transaction (e.g. from a previous tool). */
   initialLosses?: { comum?: number; dayTrade?: number; fii?: number };
   categoryOverrides?: Record<string, BrCategory>;
+  transferBasis?: TransferBasisMap;
   /** Override yearly parameters. */
   config?: (year: number) => BrazilTaxYearConfig;
+  /**
+   * Credit the IRRF "dedo-duro" estimated when the broker did not report it. Default false: an
+   * estimate is shown but not credited, so the DARF is never reduced by a withholding that may
+   * not have happened.
+   */
+  creditEstimatedIrrf?: boolean;
+  /** Reference date for DARF status (pendente / vencida). */
+  asOf?: ISODate;
+  /** DARF payments; TAX transactions in BRL with "DARF"/"6015" in the note are also used. */
+  payments?: DarfPayment[];
+  /** Monthly Selic (decimal) for late-payment interest, e.g. { '2026-01': 0.0116 } (BCB series 4390). */
+  selicMonthly?: Record<YearMonth, number>;
 }
 
 export interface BrPoolResult {
@@ -41,6 +65,11 @@ export interface BrDarf {
   dueDate: ISODate;
   /** Months whose sub-R$10 tax was rolled into this DARF. */
   includesMonths: YearMonth[];
+  status: DarfStatus;
+  payment?: DarfPayment;
+  /** Late charges for the recorded payment, or for paying on `asOf` when overdue and unpaid. */
+  late?: DarfLateCharges;
+  sicalc: SicalcData;
 }
 
 export interface BrMonthRow {
@@ -50,12 +79,32 @@ export interface BrMonthRow {
   exempt: boolean;
   /** Positive net result of shares exempt under Lei 11.033 art. 3º I (DIRPF isentos). */
   exemptGain: number;
-  results: { acoes: number; etf: number; bdr: number; dayTrade: number; fii: number };
+  results: {
+    acoes: number;
+    /** Short sales of shares bought back this month (never exempt — conservative). */
+    acoesShortCover: number;
+    etf: number;
+    bdr: number;
+    opcoes: number;
+    direitos: number;
+    dayTrade: number;
+    fii: number;
+  };
   comum: BrPoolResult;
   dayTrade: BrPoolResult;
   fii: BrPoolResult;
   taxGross: number;
-  irrf: { month: number; estimated: boolean; carryIn: number; used: number; carryOut: number };
+  irrf: {
+    /** IRRF credited this month (reported + estimates when allowed). */
+    month: number;
+    reported: number;
+    estimate: number;
+    estimated: boolean;
+    estimateCredited: boolean;
+    carryIn: number;
+    used: number;
+    carryOut: number;
+  };
   taxAfterIrrf: number;
   /** Tax below the DARF minimum carried from previous months. */
   pendingIn: number;
@@ -71,10 +120,13 @@ export interface BrApuracaoReport {
   to: YearMonth;
   months: BrMonthRow[];
   darfs: BrDarf[];
-  totals: { taxGross: number; irrfUsed: number; darfTotal: number; exemptGain: number };
+  totals: { taxGross: number; irrfUsed: number; darfTotal: number; exemptGain: number; darfOpen: number };
   lossesAtEnd: { comum: number; dayTrade: number; fii: number };
   /** IRRF not offset within each calendar year (can be used in the DIRPF annual adjustment). */
   irrfUnusedByYear: Record<number, number>;
+  /** Fixed-income ETF trades (taxed at source by the fund; informative). */
+  etfRendaFixaTrades: BrTrade[];
+  openShorts: BrShortPosition[];
   assumptions: string[];
   issues: TaxIssue[];
 }
@@ -95,8 +147,9 @@ function applyPool(result: number, carryIn: number, rate: number): BrPoolResult 
 
 /**
  * Monthly apuração of capital gains on B3 (IN RFB 1.585/2015 arts. 56-71): ações (R$ 20k exemption),
- * ETFs, BDRs (15%), day trade (20%), FIIs (20%), with separate loss carryforward pools, IRRF credit,
- * DARF 6015 due on the last business day of the following month and the R$ 10 minimum rollover.
+ * ETFs, BDRs, options and rights (15%), day trade (20%), FIIs (20%), with separate loss
+ * carryforward pools, IRRF credit, DARF 6015 due on the last bank business day of the following
+ * month, the R$ 10 minimum rollover, payment status and late charges.
  */
 export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions = {}): BrApuracaoReport {
   const cfgOf = opts.config ?? brazilConfig;
@@ -104,9 +157,20 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
   const ledger = runBrazilB3Ledger(input, {
     until: to ? lastDayOfMonth(to) : undefined,
     categoryOverrides: opts.categoryOverrides,
+    transferBasis: opts.transferBasis,
   });
   const issues: TaxIssue[] = [...ledger.issues];
-  const trades = ledger.trades;
+  const trades = ledger.trades.filter((t) => isApuracaoCategory(t.category));
+  const etfRf = ledger.trades.filter((t) => t.category === 'ETF_RF');
+  if (etfRf.length) {
+    issues.push({
+      level: 'info',
+      code: 'ETF_RF_WITHHELD_AT_SOURCE',
+      message:
+        'Vendas de ETF de renda fixa: o IR é retido na fonte (Lei 13.043/2014 art. 2º, alíquota conforme o prazo médio da carteira); ' +
+        'não entram na apuração mensal nem em DARF. Declare em Tributação Exclusiva e Bens e Direitos 07-08.',
+    });
+  }
   const firstTradeMonth = trades.map((t) => t.month).sort()[0];
   const lastTradeMonth = trades.map((t) => t.month).sort().pop();
   const from = opts.from ?? (opts.year ? `${opts.year}-01` : (firstTradeMonth ?? '1970-01'));
@@ -129,6 +193,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
   const rows: BrMonthRow[] = [];
   const irrfUnusedByYear: Record<number, number> = {};
   const warnedYears = new Set<number>();
+  const creditEstimate = opts.creditEstimatedIrrf ?? false;
 
   for (const month of monthRange(start, end)) {
     const year = Number(month.slice(0, 4));
@@ -147,17 +212,22 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     }
     const mt = byMonth.get(month) ?? [];
     const sw = (c: BrCategory) => mt.filter((t) => t.kind === 'swing' && t.category === c);
+    const acoesRegular = sw('ACAO').filter((t) => !t.shortCover);
+    const acoesShort = sw('ACAO').filter((t) => t.shortCover);
 
-    const salesAcoesSwing = sum(sw('ACAO').map((t) => t.grossSales));
+    const salesAcoesSwing = sum(acoesRegular.map((t) => t.grossSales));
     const exempt = salesAcoesSwing <= cfg.stockSalesExemptionLimit;
-    const acoes = sum(sw('ACAO').map((t) => t.result));
+    const acoesReg = sum(acoesRegular.map((t) => t.result));
+    const acoesShortCover = sum(acoesShort.map((t) => t.result));
     const etf = sum(sw('ETF').map((t) => t.result));
     const bdr = sum(sw('BDR').map((t) => t.result));
+    const opcoes = sum(sw('OPCAO').map((t) => t.result));
+    const direitos = sum(sw('DIREITO').map((t) => t.result));
     const dayTrade = sum(mt.filter((t) => t.kind === 'daytrade' && t.category !== 'FII').map((t) => t.result));
     const fii = sum(mt.filter((t) => t.category === 'FII').map((t) => t.result));
-    const exemptGain = exempt && acoes > 0 ? acoes : 0;
+    const exemptGain = exempt && acoesReg > 0 ? acoesReg : 0;
 
-    const comumResult = (exempt ? Math.min(0, acoes) : acoes) + etf + bdr;
+    const comumResult = (exempt ? Math.min(0, acoesReg) : acoesReg) + acoesShortCover + etf + bdr + opcoes + direitos;
     const comum = applyPool(comumResult, lossComum, cfg.swingRate);
     const dt = applyPool(dayTrade, lossDt, cfg.dayTradeRate);
     if (cfg.commonLossOffsetsDayTrade && dt.base > 0 && comum.lossCarryOut > 0) {
@@ -173,7 +243,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     lossFii = fiiPool.lossCarryOut;
     const taxGross = comum.tax + dt.tax + fiiPool.tax;
 
-    // IRRF: reported by the broker when available, otherwise estimated.
+    // IRRF: reported by the broker when available, otherwise estimated (credited only on request).
     const swingTrades = mt.filter((t) => t.kind === 'swing');
     const reportedSwing = sum(swingTrades.filter((t) => t.irrfReported !== undefined).map((t) => t.irrfReported!));
     const estSwingBase = sum(swingTrades.filter((t) => t.irrfReported === undefined).map((t) => t.grossSales));
@@ -186,7 +256,9 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       dtByDay.set(t.date, (dtByDay.get(t.date) ?? 0) + t.result);
     }
     const estDt = sum([...dtByDay.values()].map((r) => Math.max(0, r) * cfg.irrfDayTradeRate));
-    const irrfMonth = reportedSwing + estSwing + reportedDt + estDt;
+    const reported = reportedSwing + reportedDt;
+    const estimate = estSwing + estDt;
+    const irrfMonth = reported + (creditEstimate ? estimate : 0);
     const irrfAvail = irrfMonth + irrfCarry;
     const irrfUsed = Math.min(taxGross, irrfAvail);
     const irrfCarryIn = irrfCarry;
@@ -197,13 +269,18 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     const total = taxAfterIrrf + pending;
     let darf: BrDarf | undefined;
     if (total > 0 && round2(total) >= cfg.darfMinimum) {
+      const periodoApuracao = lastDayOfMonth(month);
+      const dueDate = lastBrazilBusinessDayOfMonth(nextMonth(month));
+      const amount = round2(total);
       darf = {
         month,
-        periodoApuracao: lastDayOfMonth(month),
+        periodoApuracao,
         code: cfg.darfCode,
-        amount: round2(total),
-        dueDate: lastBrazilBusinessDayOfMonth(nextMonth(month)),
+        amount,
+        dueDate,
         includesMonths: [...pendingMonths, month],
+        status: 'pendente',
+        sicalc: sicalcData(cfg.darfCode, periodoApuracao, dueDate, amount),
       };
       pending = 0;
       pendingMonths = [];
@@ -217,12 +294,21 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       salesAcoesSwing,
       exempt,
       exemptGain,
-      results: { acoes, etf, bdr, dayTrade, fii },
+      results: { acoes: acoesReg + acoesShortCover, acoesShortCover, etf, bdr, opcoes, direitos, dayTrade, fii },
       comum,
       dayTrade: dt,
       fii: fiiPool,
       taxGross,
-      irrf: { month: irrfMonth, estimated: estSwing + estDt > 0, carryIn: irrfCarryIn, used: irrfUsed, carryOut: irrfCarry },
+      irrf: {
+        month: irrfMonth,
+        reported,
+        estimate,
+        estimated: estimate > 0,
+        estimateCredited: creditEstimate && estimate > 0,
+        carryIn: irrfCarryIn,
+        used: irrfUsed,
+        carryOut: irrfCarry,
+      },
       taxAfterIrrf,
       pendingIn,
       darf,
@@ -237,6 +323,50 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       code: 'DARF_PENDING_BELOW_MINIMUM',
       message: `Imposto de R$ ${pending.toFixed(2)} abaixo do mínimo de DARF (R$ 10,00) acumulado para os meses seguintes.`,
     });
+  }
+  if (rows.some((r) => r.irrf.estimate > 0 && !r.irrf.estimateCredited)) {
+    issues.push({
+      level: 'info',
+      code: 'IRRF_ESTIMATE_NOT_CREDITED',
+      message:
+        'IRRF "dedo-duro" estimado (a corretora não o informou) não foi abatido do DARF. Confira a nota de corretagem e registre ' +
+        'o valor no campo de impostos da venda, ou ative creditEstimatedIrrf.',
+    });
+  }
+
+  // DARF payment status and late charges.
+  const allDarfs = rows.flatMap((r) => (r.darf ? [r.darf] : []));
+  const payments = [...(opts.payments ?? []), ...darfPaymentsFromTransactions(input.transactions)];
+  const matched = matchDarfPayments(allDarfs, payments);
+  for (const d of allDarfs) {
+    const p = matched.get(d);
+    if (p) {
+      d.payment = p;
+      if (p.date > d.dueDate) {
+        d.status = 'paga_em_atraso';
+        d.late = darfLateCharges(d.amount, d.dueDate, p.date, opts.selicMonthly);
+        d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: p.date, charges: d.late });
+      } else d.status = 'paga';
+      const expected = d.late?.total ?? d.amount;
+      if (p.amount + 0.05 < expected) {
+        issues.push({
+          level: 'warning',
+          code: 'DARF_UNDERPAID',
+          message: `DARF de ${d.month}: pago R$ ${p.amount.toFixed(2)} de R$ ${expected.toFixed(2)} devidos (com acréscimos, se houver).`,
+        });
+      }
+    } else if (opts.asOf && opts.asOf > d.dueDate) {
+      d.status = 'vencida';
+      d.late = darfLateCharges(d.amount, d.dueDate, opts.asOf, opts.selicMonthly);
+      d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: opts.asOf, charges: d.late });
+      if (d.late.missingSelicMonths.length) {
+        issues.push({
+          level: 'info',
+          code: 'SELIC_MISSING',
+          message: `DARF vencido de ${d.month}: informe a Selic mensal de ${d.late.missingSelicMonths.join(', ')} para calcular os juros (ou use o Sicalc).`,
+        });
+      }
+    }
   }
 
   const shown = rows.filter((r) => r.month >= from && r.month <= end);
@@ -253,18 +383,24 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       irrfUsed: sum(shown.map((r) => r.irrf.used)),
       darfTotal: sum(darfs.map((d) => d.amount)),
       exemptGain: sum(shown.map((r) => r.exemptGain)),
+      darfOpen: sum(darfs.filter((d) => d.status === 'pendente' || d.status === 'vencida').map((d) => d.late?.total ?? d.amount)),
     },
     lossesAtEnd: { comum: lossComum, dayTrade: lossDt, fii: lossFii },
     irrfUnusedByYear,
+    etfRendaFixaTrades: etfRf.filter((t) => t.month >= from && t.month <= end),
+    openShorts: ledger.openShorts,
     assumptions: [
       'Custo pelo preço médio ponderado, incluindo corretagem e emolumentos (IN RFB 1.585/2015 art. 58), independentemente do método de custo do portfólio.',
       'Day trade: compra e venda do mesmo ativo no mesmo dia na mesma corretora (campo account); casadas primeiro, sem alterar o preço médio da posição.',
-      'Limite de R$ 20 mil considera apenas vendas de ações no mercado à vista em operações comuns (swing trade); não se aplica a ETFs, BDRs, FIIs nem day trade.',
+      'Limite de R$ 20 mil considera apenas vendas de ações no mercado à vista em operações comuns (swing trade); não se aplica a ETFs, BDRs, opções, direitos, FIIs nem day trade.',
+      'Venda a descoberto: o resultado é apurado na recompra e não recebe a isenção de R$ 20 mil (leitura conservadora). Vendas sem posição nunca geram DARF até a recompra ou o registro da compra.',
       'Prejuízo de ações em mês isento é acumulado para compensação futura; ganho isento não consome prejuízo acumulado.',
       'Prejuízos de day trade compensam só day trade; prejuízos de operações comuns podem compensar também day trade; FII tem compensação separada.',
-      'IRRF (0,005% swing / 1% day trade) informado no campo taxes das vendas; quando ausente, é estimado. Saldo não compensado no ano fica para a DIRPF.',
-      'Vencimento do DARF: último dia útil do mês seguinte (feriados bancários nacionais; feriados locais não considerados).',
+      'IRRF (0,005% swing / 1% day trade) informado no campo taxes das vendas; quando ausente, é estimado e mostrado, mas só abatido com creditEstimatedIrrf.',
+      'ETF de renda fixa (Lei 13.043/2014): IR retido na fonte, fora da apuração mensal.',
+      'Vencimento do DARF: último dia útil bancário do mês seguinte (31/12 sem expediente bancário; feriados locais não considerados).',
     ],
     issues,
   };
 }
+
