@@ -7,11 +7,13 @@
  *    close), so a naive consumer shifts every value by one month.
  *  - The last monthly bar ignores `period2`: asking until 2025-03-14 returns the close of the
  *    whole month (or today's live price) labelled 2025-03-01.
- *  - The bar boundaries follow the exchange time zone that Yahoo reports, which is wrong for
- *    some markets (BVC is reported as America/New_York).
- * Building month-ends from daily closes gives the real last trading day and its date.
+ *  - Live check (LIVE=1, 2026-10-05, PETR4.SA / ECOPETROL.CL / AAPL, 2 years): for CLOSED
+ *    months the bar close equals our month-end close in 23/23 months; the problems are the
+ *    date label (day 01) and the partial/live last bar.
+ * Building month-ends from daily closes gives the real last trading day and its date, and
+ * lets us un-adjust splits and use the same daily cache for both intervals.
  */
-import type { ISODate } from '@pm/core';
+import type { FxPoint, ISODate } from '@pm/core';
 import { addDays, monthOf } from './dates';
 
 export interface DatedValue {
@@ -75,4 +77,21 @@ export function round(x: number, decimals: number): number {
 export function cleanPrice(x: number, decimals: number): number {
   const d = Math.abs(x) < 1 ? Math.max(decimals, 6) : decimals;
   return round(x, d);
+}
+
+/** Multiply two series on the union of their dates (fill-forward), within [from, to]. */
+export function combine(a: readonly FxPoint[], b: readonly FxPoint[], from: ISODate, to: ISODate): FxPoint[] {
+  const dates = [...new Set([...a.map((p) => p.date), ...b.map((p) => p.date)])].sort();
+  const out: FxPoint[] = [];
+  let i = 0;
+  let j = 0;
+  let va: number | undefined;
+  let vb: number | undefined;
+  for (const d of dates) {
+    while (i < a.length && a[i]!.date <= d) va = a[i++]!.rate;
+    while (j < b.length && b[j]!.date <= d) vb = b[j++]!.rate;
+    if (d < from || d > to || va === undefined || vb === undefined) continue;
+    out.push({ date: d, rate: roundSig(va * vb, 10) });
+  }
+  return out;
 }

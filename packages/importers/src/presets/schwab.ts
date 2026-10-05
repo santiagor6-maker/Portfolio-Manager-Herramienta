@@ -6,7 +6,7 @@
  */
 import type { TransactionType } from '@pm/core';
 import type { DraftTransaction, ParsedRow } from '../types';
-import { normalizeText } from '../util';
+import { normalizeText, round } from '../util';
 import { type PresetDefinition, TOTAL_ROW_RE, cell, columnValues, locateHeader, str } from './common';
 
 const GROUPS = [['Date'], ['Action'], ['Symbol'], ['Description'], ['Quantity'], ['Price'], ['Fees & Comm', 'Fees & Commissions'], ['Amount']];
@@ -107,7 +107,7 @@ export const schwabPreset: PresetDefinition = {
           if (qty !== undefined) d.quantity = Math.abs(qty);
           if (price !== undefined) d.price = price;
           if (fees) d.fees = Math.abs(fees);
-          if (d.quantity !== undefined && price !== undefined) d.amount = d.quantity * price;
+          if (d.quantity !== undefined && price !== undefined) d.amount = round(d.quantity * price, 8);
           else if (amount !== undefined) d.amount = Math.abs(amount) + (rule === 'SELL' ? Math.abs(fees ?? 0) : -Math.abs(fees ?? 0));
         } else if (rule === 'SPLIT') {
           if (qty !== undefined) d.deltaShares = /reverse/i.test(action) ? -Math.abs(qty) : qty;
@@ -128,7 +128,10 @@ export const schwabPreset: PresetDefinition = {
     }
     // Attach NRA withholding to the dividend of the same symbol and date.
     for (const t of taxes) {
-      const div = dividends.find((x) => x.date === t.d.date && x.instrument?.symbol === t.d.instrument?.symbol);
+      const near = (x: DraftTransaction) => Math.abs(Date.parse(x.date) - Date.parse(t.d.date)) <= 7 * 86400000;
+      const div =
+        dividends.find((x) => x.date === t.d.date && x.instrument?.symbol === t.d.instrument?.symbol) ??
+        dividends.find((x) => near(x) && x.instrument?.symbol === t.d.instrument?.symbol && !x.taxes);
       if (div && (t.d.amount ?? 0) > 0) {
         div.taxes = (div.taxes ?? 0) + t.d.amount!;
         t.row.draft = undefined;

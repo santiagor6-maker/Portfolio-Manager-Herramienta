@@ -1,0 +1,10 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2024-01-16,BUY,XBOG:ECOPETROL,ECOPETROL,XBOG,,,equity,1000,2450,COP,,7350,,,,,,Trii,"nota con
+salto de línea"
+2024-13-45,BUY,,ECOPETROL,XBOG,,,,10,2450,COP,,,,,,,,,
+2024-02-01,COMPRAR-ALGO,,PETR4,BVMF,,,,100,38.5,BRL,,,,,,,,,
+2024-02-02,BUY,,PETR4,BVMF,,,,abc,38.5,BRL,,,,,,,,,
+2024-02-03,SELL,,PETR4,BVMF,,,,,38.5,BRL,,,,,,,,,
+2024-02-04,DEPOSIT,,,,,,,,,PESOS,1000,,,,,,,,
+2024-02-05,BUY,,,,,,,10,5,USD,,,,,,,,,
+2024-02-06,DIVIDEND,XBOG:ECOPETROL,,,,,,,,COP,312000,,31200,,,,,Trii,

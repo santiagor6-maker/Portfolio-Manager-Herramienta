@@ -1,0 +1,12 @@
+Action,Time,ISIN,Ticker,Name,No. of shares,Price / share,Currency (Price / share),Exchange rate,Result,Currency (Result),Total,Currency (Total),Withholding tax,Currency (Withholding tax),Stamp duty reserve tax,Currency (Stamp duty reserve tax),Notes,ID,Currency conversion fee,Currency (Currency conversion fee),Currency conversion from amount,Currency (Currency conversion from amount),Currency conversion to amount,Currency (Currency conversion to amount)
+Deposit,2023-01-02 10:00:00,,,,,,,,,,1000.00,EUR,,,,,Bank Transfer,d1a2b3c4-0001,,,,,,
+Market buy,2023-01-03 14:30:05,US0378331005,AAPL,Apple,2.5,125.07,USD,1.06714,,,293.44,EUR,,,,,,EOF1234567,0.44,EUR,,,,
+Limit buy,2023-01-10 09:10:00,IE00B3XXRP09,VUSA,Vanguard S&P 500 UCITS ETF (Dist),10,6150.5,GBX,88.0,,,699.98,EUR,,,,,,EOF1234568,1.05,EUR,,,,
+Dividend (Ordinary),2023-02-16 08:12:00,US0378331005,AAPL,Apple,2.5,0.196,USD,1.07,,,0.45,EUR,0.09,USD,,,,,,,,,,
+Interest on cash,2023-03-01 00:05:00,,,,,,,,,,0.52,EUR,,,,,,int-0001,,,,,,
+Currency conversion,2023-03-05 12:00:00,,,,,,,,,,,,,,,,,cc-0001,0.15,EUR,100.00,EUR,107.35,USD
+Stock split close,2023-04-10 06:00:00,US0378331005,AAPL,Apple,2.5,,USD,,,,,,,,,,,,,,,,,
+Stock split open,2023-04-10 06:00:00,US0378331005,AAPL,Apple,10,,USD,,,,,,,,,,,,,,,,,
+Market sell,2023-05-20 15:45:00,US0378331005,AAPL,Apple,4,44.10,USD,1.0812,12.7,EUR,163.15,EUR,,,,,,EOF1234569,0.24,EUR,,,,
+Withdrawal,2023-06-01 09:00:00,,,,,,,,,,-200.00,EUR,,,,,Sent to Bank Account,w-0001,,,,,,
+Spending cashback,2023-06-02 09:00:00,,,,,,,,,,0.80,EUR,,,,,,cb-0001,,,,,,

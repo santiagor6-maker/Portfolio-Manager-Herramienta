@@ -12,7 +12,8 @@ import { useApp, useFmt } from '../store/app';
 import { deleteTransactions } from '../db/repo';
 import type { StoredTransaction } from '../db/schema';
 import { formatDate, formatMoney, formatPrice, formatQuantity } from '../lib/format';
-import { downloadText, toCsv } from '../lib/export';
+import { downloadText } from '../lib/export';
+import { exportTransactionsCsv } from '../services/importers';
 
 const TYPE_TONE: Partial<Record<TransactionType, string>> = {
   BUY: 'bg-info-soft text-info border-info/25',
@@ -92,25 +93,7 @@ export default function TransactionsPage() {
   const held = (id: string) => analysis?.valuation?.holdings.find((h) => h.instrumentId === id)?.quantity ?? 0;
 
   const exportCsv = () => {
-    const header = ['date', 'type', 'symbol', 'instrumentId', 'quantity', 'price', 'amount', 'fees', 'taxes', 'currency', 'toCurrency', 'toAmount', 'account', 'note', 'portfolio'];
-    const rows = filtered.map((x) => [
-      x.date,
-      x.type,
-      x.instrumentId ? (map.get(x.instrumentId)?.symbol ?? '') : '',
-      x.instrumentId ?? '',
-      x.quantity ?? '',
-      x.price ?? '',
-      x.amount ?? '',
-      x.fees ?? '',
-      x.taxes ?? '',
-      x.currency,
-      x.toCurrency ?? '',
-      x.toAmount ?? '',
-      x.account ?? '',
-      x.note ?? '',
-      portfolioName.get(x.portfolioId) ?? x.portfolioId,
-    ]);
-    downloadText('movimientos.csv', toCsv([header, ...rows]), 'text/csv');
+    downloadText('movimientos.csv', exportTransactionsCsv(filtered, [...map.values()], { bom: true }), 'text/csv');
   };
 
   const types: TransactionType[] = ['BUY', 'SELL', 'DIVIDEND', 'INTEREST', 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'TAX', 'FX_CONVERSION', 'SPLIT', 'STOCK_DIVIDEND', 'TRANSFER_IN', 'TRANSFER_OUT', 'RETURN_OF_CAPITAL'];

@@ -189,6 +189,14 @@ describe('FX router', () => {
     expect(same.series.points.map((p) => p.rate)).toEqual([1, 1, 1]);
   });
 
+  it('Yahoo crosses without USD are triangulated through USD legs (BRLCOP=X has no history)', async () => {
+    const { service, fetch } = createTestService();
+    const r = await service.fxSeries({ base: 'BRL', quote: 'COP', from: '2025-01-02', to: '2025-01-02', source: 'yahoo' });
+    expect(r.series.source).toBe('yahoo');
+    expect(r.series.points[0]!.rate).toBeCloseTo(4403.17 / 6.3, 2);
+    expect(fetch.calls.some((u) => u.includes('BRLCOP'))).toBe(false);
+  });
+
   it('combine() multiplies on the union of dates with fill-forward', () => {
     const a = [{ date: '2025-01-02', rate: 2 }, { date: '2025-01-06', rate: 3 }];
     const b = [{ date: '2025-01-01', rate: 10 }, { date: '2025-01-04', rate: 20 }];

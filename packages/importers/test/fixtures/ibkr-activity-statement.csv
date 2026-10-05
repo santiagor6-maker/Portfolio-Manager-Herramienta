@@ -1,0 +1,66 @@
+Statement,Header,Field Name,Field Value
+Statement,Data,BrokerName,Interactive Brokers LLC
+Statement,Data,BrokerAddress,"Two Pickwick Plaza, Greenwich, CT 06830"
+Statement,Data,Title,Activity Statement
+Statement,Data,Period,"January 1, 2023 - December 31, 2023"
+Statement,Data,WhenGenerated,"2024-01-15, 10:12:45 EST"
+Account Information,Header,Field Name,Field Value
+Account Information,Data,Name,Juan Perez
+Account Information,Data,Account,U1234567
+Account Information,Data,Account Type,Individual
+Account Information,Data,Base Currency,USD
+Net Asset Value,Header,Asset Class,Prior Total,Current Long,Current Short,Current Total,Change
+Net Asset Value,Data,Cash ,0,2500.5,0,2500.5,2500.5
+Net Asset Value,Data,Total,0,5100.2,0,5100.2,5100.2
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code
+Trades,Data,Order,Stocks,EUR,SAP,"2023-03-15, 11:02:00",3,118.4,118.6,-355.2,-3,358.2,0,0.6,O
+Trades,SubTotal,,Stocks,EUR,SAP,,3,,,-355.2,-3,358.2,0,0.6,
+Trades,Total,,Stocks,EUR,,,,,,-355.2,-3,358.2,0,0.6,
+Trades,Data,Order,Stocks,USD,AAPL,"2023-01-03, 10:30:00",10,125.07,125.07,-1250.7,-1,1251.7,0,0,O
+Trades,Data,ClosedLot,Stocks,USD,AAPL,2023-01-03,-4,125.17,,,,500.68,,,
+Trades,Data,Order,Stocks,USD,AAPL,"2023-06-20, 15:59:01",-4,184.25,183.96,737,-1.01,-500.68,235.31,1.16,C
+Trades,Data,Order,Stocks,USD,VOO,"2023-02-01, 09:45:12",5,370.5,371,-1852.5,-1.0025,1853.5025,0,2.5,O
+Trades,SubTotal,,Stocks,USD,AAPL,,6,,,-513.7,-2.01,751.02,235.31,1.16,
+Trades,Total,,Stocks,USD,,,,,,-2366.2,-3.0125,2604.52,235.31,3.66,
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,,Proceeds,Comm in USD,,,MTM in USD,Code
+Trades,Data,Order,Forex,USD,EUR.USD,"2023-03-14, 08:00:00","1,000",1.0712,,-1071.2,-2,,,0.5,
+Trades,Total,,Forex,USD,,,,,,-1071.2,-2,,,0.5,
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code
+Trades,Data,Order,Equity and Index Options,USD,AAPL 20JAN23 150 C,"2023-01-05, 10:00:00",1,2.5,2.4,-250,-0.65,250.65,0,-10,O
+Corporate Actions,Header,Asset Category,Currency,Report Date,Date/Time,Description,Quantity,Proceeds,Value,Realized P/L,Code
+Corporate Actions,Data,Stocks,USD,2023-08-25,"2023-08-24, 20:25:00","AAPL(US0378331005) Split 2 for 1 (AAPL, APPLE INC, US0378331005)",6,0,0,0,
+Corporate Actions,Data,Stocks,USD,2023-09-01,"2023-08-31, 20:25:00","XYZ(US98389B1008) Merged(Acquisition) FOR USD 10.00 PER SHARE (XYZ, XYZ CORP, US98389B1008)",-10,100,0,15,
+Corporate Actions,Data,Total,,,,,,100,0,15,
+Deposits & Withdrawals,Header,Currency,Settle Date,Description,Amount
+Deposits & Withdrawals,Data,USD,2023-01-02,Electronic Fund Transfer,5000
+Deposits & Withdrawals,Data,USD,2023-11-10,Disbursement Initiated by Juan Perez,-500
+Deposits & Withdrawals,Data,Total,,,4500
+Dividends,Header,Currency,Date,Description,Amount
+Dividends,Data,USD,2023-02-16,AAPL(US0378331005) Cash Dividend USD 0.23 per Share (Ordinary Dividend),2.3
+Dividends,Data,USD,2023-03-31,VOO(US9229083632) Cash Dividend USD 1.4874 per Share (Ordinary Dividend),7.44
+Dividends,Data,USD,2023-03-31,VOO(US9229083632) Cash Dividend USD 1.4874 per Share (Ordinary Dividend),-7.44
+Dividends,Data,USD,2023-03-31,VOO(US9229083632) Cash Dividend USD 1.4874 per Share (Ordinary Dividend),7.437
+Dividends,Data,Total,,,9.737
+Dividends,Data,EUR,2023-05-17,SAP(DE0007164600) Cash Dividend EUR 2.05 per Share (Ordinary Dividend),6.15
+Dividends,Data,Total,,,6.15
+Dividends,Data,Total in USD,,,16.39
+Withholding Tax,Header,Currency,Date,Description,Amount,Code
+Withholding Tax,Data,USD,2023-02-16,AAPL(US0378331005) Cash Dividend USD 0.23 per Share - US Tax,-0.69,
+Withholding Tax,Data,USD,2023-03-31,VOO(US9229083632) Cash Dividend USD 1.4874 per Share - US Tax,-2.23,
+Withholding Tax,Data,Total,,,-2.92,
+Withholding Tax,Data,EUR,2023-05-17,SAP(DE0007164600) Cash Dividend EUR 2.05 per Share - DE Tax,-1.62,
+Withholding Tax,Data,Total,,,-1.62,
+Interest,Header,Currency,Date,Description,Amount
+Interest,Data,USD,2023-07-05,USD Credit Interest for Jun-2023,3.12
+Interest,Data,Total,,,3.12
+Fees,Header,Subtitle,Currency,Date,Description,Amount
+Fees,Data,Other Fees,USD,2023-04-03,Market data fee: US Securities Snapshot and Futures Value Bundle for Mar 2023,-10
+Fees,Data,Other Fees,USD,2023-05-03,Market data fee waiver for Apr 2023,10
+Fees,Data,Total,,,,0
+Financial Instrument Information,Header,Asset Category,Symbol,Description,Conid,Security ID,Listing Exch,Multiplier,Type,Code
+Financial Instrument Information,Data,Stocks,AAPL,APPLE INC,265598,US0378331005,NASDAQ,1,COMMON,
+Financial Instrument Information,Data,Stocks,SAP,SAP SE,14204,DE0007164600,IBIS,1,COMMON,
+Financial Instrument Information,Data,Stocks,VOO,VANGUARD S&P 500 ETF,136155102,US9229083632,ARCA,1,ETF,
+Codes,Header,Code,Meaning
+Codes,Data,O,Opening Trade
+Codes,Data,C,Closing Trade

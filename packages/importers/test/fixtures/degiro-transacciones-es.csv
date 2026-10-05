@@ -1,0 +1,3 @@
+Fecha,Hora,Producto,ISIN,Bolsa de referencia,Centro de ejecución,Cantidad,Precio,,Valor local,,Valor,,Tipo de cambio,Costes de transacción,,Total,,ID Orden
+10-01-2023,15:40,MICROSOFT CORP,US5949181045,NDQ,XNAS,5,"228,8500",USD,"-1144,25",USD,"-1062,38",EUR,"1,0771","-0,50",EUR,"-1062,88",EUR,abc-0001
+16-03-2023,10:02,BANCO SANTANDER SA,ES0113900J37,MAD,XMAD,1500,"3,4120",EUR,"-5118,00",EUR,"-5118,00",EUR,,"-3,90",EUR,"-5121,90",EUR,abc-0002

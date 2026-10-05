@@ -1,0 +1,3 @@
+Trade Date,Symbol,Side,Qty,Price,Commission,Net Amount,Currency
+2023-01-05,MSFT,BUY,10,"1,228.50",1.00,"12,286.00",USD
+2023-02-15,MSFT,SELL,5,"1,250.00",1.00,"6,249.00",USD

@@ -396,6 +396,8 @@ export const ibkrFlexPreset: PresetDefinition = {
           row.draft = qty > 0
             ? { date, type: 'FX_CONVERSION', currency: quote, amount: p, toCurrency: base, toAmount: Math.abs(qty) }
             : { date, type: 'FX_CONVERSION', currency: base, amount: Math.abs(qty), toCurrency: quote, toAmount: p };
+          const fxCommCcy = getS('IBCommissionCurrency');
+          if (comm && (!fxCommCcy || fxCommCcy === row.draft.currency)) row.draft.fees = Math.abs(comm);
           if (ref) row.draft.brokerRef = ref;
           return;
         }

@@ -1,0 +1,5 @@
+Data pregão;Nota;Corretora;C/V;Código;Especificação do título;Quantidade;Preço;Valor;Taxa de liquidação;Emolumentos;Corretagem;ISS;IRRF
+02/01/2023;123456;XP Investimentos;C;PETR4;PETROBRAS PN N2;100;23,45;2.345,00;0,59;0,12;4,90;0,24;0,00
+02/01/2023;123456;XP Investimentos;C;VALE3;VALE ON NM;20;88,10;1.762,00;0,59;0,12;4,90;0,24;0,00
+15/03/2023;123789;XP Investimentos;V;PETR4;PETROBRAS PN N2;50;25,10;1.255,00;0,31;0,06;4,90;0,24;0,06
+15/03/2023;123790;Clear;C;ITSA4;ITAUSA PN N1;200;8,95;1.790,00;0,45;0,09;0,00;0,00;0,00

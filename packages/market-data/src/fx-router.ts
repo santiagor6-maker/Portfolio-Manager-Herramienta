@@ -16,7 +16,7 @@ import { HOUR, historyTtlMs, type TieredCache } from './cache';
 import { addDays, eachDay, todayISO } from './dates';
 import { MarketDataError, errorMessage } from './errors';
 import type { FxProvider } from './providers/types';
-import { roundSig, sliceRange } from './series';
+import { combine, sliceRange } from './series';
 import type { FxSourceMode } from './types';
 
 export interface FxResult {
@@ -134,21 +134,4 @@ export class FxRouter {
       fallbacks: [...a.fallbacks, ...b.fallbacks],
     };
   }
-}
-
-/** Multiply two series on the union of their dates (fill-forward), within [from, to]. */
-export function combine(a: readonly FxPoint[], b: readonly FxPoint[], from: ISODate, to: ISODate): FxPoint[] {
-  const dates = [...new Set([...a.map((p) => p.date), ...b.map((p) => p.date)])].sort();
-  const out: FxPoint[] = [];
-  let i = 0;
-  let j = 0;
-  let va: number | undefined;
-  let vb: number | undefined;
-  for (const d of dates) {
-    while (i < a.length && a[i]!.date <= d) va = a[i++]!.rate;
-    while (j < b.length && b[j]!.date <= d) vb = b[j++]!.rate;
-    if (d < from || d > to || va === undefined || vb === undefined) continue;
-    out.push({ date: d, rate: roundSig(va * vb, 10) });
-  }
-  return out;
 }

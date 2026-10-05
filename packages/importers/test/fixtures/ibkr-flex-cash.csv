@@ -1,0 +1,6 @@
+"ClientAccountID","CurrencyPrimary","AssetClass","Symbol","Description","ISIN","DateTime","SettleDate","Amount","Type","TransactionID"
+"U1234567","USD","STK","KO","KO(US1912161007) CASH DIVIDEND USD 0.46 PER SHARE (Ordinary Dividend)","US1912161007","20230403;202000","20230403","9.2","Dividends","9001"
+"U1234567","USD","STK","KO","KO(US1912161007) CASH DIVIDEND USD 0.46 PER SHARE - US TAX","US1912161007","20230403;202000","20230403","-2.76","Withholding Tax","9002"
+"U1234567","USD","","","CASH RECEIPTS / ELECTRONIC FUND TRANSFERS","","20230105","20230105","3000","Deposits/Withdrawals","9003"
+"U1234567","USD","","","USD CREDIT INT FOR JAN-2023","","20230203","20230203","1.5","Broker Interest Received","9004"
+"U1234567","USD","","","OTHER FEE","","20230203","20230203","-1.5","Other Fees","9005"

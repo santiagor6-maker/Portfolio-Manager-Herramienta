@@ -3,7 +3,8 @@
  * compact YYYYMMDD (IBKR Flex), month names (en/es/pt), Excel serials and Date cells.
  * Times and suffixes ("2023-01-03, 10:30:00", "20230103;103000", "02/16/2023 as of 02/15/2023") are ignored.
  */
-import type { Cell, DateFormat, ISODate } from './types';
+import type { ISODate } from '@pm/core';
+import type { Cell, DateFormat } from './types';
 import { stripAccents, toIsoDateUTC } from './util';
 
 const MONTHS: Record<string, number> = {

@@ -136,7 +136,7 @@ describe('server routes', () => {
 
 describe('typed browser client against the app', () => {
   const { app } = setup();
-  const client = new MarketDataClient({ baseUrl: 'http://test', fetch: (url, init) => app.request(url, init) });
+  const client = new MarketDataClient({ baseUrl: 'http://test', fetch: async (url, init) => app.request(url, init) });
 
   it('history, fx, quotes, catalog, search', async () => {
     const h = await client.history({ symbol: 'BVMF:PETR4', from: '2024-11-01', to: '2025-01-31', interval: '1mo' });

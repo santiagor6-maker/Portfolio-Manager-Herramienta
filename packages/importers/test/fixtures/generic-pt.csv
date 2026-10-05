@@ -1,0 +1,4 @@
+Data;Ativo;Operação;Quantidade;Preço;Taxas;Moeda;Observação
+05/01/2023;BBAS3;Compra;100;38,50;4,90;BRL;Primeira compra
+12/01/2023;BBAS3;Venda;40;41,20;4,90;BRL;
+28/02/2023;BBAS3;Dividendo;;;;BRL;

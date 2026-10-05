@@ -18,13 +18,13 @@
  * - BVC (`.CL`) is reported with time zone America/New_York; bars still map to the right
  *   local date because they are stamped at the session open.
  */
-import type { ISODate, PricePoint, ProviderId } from '@pm/core';
+import type { FxPoint, ISODate, PricePoint, ProviderId } from '@pm/core';
 import type { TieredCache } from '../cache';
 import { TTL } from '../cache';
 import { addDays, dateInZone, toEpochSeconds } from '../dates';
 import { MarketDataError } from '../errors';
 import { HttpError, type HttpClient } from '../http';
-import { cleanPrice, dedupeByDate, roundSig, sliceRange } from '../series';
+import { cleanPrice, combine, dedupeByDate, roundSig, sliceRange } from '../series';
 import {
   assetClassFromYahoo,
   instrumentIdFromYahoo,
@@ -381,13 +381,27 @@ export class YahooFxProvider implements FxProvider {
     return /^[A-Z]{3}$/.test(base) && /^[A-Z]{3}$/.test(quote) && base !== quote;
   }
 
-  async daily(base: string, quote: string, from: ISODate, to: ISODate) {
+  async daily(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
+    if (base !== 'USD' && quote !== 'USD') {
+      // Crosses such as BRLCOP=X have little or no history on Yahoo: triangulate through the
+      // liquid USD legs (BRL=X, COP=X), carrying values forward over each market's holidays.
+      const padded = addDays(from, -10);
+      const [a, b] = await Promise.all([this.direct(base, 'USD', padded, to), this.direct('USD', quote, padded, to)]);
+      return combine(a, b, from, to).map((p) => ({ date: p.date, rate: roundSig(p.rate, 7) }));
+    }
+    return this.direct(base, quote, from, to);
+  }
+
+  private async direct(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
     // Prefer the liquid direction (USD/XXX, EUR/USD, GBP/USD) and invert when needed.
     const majorsOverUsd = ['EUR', 'GBP', 'AUD', 'NZD'];
     let symbol = yahooFxSymbol(base, quote);
     let invert = false;
     if (quote === 'USD' && !majorsOverUsd.includes(base)) {
       symbol = yahooFxSymbol('USD', base);
+      invert = true;
+    } else if (base === 'USD' && majorsOverUsd.includes(quote)) {
+      symbol = yahooFxSymbol(quote, 'USD');
       invert = true;
     }
     const r = await this.yahoo.chart(symbol, {

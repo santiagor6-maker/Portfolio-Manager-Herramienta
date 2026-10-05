@@ -154,9 +154,16 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       else if (type === 'DIVIDEND' || type === 'INTEREST') gross = n + (taxes ?? 0);
       else gross = n;
     }
+    // Standalone TAX / FEE rows: the value may sit in the tax/fee column instead of the amount column.
+    if (type === 'TAX' && taxes) {
+      if (gross === undefined || amount === undefined) gross = taxes;
+    } else if (type === 'FEE' && fees) {
+      if (gross === undefined || amount === undefined) gross = fees;
+    } else {
+      if (fees) draft.fees = fees;
+      if (taxes) draft.taxes = taxes;
+    }
     if (gross !== undefined) draft.amount = gross;
-    if (fees) draft.fees = fees;
-    if (taxes) draft.taxes = taxes;
     if (ratio !== undefined && ratio !== 0) draft.ratio = Math.abs(ratio);
     if ((type === 'SPLIT' || type === 'STOCK_DIVIDEND') && draft.ratio === undefined && quantity !== undefined) {
       const reverse = /grupamento|agrupamiento|reverse|contrasplit|inplit|grupamiento/.test(normalizeText(typeText));

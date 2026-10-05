@@ -199,6 +199,7 @@ export class InstrumentResolver {
       else exchange = 'MANUAL';
     }
 
+    if (!exchange) exchange = 'MANUAL';
     if (exchange === 'BVMF' && /^[A-Z0-9]{4}\d{1,2}F$/.test(symbol)) symbol = symbol.slice(0, -1); // fractional market
 
     const id = `${exchange}:${symbol}`;
