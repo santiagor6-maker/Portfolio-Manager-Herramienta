@@ -80,6 +80,8 @@ export function colombiaAccountantCsv(report: ColombiaTaxReport, opts?: CsvOptio
   }
   const t = report.ingresos.totals;
   push('INGRESOS', 'Total dividendos nacionales', '', '', 'COP', '', '', t.nationalDividendsCop, 'Arts. 49, 242 y 254-1 ET', '');
+  push('INGRESOS', 'Retención esperada dividendos nacionales', '', '', 'COP', '', '', t.nationalDividendExpectedWithholdingCop, 'Art. 242 ET; DUR 1.2.4.7.1', 'Comparar con el certificado');
+  push('INGRESOS', 'Descuento dividendos nacionales (19%)', '', '', 'COP', '', '', t.descuentoArt2541Cop, 'Art. 254-1 ET', 'Sobre el exceso de 1.090 UVT');
   push('INGRESOS', 'Total dividendos del exterior', '', '', 'COP', '', '', t.foreignDividendsCop, 'Art. 254 ET', '');
   push('INGRESOS', 'Total impuestos pagados en el exterior (dividendos)', '', '', 'COP', '', '', t.foreignDividendTaxPaidCop, 'Art. 254 ET', '');
   push('INGRESOS', 'Total intereses', '', '', 'COP', '', '', t.nationalInterestCop + t.foreignInterestCop, 'Arts. 38-41 ET (componente inflacionario no calculado)', '');
@@ -96,17 +98,24 @@ export function colombiaAccountantCsv(report: ColombiaTaxReport, opts?: CsvOptio
       s.trmSale,
       s.proceedsCop,
       s.legalBasis,
-      `Costo fiscal COP: ${s.costCop.toFixed(0)}; utilidad COP: ${s.gainCop.toFixed(0)}`,
+      `Costo fiscal COP: ${s.costCop.toFixed(0)}; utilidad COP: ${s.gainCop.toFixed(0)}` +
+        (s.nonDeductibleLossCop > 0 ? `; pérdida no deducible (Art. 153 ET): ${s.nonDeductibleLossCop.toFixed(0)}` : '') +
+        (s.realizationDate !== s.sellDate ? `; realizada ${s.realizationDate}` : ''),
     );
   }
   const v = report.ventas.totals;
   push('VENTAS', 'Ingresos no constitutivos (Art. 36-1) - utilidad', '', '', 'COP', '', '', v.noGravadaArt361.utilidadCop, 'Art. 36-1 ET', '');
   push('GANANCIA_OCASIONAL', 'Ingresos por ganancias ocasionales', '', '', 'COP', '', '', v.gananciaOcasional.ingresosCop, 'Art. 300 ET', '');
   push('GANANCIA_OCASIONAL', 'Costos de ganancias ocasionales', '', '', 'COP', '', '', v.gananciaOcasional.costosCop, 'Art. 300 ET', '');
+  push('GANANCIA_OCASIONAL', 'Pérdida no deducible (Art. 153 ET)', '', '', 'COP', '', '', v.gananciaOcasional.perdidaNoDeducibleCop, 'Art. 153 ET', 'No se resta de otras ganancias');
   push('GANANCIA_OCASIONAL', 'Ganancia ocasional gravable', '', '', 'COP', '', '', v.gananciaOcasional.gananciaGravableCop, 'Art. 314 ET', '');
   push('GANANCIA_OCASIONAL', `Impuesto estimado (${(v.gananciaOcasional.rate * 100).toFixed(1)}%)`, '', '', 'COP', '', '', v.gananciaOcasional.impuestoEstimadoCop, 'Art. 314 ET', '');
   push('RENTA_ORDINARIA', 'Ingresos venta acciones < 2 años', '', '', 'COP', '', '', v.rentaOrdinaria.ingresosCop, 'Cédula general', '');
-  push('RENTA_ORDINARIA', 'Costos venta acciones < 2 años', '', '', 'COP', '', '', v.rentaOrdinaria.costosCop, 'Cédula general', '');
+  push('RENTA_ORDINARIA', 'Costos venta acciones < 2 años', '', '', 'COP', '', '', v.rentaOrdinaria.costosCop, 'Cédula general', 'Costos deducibles (sin pérdidas, Art. 153 ET)');
+  push('RENTA_ORDINARIA', 'Pérdida no deducible (Art. 153 ET)', '', '', 'COP', '', '', v.rentaOrdinaria.perdidaNoDeducibleCop, 'Art. 153 ET', '');
+  if (v.pendienteCosto.count > 0) {
+    push('VENTAS', 'Ventas sin costo registrado (pendientes)', '', '', 'COP', '', '', v.pendienteCosto.ingresosCop, '', 'Registrar la compra o el traslado con su costo');
+  }
 
   // FX
   for (const r of report.diferenciaEnCambio.rows) {
@@ -115,6 +124,21 @@ export function colombiaAccountantCsv(report: ColombiaTaxReport, opts?: CsvOptio
   push('DIFERENCIA_EN_CAMBIO', 'Ingreso por diferencia en cambio realizada', '', '', 'COP', '', '', report.diferenciaEnCambio.realizedGainCop, 'Art. 288 ET', '');
   push('DIFERENCIA_EN_CAMBIO', 'Pérdida por diferencia en cambio realizada', '', '', 'COP', '', '', report.diferenciaEnCambio.realizedLossCop, 'Art. 288 ET', '');
 
+  const ie = report.impuestoEstimado;
+  if (ie) {
+    push('IMPUESTO_ESTIMADO', 'Renta cédula general del portafolio', '', '', 'COP', '', '', ie.portfolioCedulaGeneralCop, 'Arts. 330-336 ET', '');
+    push('IMPUESTO_ESTIMADO', 'Impuesto incremental (tabla Art. 241)', '', '', 'COP', '', '', ie.impuestoCedulaGeneralIncrementalCop, 'Art. 241 ET', `Tarifa marginal ${(ie.marginalRate * 100).toFixed(0)}%`);
+    push('IMPUESTO_ESTIMADO', 'Descuento Art. 254-1', '', '', 'COP', '', '', ie.descuentoArt2541Cop, 'Art. 254-1 ET', '');
+    push('IMPUESTO_ESTIMADO', 'Descuento impuestos exterior', '', '', 'COP', '', '', ie.descuentoArt254Cop, 'Art. 254 ET', '');
+    push('IMPUESTO_ESTIMADO', 'Impuesto ganancia ocasional', '', '', 'COP', '', '', ie.impuestoGananciaOcasionalCop, 'Art. 314 ET', '');
+    push('IMPUESTO_ESTIMADO', 'Retenciones (anticipos)', '', '', 'COP', '', '', ie.retencionesCop, '', '');
+    push('IMPUESTO_ESTIMADO', 'Saldo estimado a pagar (portafolio)', '', '', 'COP', '', '', ie.saldoEstimadoCop, '', ie.note);
+  }
+  for (const l of report.formulario160.lines) {
+    push('FORMULARIO_160', l.level === 'pais' ? 'Activos por jurisdicción' : 'Activo discriminado', l.description, '', 'COP', '', '', l.valueCop, 'Art. 607 ET', l.country);
+  }
+  const o = report.obligacionDeclarar;
+  push('OBLIGACION', 'Consignaciones/depósitos del año', o.byConsignaciones ? 'SUPERA 1.400 UVT' : '', '', 'COP', '', '', o.consignacionesCop, 'Art. 594-3 ET', '');
   push('GMF', 'GMF 4x1000 estimado sobre retiros (informativo)', '', '', 'COP', '', '', report.gmf.estimatedGmfCop, 'Arts. 871-881 ET', report.gmf.note);
 
   for (const a of report.assumptions) push('SUPUESTO', a, '', '', '', '', '', '', '', '');

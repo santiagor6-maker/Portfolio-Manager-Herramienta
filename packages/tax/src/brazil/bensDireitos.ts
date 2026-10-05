@@ -1,11 +1,14 @@
-import type { CurrencyCode } from '@pm/core';
+import type { CountryCode, CurrencyCode } from '@pm/core';
+import { b3Root, type TransferBasisMap } from '../common/basis';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { instrumentMap, sum } from '../common/util';
 import type { BrCategory } from './classify';
-import { BENS_E_DIREITOS_CODES } from './config';
+import { B3_CNPJ, BENS_E_DIREITOS_CODES } from './config';
+import { brazilCryptoReport } from './crypto';
 import { brazilForeignAnnualReport, type PtaxProvider } from './exterior';
 import { runBrazilB3Ledger, type BrPosition } from './ledger';
+import { brazilRendaFixaReport } from './rendaFixa';
 
 export interface BensDireitosItem {
   grupo: string;
@@ -13,8 +16,9 @@ export interface BensDireitosItem {
   codigoDescricao: string;
   /** 'Brasil' or ISO country of the asset location. */
   localizacao: string;
-  /** Left blank for the user (CNPJ of the issuer / fund). */
+  /** CNPJ of the issuer/fund when known (built-in table or `cnpjByIssuer`), else blank for the user. */
   cnpj: string;
+  cnpjFonte?: 'tabela' | 'usuario';
   instrumentId?: string;
   ticker?: string;
   discriminacao: string;
@@ -22,6 +26,12 @@ export interface BensDireitosItem {
   /** "Situação em 31/12" of the previous and current year, at acquisition cost in BRL. */
   situacaoAnterior: number;
   situacaoAtual: number;
+  /** Foreign assets (DIRPF 2025+, Lei 14.754): result of the year per asset. */
+  exterior?: {
+    lucroPrejuizoBrl: number;
+    rendimentosBrl: number;
+    impostoPagoExteriorBrl: number;
+  };
   codeMeta: ParamMeta;
 }
 
@@ -39,44 +49,88 @@ export interface BensDireitosOptions {
   year: number;
   ptax?: PtaxProvider;
   categoryOverrides?: Record<string, BrCategory>;
-  /** Broker name per account, appended to the description. */
+  transferBasis?: TransferBasisMap;
+  /** Broker name, appended to the description. */
   brokerLabel?: string;
+  /** CNPJ by B3 root ticker (e.g. { TAEE: '07.859.971/0001-30' }) or by instrument id. */
+  cnpjByIssuer?: Record<string, string>;
+  /** Country where foreign cash is held, per currency. Default USD -> US. */
+  foreignCashCountry?: Record<CurrencyCode, CountryCode>;
+  /** Fixed-income instruments that are exempt (LCI/LCA...). */
+  rendaFixaExemptIds?: string[];
 }
 
-const fmt = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+const fmt2 = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const STABLE = /^(USDT|USDC|DAI|BUSD|TUSD|FDUSD|PYUSD|BRZ)$/i;
 
 /**
- * DIRPF "Bens e Direitos" helper: B3 positions (preço médio) and foreign positions/cash
- * (BRL cost under Lei 14.754/2023) at acquisition cost — never at market value.
+ * DIRPF "Bens e Direitos" helper at acquisition cost — never at market value: B3 positions
+ * (preço médio), fixed income, crypto, and foreign positions/cash (BRL cost under Lei 14.754/2023,
+ * with the per-asset result of the year).
  */
 export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): BensDireitosReport {
   const { year } = opts;
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
-  const cur = runBrazilB3Ledger(input, { until: `${year}-12-31`, categoryOverrides: opts.categoryOverrides });
-  const prev = runBrazilB3Ledger(input, { until: `${year - 1}-12-31`, categoryOverrides: opts.categoryOverrides });
+  const lo = { categoryOverrides: opts.categoryOverrides, transferBasis: opts.transferBasis };
+  const cur = runBrazilB3Ledger(input, { until: `${year}-12-31`, ...lo });
+  const prev = runBrazilB3Ledger(input, { until: `${year - 1}-12-31`, ...lo });
   issues.push(...cur.issues);
+  if (cur.openShorts.length) {
+    issues.push({
+      level: 'warning',
+      code: 'SHORT_NOT_IN_BENS',
+      message: 'Posições vendidas a descoberto em aberto não são bens: confira se falta registrar compras antes de declarar.',
+    });
+  }
   const prevMap = new Map(prev.positions.map((p) => [p.instrumentId, p]));
-  const ids = new Set([...cur.positions.map((p) => p.instrumentId), ...prev.positions.map((p) => p.instrumentId)]);
   const curMap = new Map(cur.positions.map((p) => [p.instrumentId, p]));
+  const ids = new Set([...curMap.keys(), ...prevMap.keys()]);
   const items: BensDireitosItem[] = [];
+
+  const cnpjOf = (id: string, symbol: string): { cnpj: string; fonte?: 'tabela' | 'usuario' } => {
+    const root = b3Root(symbol);
+    const user = opts.cnpjByIssuer?.[id] ?? opts.cnpjByIssuer?.[root];
+    if (user) return { cnpj: user, fonte: 'usuario' };
+    const t = B3_CNPJ[root];
+    return t ? { cnpj: t.cnpj, fonte: 'tabela' } : { cnpj: '' };
+  };
+
+  const codeFor = (c: BrCategory) =>
+    c === 'FII'
+      ? BENS_E_DIREITOS_CODES.FII
+      : c === 'ETF'
+        ? BENS_E_DIREITOS_CODES.ETF
+        : c === 'ETF_RF'
+          ? BENS_E_DIREITOS_CODES.ETF_RF
+          : c === 'BDR'
+            ? BENS_E_DIREITOS_CODES.BDR
+            : c === 'OPCAO'
+              ? BENS_E_DIREITOS_CODES.OPCAO
+              : c === 'DIREITO'
+                ? BENS_E_DIREITOS_CODES.DIREITO
+                : BENS_E_DIREITOS_CODES.ACAO;
+  const noun = (c: BrCategory) =>
+    c === 'FII' ? 'cotas' : c === 'ETF' || c === 'ETF_RF' ? 'cotas do ETF' : c === 'BDR' ? 'BDRs' : c === 'OPCAO' ? 'opções' : c === 'DIREITO' ? 'direitos' : 'ações';
 
   for (const id of ids) {
     const c = curMap.get(id);
     const p = prevMap.get(id);
     const ref = (c ?? p) as BrPosition;
-    const code =
-      ref.category === 'FII' ? BENS_E_DIREITOS_CODES.FII : ref.category === 'ETF' ? BENS_E_DIREITOS_CODES.ETF : ref.category === 'BDR' ? BENS_E_DIREITOS_CODES.BDR : BENS_E_DIREITOS_CODES.ACAO;
+    const code = codeFor(ref.category);
     const inst = instruments.get(id);
+    const cn = ref.category === 'ACAO' || ref.category === 'DIREITO' ? cnpjOf(id, ref.symbol) : { cnpj: opts.cnpjByIssuer?.[id] ?? '' };
     const desc = c
-      ? `${fmt(c.quantity)} ${ref.category === 'FII' ? 'cotas' : ref.category === 'ETF' ? 'cotas do ETF' : ref.category === 'BDR' ? 'BDRs' : 'ações'} ${ref.symbol}${inst?.name ? ` (${inst.name})` : ''}, preço médio R$ ${fmt(c.averageCost)}${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
+      ? `${fmt(c.quantity)} ${noun(ref.category)} ${ref.symbol}${inst?.name ? ` (${inst.name})` : ''}, preço médio R$ ${fmt2(c.averageCost)}${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
       : `${ref.symbol}${inst?.name ? ` (${inst.name})` : ''}: posição totalmente vendida em ${year}.`;
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
       codigoDescricao: code.descricao,
       localizacao: 'Brasil',
-      cnpj: '',
+      cnpj: cn.cnpj,
+      cnpjFonte: 'fonte' in cn ? cn.fonte : cn.cnpj ? 'usuario' : undefined,
       instrumentId: id,
       ticker: ref.symbol,
       discriminacao: desc,
@@ -86,28 +140,61 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       codeMeta: code.meta,
     });
   }
+  if (items.some((i) => i.cnpjFonte === 'tabela')) {
+    issues.push({
+      level: 'info',
+      code: 'CNPJ_FROM_TABLE',
+      message: 'CNPJ preenchido a partir da tabela interna para algumas empresas: confira com o informe de rendimentos da corretora.',
+    });
+  }
 
-  const foreign = brazilForeignAnnualReport(input, { year, ptax: opts.ptax, categoryOverrides: opts.categoryOverrides });
-  issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));
-  const fPrev = new Map(foreign.positionsPrevYear.map((p) => [p.instrumentId, p]));
-  const fCur = new Map(foreign.positions.map((p) => [p.instrumentId, p]));
-  for (const id of new Set([...fCur.keys(), ...fPrev.keys()])) {
-    const c = fCur.get(id);
-    const p = fPrev.get(id);
+  // Fixed income
+  const rf = brazilRendaFixaReport(input, { year, categoryOverrides: opts.categoryOverrides, exemptIds: opts.rendaFixaExemptIds });
+  issues.push(...rf.issues.filter((i) => i.level === 'error'));
+  const rfPrev = new Map(rf.positionsPrevYear.map((p) => [p.instrumentId, p]));
+  const rfCur = new Map(rf.positions.map((p) => [p.instrumentId, p]));
+  for (const id of new Set([...rfCur.keys(), ...rfPrev.keys()])) {
+    const c = rfCur.get(id);
+    const p = rfPrev.get(id);
     const ref = (c ?? p)!;
-    const isFund = ref.assetClass === 'etf' || ref.assetClass === 'fund' || ref.assetClass === 'reit';
-    const code = isFund ? BENS_E_DIREITOS_CODES.FOREIGN_FUND : BENS_E_DIREITOS_CODES.FOREIGN_STOCK;
+    const code = ref.exempt ? BENS_E_DIREITOS_CODES.RENDA_FIXA_ISENTA : BENS_E_DIREITOS_CODES.RENDA_FIXA_TRIBUTAVEL;
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
       codigoDescricao: code.descricao,
-      localizacao: ref.country ?? '',
+      localizacao: 'Brasil',
+      cnpj: opts.cnpjByIssuer?.[id] ?? '',
+      instrumentId: id,
+      discriminacao: c ? `${ref.name}: valor aplicado.` : `${ref.name}: resgatado em ${year}.`,
+      quantidade: c?.quantity ?? 0,
+      situacaoAnterior: p?.cost ?? 0,
+      situacaoAtual: c?.cost ?? 0,
+      codeMeta: code.meta,
+    });
+  }
+
+  // Crypto
+  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides });
+  const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
+  const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
+  for (const id of new Set([...crCur.keys(), ...crPrev.keys()])) {
+    const c = crCur.get(id);
+    const p = crPrev.get(id);
+    const ref = (c ?? p)!;
+    const code = /^BTC$/i.test(ref.symbol)
+      ? BENS_E_DIREITOS_CODES.CRYPTO_BTC
+      : STABLE.test(ref.symbol)
+        ? BENS_E_DIREITOS_CODES.CRYPTO_STABLE
+        : BENS_E_DIREITOS_CODES.CRYPTO_ALT;
+    items.push({
+      grupo: code.grupo,
+      codigo: code.codigo,
+      codigoDescricao: code.descricao,
+      localizacao: 'Brasil',
       cnpj: '',
       instrumentId: id,
       ticker: ref.symbol,
-      discriminacao: c
-        ? `${fmt(c.quantity)} ${isFund ? 'cotas' : 'ações'} ${ref.symbol}${ref.name ? ` (${ref.name})` : ''}, custo ${ref.currency} ${fmt(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
-        : `${ref.symbol}: posição totalmente vendida em ${year}.`,
+      discriminacao: c ? `${fmt(c.quantity)} ${ref.symbol}, custo médio de aquisição.` : `${ref.symbol}: alienado em ${year}.`,
       quantidade: c?.quantity ?? 0,
       situacaoAnterior: p?.costBrl ?? 0,
       situacaoAtual: c?.costBrl ?? 0,
@@ -115,20 +202,80 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     });
   }
 
-  const cashPrev = new Map<CurrencyCode, number>(foreign.cashPrevYear.map((b) => [b.currency, b.cost]));
-  const cashCur = new Map<CurrencyCode, { units: number; cost: number }>(foreign.cash.map((b) => [b.currency, b]));
-  for (const ccy of new Set([...cashCur.keys(), ...cashPrev.keys()])) {
-    const c = cashCur.get(ccy);
-    const code = BENS_E_DIREITOS_CODES.FOREIGN_CASH;
+  // Foreign
+  const foreign = brazilForeignAnnualReport(input, {
+    year,
+    ptax: opts.ptax,
+    categoryOverrides: opts.categoryOverrides,
+    transferBasis: opts.transferBasis,
+  });
+  issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));
+  const fPrev = new Map(foreign.positionsPrevYear.map((p) => [p.instrumentId, p]));
+  const fCur = new Map(foreign.positions.map((p) => [p.instrumentId, p]));
+  const soldIds = new Set(foreign.sales.map((s) => s.instrumentId));
+  for (const id of new Set([...fCur.keys(), ...fPrev.keys(), ...soldIds])) {
+    const c = fCur.get(id);
+    const p = fPrev.get(id);
+    const inst = instruments.get(id);
+    const symbol = c?.symbol ?? p?.symbol ?? inst?.symbol ?? id;
+    const assetClass = c?.assetClass ?? p?.assetClass ?? inst?.assetClass;
+    const isFund = assetClass === 'etf' || assetClass === 'fund' || assetClass === 'reit';
+    const code = isFund ? BENS_E_DIREITOS_CODES.FOREIGN_FUND : BENS_E_DIREITOS_CODES.FOREIGN_STOCK;
+    const sales = foreign.sales.filter((s) => s.instrumentId === id);
+    const income = foreign.income.filter((i) => i.instrumentId === id);
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
       codigoDescricao: code.descricao,
-      localizacao: '',
+      localizacao: c?.country ?? p?.country ?? inst?.country ?? '',
       cnpj: '',
-      discriminacao: `Saldo de ${ccy} ${fmt(c?.units ?? 0)} em conta no exterior${opts.brokerLabel ? ` (${opts.brokerLabel})` : ''}, ao custo de aquisição em reais.`,
+      instrumentId: id,
+      ticker: symbol,
+      discriminacao: c
+        ? `${fmt(c.quantity)} ${isFund ? 'cotas' : 'ações'} ${symbol}${c.name ? ` (${c.name})` : ''}, custo ${c.currency} ${fmt2(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
+        : `${symbol}: posição totalmente vendida em ${year}.`,
+      quantidade: c?.quantity ?? 0,
+      situacaoAnterior: p?.costBrl ?? 0,
+      situacaoAtual: c?.costBrl ?? 0,
+      exterior: {
+        lucroPrejuizoBrl: sum(sales.map((s) => s.gainBrl)),
+        rendimentosBrl: sum(income.map((i) => i.grossBrl)),
+        impostoPagoExteriorBrl: sum(income.map((i) => i.foreignTaxBrl)),
+      },
+      codeMeta: code.meta,
+    });
+  }
+
+  const cashCountry = { USD: 'US', ...(opts.foreignCashCountry ?? {}) } as Record<string, string>;
+  const cashPrev = new Map<CurrencyCode, number>(foreign.cashPrevYear.map((b) => [b.currency, b.cost]));
+  const cashCur = new Map<CurrencyCode, { units: number; cost: number }>(foreign.cash.map((b) => [b.currency, b]));
+  const brokerInterest = foreign.income.filter((i) => !i.instrumentId);
+  for (const ccy of new Set([...cashCur.keys(), ...cashPrev.keys()])) {
+    const c = cashCur.get(ccy);
+    const code = BENS_E_DIREITOS_CODES.FOREIGN_CASH;
+    const loc = cashCountry[ccy] ?? '';
+    if (!loc) {
+      issues.push({
+        level: 'warning',
+        code: 'CASH_LOCATION_UNKNOWN',
+        message: `Informe o país da conta em ${ccy} no exterior (opção foreignCashCountry) para a ficha Bens e Direitos.`,
+      });
+    }
+    const inc = brokerInterest.filter((i) => i.currency === ccy);
+    items.push({
+      grupo: code.grupo,
+      codigo: code.codigo,
+      codigoDescricao: code.descricao,
+      localizacao: loc,
+      cnpj: '',
+      discriminacao: `Saldo de ${ccy} ${fmt2(c?.units ?? 0)} em conta no exterior${opts.brokerLabel ? ` (${opts.brokerLabel})` : ''}, ao custo de aquisição em reais.`,
       situacaoAnterior: cashPrev.get(ccy) ?? 0,
       situacaoAtual: c?.cost ?? 0,
+      exterior: {
+        lucroPrejuizoBrl: 0,
+        rendimentosBrl: sum(inc.map((i) => i.grossBrl)),
+        impostoPagoExteriorBrl: sum(inc.map((i) => i.foreignTaxBrl)),
+      },
       codeMeta: code.meta,
     });
   }
@@ -141,8 +288,9 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     totalAtual: sum(items.map((i) => i.situacaoAtual)),
     notes: [
       'Valores pelo custo de aquisição em reais (não pelo valor de mercado), conforme instruções da DIRPF.',
-      'O CNPJ da empresa/fundo deve ser preenchido pelo usuário (consulte o informe da corretora ou o site da B3).',
-      'Para ativos no exterior informe o país de localização e, quando aplicável, o preenchimento da aba "Aplicações Financeiras no Exterior" (Lei 14.754/2023).',
+      'CNPJ: preenchido quando conhecido (tabela interna a conferir ou informado pelo usuário); nos demais casos, consulte o informe da corretora.',
+      'Ativos no exterior: informe país, lucro/prejuízo, rendimentos e imposto pago no exterior de cada bem (campos "exterior"), conforme a DIRPF desde 2025 (Lei 14.754/2023).',
+      'Saldo em moeda estrangeira: custo em reais efetivamente pago na remessa (IN RFB 2.180/2024).',
     ],
     issues,
   };

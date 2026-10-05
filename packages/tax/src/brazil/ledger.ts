@@ -85,6 +85,9 @@ interface Pos {
   shortIrrf: number;
   shortIrrfKnown: boolean;
   shortSince?: ISODate;
+  /** Fraction left by a grupamento/desdobramento, awaiting the company's auction (leilão de frações). */
+  fracQty: number;
+  fracCost: number;
 }
 
 /**
@@ -123,7 +126,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     const inst = instruments.get(id);
     const symbol = displaySymbol(id, inst);
     const category = cat(id);
-    const p: Pos = pos.get(id) ?? { qty: 0, cost: 0, shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false };
+    const p: Pos = pos.get(id) ?? { qty: 0, cost: 0, shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false, fracQty: 0, fracCost: 0 };
     pos.set(id, p);
 
     // 1) corporate actions and transfers in
@@ -135,6 +138,11 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           p.shortQty *= ratio;
           const frac = p.qty - Math.floor(p.qty + 1e-9);
           if (frac > 1e-6) {
+            const fracCost = (p.cost * frac) / p.qty;
+            p.qty -= frac;
+            p.cost -= fracCost;
+            p.fracQty += frac;
+            p.fracCost += fracCost;
             issues.push({
               level: 'warning',
               code: 'FRACAO_GRUPAMENTO',
@@ -142,7 +150,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
               instrumentId: id,
               message:
                 `O ${ratio < 1 ? 'grupamento' : 'desdobramento'} de ${symbol} deixou fração de ${frac.toFixed(4)} ação(ões) ` +
-                `(custo R$ ${((p.cost * frac) / p.qty).toFixed(2)}). A fração é vendida em leilão pela empresa: registre a venda ` +
+                `(custo R$ ${fracCost.toFixed(2)}), separada da posição. A fração é vendida em leilão pela empresa: registre a venda ` +
                 `(SELL de ${frac.toFixed(4)}) com o valor recebido — é uma alienação tributável.`,
             });
           }
@@ -297,6 +305,30 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         p.qty += buyQty;
         p.cost += buyValue;
       }
+    }
+
+    // 2b0) sale of a pending fraction (leilão de frações)
+    if (restSell.qty > 0 && p.fracQty > 1e-9 && restSell.qty <= p.fracQty + 1e-9) {
+      const q = restSell.qty;
+      const cost = (p.fracCost * Math.min(q, p.fracQty)) / p.fracQty;
+      p.fracCost -= cost;
+      p.fracQty = Math.max(0, p.fracQty - q);
+      trades.push({
+        date,
+        month: monthOf(date),
+        instrumentId: id,
+        symbol,
+        category,
+        kind: 'swing',
+        quantity: q,
+        grossSales: restSell.gross,
+        netProceeds: restSell.value,
+        cost,
+        result: restSell.value - cost,
+        irrfReported: restSell.irrfKnown ? restSell.irrf : undefined,
+        transactionIds: restSell.ids,
+      });
+      restSell.qty = 0;
     }
 
     // 2b) sells: close the long position at preço médio; the excess opens a short

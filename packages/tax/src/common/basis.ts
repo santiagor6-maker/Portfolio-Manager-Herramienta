@@ -14,6 +14,8 @@ export interface TransferBasis {
   totalCost?: number;
   /** Exchange rate (tax currency per unit) actually used at the original purchase, if known. */
   fxRate?: number;
+  /** Parsed from free text with only a year: date approximated as 31-Dec. */
+  approximate?: boolean;
 }
 
 /** Map transaction id -> original basis, supplied by the UI/importer. */
@@ -31,12 +33,23 @@ function num(s: string): number {
   return Number(s.replace(',', '.'));
 }
 
+/**
+ * Loose free-text hint, e.g. "bought 2019 at 50", "comprado em 2019-03-15 a 50", "comprada el 2019 por 50".
+ * A bare year is taken as 31-Dec of that year (the latest possible date: conservative for holding periods).
+ */
+const LOOSE_RE = /(?:bought|purchased|comprad[oa]s?|adquirid[oa]s?|compra)\s*(?:on|in|en|em|el|no|na)?\s*(\d{4}(?:-\d{2}-\d{2})?)\s*(?:at|a|@|por|for)\s*(?:US\$|R\$|\$|COP|USD|BRL)?\s*([\d.,]+)/i;
+
 export function transferBasisOf(tx: Transaction, map?: TransferBasisMap): TransferBasis | undefined {
   const fromMap = map?.[tx.id];
   if (fromMap) return fromMap;
   const m = tx.note ? NOTE_RE.exec(tx.note) : null;
-  if (!m) return undefined;
-  return { openDate: m[1]!, unitCost: num(m[2]!), fxRate: m[3] ? num(m[3]) : undefined };
+  if (m) return { openDate: m[1]!, unitCost: num(m[2]!), fxRate: m[3] ? num(m[3]) : undefined };
+  const l = tx.note ? LOOSE_RE.exec(tx.note) : null;
+  if (l) {
+    const d = l[1]!;
+    return { openDate: d.length === 4 ? `${d}-12-31` : d, unitCost: num(l[2]!), approximate: d.length === 4 };
+  }
+  return undefined;
 }
 
 /** Total original cost for `quantity` units, or undefined when unknown. */

@@ -3,6 +3,7 @@ import { monthOf } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sum } from '../common/util';
+import { issuerKey } from '../common/basis';
 import { classifyForBrazil, type BrCategory } from './classify';
 import { brazilConfig, DIRPF_INCOME_LINES, type BrazilTaxYearConfig } from './config';
 
@@ -20,6 +21,10 @@ export interface BrProventoRow {
   /** Expected withholding under the year's rules (JCP rate; dividends above the monthly limit from 2026). */
   expectedIrrf: number;
   dirpf?: { ficha: string; linha: string };
+  /** Paying company key (dividends of PETR3 and PETR4 share the same payer). */
+  issuer?: string;
+  /** Lei 15.270/2025 transition: profits up to 2025 approved by 31/12/2025 (no 10% IRRF). */
+  lei15270Transition?: boolean;
 }
 
 export interface BrProventosReport {
@@ -38,7 +43,17 @@ export interface BrProventosOptions {
   categoryOverrides?: Record<string, BrCategory>;
   /** Custom classifier; return undefined to fall back to the default heuristic. */
   classify?: (tx: Transaction) => BrProventoType | undefined;
+  /** Issuer (paying company, e.g. CNPJ) per instrument id; default groups B3 classes by root ticker. */
+  issuers?: Record<string, string>;
+  /**
+   * Transaction ids of dividends from profits up to 2025 approved by 31/12/2025 (Lei 15.270/2025
+   * transition: no 10% withholding). Notes like "ref. 2025" / "lucros de 2024" are detected too.
+   */
+  preLei15270Dividends?: string[];
 }
+
+/** Lei 15.270/2025 transition hint in the note: profits of 2025 or earlier. */
+const TRANSITION_RE = /(ref(erente)?\.?\s*(a|ao)?\s*(exerc[ií]cio\s*(de)?\s*)?|lucros?\s*(de|até|ate)\s*|exerc[ií]cio\s*(de)?\s*)(20(1\d|2[0-5]))\b/i;
 
 const JCP_RE = /\b(jcp|jscp|juros\s+s(obre|\/)?\s*(o\s+)?capital)/i;
 
@@ -81,6 +96,11 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       net: gross - irrf,
       expectedIrrf: type === 'JCP' ? gross * cfg.jcpRate : 0,
       dirpf: line ? { ficha: line.ficha, linha: line.linha } : undefined,
+      issuer: tx.instrumentId ? issuerKey(inst, tx.instrumentId, opts.issuers) : undefined,
+      lei15270Transition:
+        type === 'DIVIDENDO' && ((opts.preLei15270Dividends ?? []).includes(tx.id) || TRANSITION_RE.test(tx.note ?? ''))
+          ? true
+          : undefined,
     });
     if ((category === 'BDR' || category === 'ETF') && type === 'OUTRO') {
       issues.push({
@@ -101,23 +121,46 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
     const { monthlyThresholdPerPayer, rate } = cfg.dividendWithholding;
     const groups = new Map<string, BrProventoRow[]>();
     for (const r of rows.filter((x) => x.type === 'DIVIDENDO')) {
-      const k = `${r.instrumentId ?? ''}|${monthOf(r.date)}`;
+      if (r.lei15270Transition) continue;
+      const k = `${r.issuer ?? r.instrumentId ?? ''}|${monthOf(r.date)}`;
       groups.set(k, [...(groups.get(k) ?? []), r]);
     }
     for (const list of groups.values()) {
       const total = sum(list.map((r) => r.gross));
       if (total > monthlyThresholdPerPayer) {
         for (const r of list) r.expectedIrrf = r.gross * rate;
+        const symbols = [...new Set(list.map((r) => r.symbol ?? ''))].join('+');
         issues.push({
           level: 'info',
           code: 'DIVIDEND_IRRF_LEI_15270',
           instrumentId: list[0]?.instrumentId,
-          message: `Dividendos de ${list[0]?.symbol ?? ''} acima de R$ ${monthlyThresholdPerPayer} no mês: IRRF de ${rate * 100}% sobre o total (Lei 15.270/2025).`,
+          message:
+            `Dividendos da mesma empresa (${symbols}) acima de R$ ${monthlyThresholdPerPayer} no mês: IRRF de ${rate * 100}% sobre o total ` +
+            '(Lei 15.270/2025), salvo lucros apurados até 2025 aprovados até 31/12/2025 (regra de transição).',
         });
       }
     }
+    if (rows.some((r) => r.lei15270Transition)) {
+      issues.push({
+        level: 'info',
+        code: 'LEI_15270_TRANSITION',
+        message: 'Dividendos marcados como lucros até 2025 aprovados até 31/12/2025: sem a retenção de 10% da Lei 15.270/2025 (regra de transição).',
+      });
+    }
   }
   for (const r of rows) {
+    if (r.type === 'DIVIDENDO' && r.expectedIrrf > 0 && r.irrf === 0) {
+      issues.push({
+        level: 'info',
+        code: 'DIVIDEND_IRRF_LEI_15270_CHECK',
+        transactionId: r.transactionId,
+        instrumentId: r.instrumentId,
+        message:
+          `Dividendo de ${r.symbol ?? ''} em ${r.date} sem IRRF registrado, acima do limite mensal: confira se é lucro até 2025 ` +
+          '(transição, sem retenção) ou se falta registrar a retenção de 10%.',
+      });
+      continue;
+    }
     if (r.expectedIrrf > 0 && Math.abs(r.irrf - r.expectedIrrf) > Math.max(0.05, r.expectedIrrf * 0.01)) {
       issues.push({
         level: 'warning',

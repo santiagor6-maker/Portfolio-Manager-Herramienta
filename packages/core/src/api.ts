@@ -8,11 +8,14 @@ import type {
   AllocationDimension,
   AllocationSlice,
   CashBalance,
+  CorporateAction,
   CostMethod,
   CurrencyCode,
   FxSeries,
   Holding,
   IncomeEvent,
+  IndexId,
+  IndexSeries,
   Instrument,
   ISODate,
   MarketData,
@@ -56,6 +59,27 @@ export interface EngineOptions {
   costMethod?: CostMethod;
   /** "Today" for defaults (end of the monthly table). Defaults to the machine's local date. */
   asOf?: ISODate;
+  // ---- round 2 (all optional) ----
+  /**
+   * When a debit in a foreign currency lacks cash, convert portfolio-base-currency cash at the
+   * market rate before booking an implicit deposit ('fromBaseCash', default) or not ('none').
+   * Avoids double-counting "deposit COP + buy in USD" without a conversion row.
+   */
+  implicitFx?: 'fromBaseCash' | 'none';
+  /** Use BUY/SELL prices as price observations when no market close exists that day (default true). */
+  tradePriceObservations?: boolean;
+  /** Redeem accrual instruments automatically at maturity (default true). */
+  autoRedeemAtMaturity?: boolean;
+  /** Staleness thresholds in days: listed instruments (default 7) and manual/unlisted (default 45). */
+  staleDays?: { listed?: number; manual?: number };
+  /** Restrict the analysis to these accounts ('' = rows without account). Per-account TWR/table/summary. */
+  filter?: { accounts?: string[] };
+  /** Inflation index for real returns. Default by base currency: COP -> IPC_CO, BRL -> IPCA, USD -> CPI_US, EUR -> HICP_EA. null disables. */
+  inflationIndex?: IndexId | null;
+  /** Rate indices to compare against (CDI, IBR...). Default: CDI for BRL, IBR for COP, when loaded. */
+  indices?: IndexId[];
+  /** Benchmark kind override: 'total' = the price series is already total return (adjusted) or dividends are reinvested. */
+  benchmarkKinds?: Record<string, 'price' | 'total'>;
 }
 
 export interface MarketDataInput {
@@ -63,6 +87,12 @@ export interface MarketDataInput {
   fx: FxSeries[];
   /** User-entered prices override provider prices on the same date. */
   manualPrices?: PriceSeries[];
+  /** Rate and inflation indices: CDI, SELIC, IPCA, IPC_CO, IBR, UVR... (additive, round 2). */
+  indexSeries?: IndexSeries[];
+  /** Provider corporate actions: dividends per share make benchmarks total-return (additive). */
+  corporateActions?: CorporateAction[];
+  /** A preferred FX route older than this many days loses to a fresher route (default 7). */
+  fxStaleDays?: number;
 }
 
 import { allocationImpl } from './allocation';

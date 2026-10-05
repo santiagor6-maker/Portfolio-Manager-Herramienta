@@ -457,6 +457,15 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
           const costLocal = basisTotalCost(basis, qty) ?? grossAmount(tx) + fees;
           const costCop = costLocal * (basis.fxRate ?? trm(ccy, basis.openDate));
           list.push({ openDate: basis.openDate, quantity: qty, costLocal, costCop });
+          if (basis.approximate) {
+            issues.push({
+              level: 'info',
+              code: 'TRANSFER_BASIS_APPROXIMATE',
+              transactionId: tx.id,
+              instrumentId: id,
+              message: `Costo original de ${displaySymbol(id, inst)} tomado de la nota con solo el año: se usó el 31-dic de ese año como fecha de compra.`,
+            });
+          }
         } else {
           const costLocal = grossAmount(tx) + fees;
           list.push({ openDate: tx.date, quantity: qty, costLocal, costCop: costLocal * trm(ccy, tx.date) });

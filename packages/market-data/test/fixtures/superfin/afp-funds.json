@@ -1,0 +1,25 @@
+[{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"2","nombre_fondo":"Fondo de Cesantias Corto Plazo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"2","nombre_fondo":"Fondo de Cesantias Corto Plazo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"2","nombre_fondo":"Fondo de Cesantias Corto Plazo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"2","nombre_fondo":"Fondo de Cesantias Corto Plazo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"1","nombre_fondo":"Fondo de Cesantias Largo Plazo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"1","nombre_fondo":"Fondo de Cesantias Largo Plazo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"1","nombre_fondo":"Fondo de Cesantias Largo Plazo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"1","nombre_fondo":"Fondo de Cesantias Largo Plazo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"8000","nombre_fondo":"Fondo de Pensiones Alternativo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"5000","nombre_fondo":"Fondo de Pensiones Conservador","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"5000","nombre_fondo":"Fondo de Pensiones Conservador","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"5000","nombre_fondo":"Fondo de Pensiones Conservador","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"5000","nombre_fondo":"Fondo de Pensiones Conservador","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"6000","nombre_fondo":"Fondo de Pensiones Mayor Riesgo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"6000","nombre_fondo":"Fondo de Pensiones Mayor Riesgo","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"6000","nombre_fondo":"Fondo de Pensiones Mayor Riesgo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"6000","nombre_fondo":"Fondo de Pensiones Mayor Riesgo","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"1000","nombre_fondo":"Fondo de Pensiones Moderado","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"1000","nombre_fondo":"Fondo de Pensiones Moderado","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"1000","nombre_fondo":"Fondo de Pensiones Moderado","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"1000","nombre_fondo":"Fondo de Pensiones Moderado","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"2","nombre_entidad":"\"Proteccion\"","codigo_patrimonio":"7000","nombre_fondo":"Fondo de Pensiones Retiro Programado","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"3","nombre_entidad":"\"Porvenir\"","codigo_patrimonio":"7000","nombre_fondo":"Fondo de Pensiones Retiro Programado","last":"2026-09-30T00:00:00.000"}
+,{"codigo_entidad":"9","nombre_entidad":"Skandia Afp - Accai S.A.","codigo_patrimonio":"7000","nombre_fondo":"Fondo de Pensiones Retiro Programado","last":"2026-10-01T00:00:00.000"}
+,{"codigo_entidad":"10","nombre_entidad":"\"Colfondos S.A.\" Y \"Colfondos\"","codigo_patrimonio":"7000","nombre_fondo":"Fondo de Pensiones Retiro Programado","last":"2026-10-01T00:00:00.000"}]

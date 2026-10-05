@@ -14,11 +14,13 @@ export * from './common/types';
 export { TAX_DISCLAIMER } from './common/disclaimer';
 export { toCsv, type CsvOptions, type CsvCell } from './common/csv';
 export * from './common/basis';
-export { lastBrazilBusinessDayOfMonth, brazilBankHolidays, addYears } from './common/dates';
+export { lastBrazilBusinessDayOfMonth, brazilBankHolidays, addYears, nextBrazilBusinessDay } from './common/dates';
 
 export * from './colombia/config';
 export * from './colombia/report';
 export * from './colombia/csv';
+export * from './colombia/simulate';
+export * from './colombia/taxPack';
 
 export * from './brazil/config';
 export * from './brazil/classify';
@@ -29,6 +31,10 @@ export * from './brazil/proventos';
 export * from './brazil/exterior';
 export * from './brazil/bensDireitos';
 export * from './brazil/csv';
+export * from './brazil/rendaFixa';
+export * from './brazil/crypto';
+export * from './brazil/simulate';
+export * from './brazil/taxPack';
 
 export * from './us/withholding';
 

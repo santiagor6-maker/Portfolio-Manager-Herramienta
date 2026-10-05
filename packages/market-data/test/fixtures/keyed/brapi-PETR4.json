@@ -1,0 +1,70 @@
+{
+ "results": [
+  {
+   "currency": "BRL",
+   "symbol": "PETR4",
+   "shortName": "PETROBRAS   PN  EDJ N2",
+   "longName": "Petróleo Brasileiro S.A. - Petrobras",
+   "regularMarketPrice": 37.69,
+   "regularMarketTime": "2025-01-31T20:07:00.000Z",
+   "historicalDataPrice": [
+    {
+     "date": 1735819200,
+     "open": 36.9,
+     "high": 37.3,
+     "low": 36.7,
+     "close": 37.09,
+     "volume": 30000000,
+     "adjustedClose": 35.2
+    },
+    {
+     "date": 1735905600,
+     "open": 37.1,
+     "high": 37.5,
+     "low": 36.9,
+     "close": 37.41,
+     "volume": 28000000,
+     "adjustedClose": 35.5
+    },
+    {
+     "date": 1738339200,
+     "open": 37.5,
+     "high": 37.9,
+     "low": 37.3,
+     "close": 37.69,
+     "volume": 25000000,
+     "adjustedClose": 35.8
+    }
+   ],
+   "dividendsData": {
+    "cashDividends": [
+     {
+      "assetIssued": "BRPETRACNPR6",
+      "paymentDate": "2025-02-20T00:00:00.000Z",
+      "rate": 0.6577,
+      "relatedTo": "4º Trimestre/2024",
+      "approvedOn": "2024-12-19T00:00:00.000Z",
+      "isinCode": "BRPETRACNPR6",
+      "label": "DIVIDENDO",
+      "lastDatePrior": "2024-12-23T00:00:00.000Z",
+      "remarks": ""
+     },
+     {
+      "assetIssued": "BRPETRACNPR6",
+      "paymentDate": "2025-03-20T00:00:00.000Z",
+      "rate": 0.1012,
+      "relatedTo": "4º Trimestre/2024",
+      "approvedOn": "2024-12-19T00:00:00.000Z",
+      "isinCode": "BRPETRACNPR6",
+      "label": "JCP",
+      "lastDatePrior": "2024-12-23T00:00:00.000Z",
+      "remarks": ""
+     }
+    ],
+    "stockDividends": []
+   }
+  }
+ ],
+ "requestedAt": "2025-02-01T00:00:00.000Z",
+ "took": "12ms"
+}

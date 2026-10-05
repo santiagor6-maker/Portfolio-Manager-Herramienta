@@ -1,4 +1,5 @@
 import type { CurrencyCode, ISODate } from '@pm/core';
+import { basisTotalCost, transferBasisOf, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
 import { lastBrazilBusinessDayOfMonth, yearOf } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
@@ -21,6 +22,13 @@ export interface BrForeignOptions {
   ptax?: PtaxProvider;
   /** Losses (BRL) from foreign applications carried into the first computed year. */
   initialLossCarry?: number;
+  /** Original cost of securities received by TRANSFER_IN. */
+  transferBasis?: TransferBasisMap;
+  /**
+   * Portfolio base currency; when 'BRL' (default) `fxRateToBase` of foreign-currency deposits is
+   * used as the cost actually paid for the currency (IN RFB 2.180/2024).
+   */
+  portfolioBaseCurrency?: CurrencyCode;
   config?: (year: number) => BrazilTaxYearConfig;
   categoryOverrides?: Record<string, BrCategory>;
 }
@@ -151,6 +159,22 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
   const isForeign = (id?: string) => classifyForBrazil(id ? instruments.get(id) : undefined, opts.categoryOverrides) === 'FOREIGN';
   const pos = new Map<string, { qty: number; costFx: number; costBrl: number }>();
   const pool = new CurrencyPool();
+  let shortfallWarned = false;
+  const removeCash = (tx: { id: string; date: ISODate }, ccy: CurrencyCode, units: number) => {
+    const r = pool.remove(ccy, units);
+    if (r.uncovered > 1e-6 && !shortfallWarned) {
+      shortfallWarned = true;
+      issues.push({
+        level: 'info',
+        code: 'FOREIGN_CASH_NOT_RECORDED',
+        transactionId: tx.id,
+        message:
+          `Saída de ${ccy} sem saldo registrado (falta a remessa/depósito). Registre a remessa (FX_CONVERSION BRL→${ccy} ou ` +
+          'DEPOSIT com a taxa efetiva) para que o saldo e o custo em reais do dinheiro no exterior fiquem corretos.',
+      });
+    }
+    return r;
+  };
   const byYear = new Map<number, YearAgg>();
   const agg = (y: number) => {
     let a = byYear.get(y);
@@ -195,20 +219,33 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     const id = tx.instrumentId;
 
     if (!id || !isForeign(id)) {
+      if (id && !isForeign(id)) continue;
+      if (tx.type === 'FX_CONVERSION') {
+        const amt = grossAmount(tx);
+        const to = tx.toCurrency;
+        const toAmt = tx.toAmount ?? 0;
+        if (!foreignCash) {
+          // Remittance BRL -> foreign currency: cost is the amount effectively paid (IN RFB 2.180/2024).
+          if (to && to !== 'BRL') pool.add(to, toAmt, amt + fees);
+        } else {
+          const r = removeCash(tx, ccy, amt + fees);
+          if (to && to !== 'BRL') pool.add(to, toAmt, r.costRemoved + r.uncovered * rate('sell', ccy, tx.date));
+        }
+        continue;
+      }
       // Cash movements in foreign currency not tied to a domestic instrument.
-      if (!foreignCash || (id && !isForeign(id))) continue;
-      if (tx.type === 'DEPOSIT') pool.add(ccy, grossAmount(tx), grossAmount(tx) * rate('sell', ccy, tx.date));
-      else if (tx.type === 'WITHDRAWAL' || tx.type === 'FEE' || tx.type === 'TAX') pool.remove(ccy, grossAmount(tx));
+      if (!foreignCash) continue;
+      if (tx.type === 'DEPOSIT') {
+        const amt = grossAmount(tx);
+        const paid = tx.fxRateToBase !== undefined && (opts.portfolioBaseCurrency ?? 'BRL') === 'BRL' ? amt * tx.fxRateToBase : undefined;
+        pool.add(ccy, amt, paid ?? amt * rate('sell', ccy, tx.date));
+      } else if (tx.type === 'WITHDRAWAL' || tx.type === 'FEE' || tx.type === 'TAX') removeCash(tx, ccy, grossAmount(tx));
       else if (tx.type === 'INTEREST') {
         const gross = grossAmount(tx);
         const ps = rate('sell', ccy, tx.date);
         const pb = rate('buy', ccy, tx.date);
         agg(ty).income.push(incomeRow(tx.id, tx.date, undefined, undefined, 'JUROS', ccy, gross, taxes, ps, pb, cfgOf(ty)));
         pool.add(ccy, gross - taxes, (gross - taxes) * ps);
-      } else if (tx.type === 'FX_CONVERSION') {
-        const amt = grossAmount(tx);
-        pool.remove(ccy, amt + fees);
-        if (tx.toCurrency && tx.toCurrency !== 'BRL') pool.add(tx.toCurrency, tx.toAmount ?? 0, amt * rate('sell', ccy, tx.date));
       }
       continue;
     }
@@ -217,34 +254,57 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     const p = pos.get(id) ?? { qty: 0, costFx: 0, costBrl: 0 };
     pos.set(id, p);
     switch (tx.type) {
-      case 'BUY':
-      case 'TRANSFER_IN': {
+      case 'BUY': {
         const costFx = grossAmount(tx) + fees;
         p.qty += tx.quantity ?? 0;
         p.costFx += costFx;
         p.costBrl += costFx * rate('buy', ccy, tx.date);
-        if (tx.type === 'BUY') pool.remove(ccy, costFx);
+        removeCash(tx, ccy, costFx);
+        break;
+      }
+      case 'TRANSFER_IN': {
+        const qty = tx.quantity ?? 0;
+        const basis = transferBasisOf(tx, opts.transferBasis);
+        const original = basis ? basisTotalCost(basis, qty) : undefined;
+        const costFx = original ?? grossAmount(tx) + fees;
+        const fx = basis?.fxRate ?? rate('buy', ccy, basis?.openDate ?? tx.date);
+        if (original === undefined) {
+          issues.push({
+            level: 'warning',
+            code: 'TRANSFER_COST_UNKNOWN',
+            transactionId: tx.id,
+            instrumentId: id,
+            message: `Transferência de ${displaySymbol(id, inst)} sem custo original: usado o valor da transferência. Informe o custo de aquisição (transferBasis ou nota "[custo: AAAA-MM-DD @ preço]").`,
+          });
+        }
+        p.qty += qty;
+        p.costFx += costFx;
+        p.costBrl += costFx * fx;
         break;
       }
       case 'SELL':
       case 'TRANSFER_OUT': {
-        const q = tx.quantity ?? 0;
-        if (q > p.qty + 1e-9) {
+        const qRequested = tx.quantity ?? 0;
+        const q = Math.min(qRequested, p.qty);
+        if (qRequested > p.qty + 1e-9) {
           issues.push({
             level: 'error',
             code: 'OVERSELL',
             transactionId: tx.id,
             instrumentId: id,
-            message: `Venda de ${q} ${displaySymbol(id, inst)} acima da posição (${p.qty}); custo do excedente = 0.`,
+            message:
+              `Venda de ${qRequested} ${displaySymbol(id, inst)} acima da posição (${p.qty}): o excedente não foi apurado ` +
+              '(sem ganho fictício). Registre a compra ou a transferência com o custo original.',
           });
         }
+        const coveredShare = qRequested > 0 ? q / qRequested : 0;
         const f = p.qty > 0 ? Math.min(1, q / p.qty) : 0;
         const costBrl = p.costBrl * f;
         p.qty = Math.max(0, p.qty - q);
         p.costFx -= p.costFx * f;
         p.costBrl -= costBrl;
-        if (tx.type === 'SELL') {
-          const proceedsFx = grossAmount(tx) - fees;
+        if (tx.type === 'SELL' && q > 1e-12) {
+          const proceedsFx = (grossAmount(tx) - fees) * coveredShare;
           const ps = rate('sell', ccy, tx.date);
           const proceedsBrl = proceedsFx * ps;
           agg(ty).sales.push({

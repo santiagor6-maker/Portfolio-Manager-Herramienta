@@ -6,10 +6,15 @@
  * - FX: direct pair, inverse pair, triangulation via USD, then via EUR, then any path
  *   found by breadth-first search over the available pairs (max 3 legs). Candidate
  *   routes are tried in that order per date, so a direct series that starts later
- *   than the requested date falls back to a triangulated rate.
+ *   than the requested date falls back to a triangulated rate. When the preferred route's data
+ *   is older than `fxStaleDays` (default 7) and another route has fresher data, the freshest
+ *   route wins (a stale direct BRL/COP pair does not beat fresh USD/COP and USD/BRL).
+ * - Indices (CDI, IPCA, IPC, IBR, UVR...) from `indexSeries` (see indices.ts).
+ * - Dividends per share from `corporateActions` (total-return benchmarks).
  * - Minor-unit quotes (GBp/GBX, ZAc, ILA) are normalized to the major currency.
  */
-import type { CurrencyCode, FxSeries, ISODate, MarketData, PriceSeries } from './types';
+import type { CorporateAction, CurrencyCode, FxSeries, IndexId, ISODate, MarketData, PriceSeries } from './types';
+import { type IndexData, buildIndex } from './indices';
 import type { MarketDataInput } from './api';
 import { dayToIso, firstIndexAtOrAfter, isoToDay, lastIndexAtOrBefore } from './dates';
 
@@ -34,6 +39,10 @@ export interface EngineMarket extends MarketData {
   fxNearest(from: CurrencyCode, to: CurrencyCode, day: number): number | undefined;
   /** Currency of the stored price series (after minor-unit normalization), if known. */
   priceCurrency(instrumentId: string): CurrencyCode | undefined;
+  /** Rate/inflation index data, if loaded. */
+  index(id: IndexId): IndexData | undefined;
+  /** Cash dividends per share (price currency) with ex-date in (fromDay, toDay]; undefined when no dividend data exists for the instrument. */
+  dividends(instrumentId: string, fromDay: number, toDay: number): { day: number; amount: number }[] | undefined;
 }
 
 /** Public extension of MarketData returned by createMarketData. */
@@ -44,6 +53,8 @@ export interface MarketDataEx extends EngineMarket {
   instrumentIds(): string[];
   /** Currency pairs available as `BASE/QUOTE`. */
   fxPairs(): string[];
+  /** Index ids available. */
+  indexIds(): string[];
 }
 
 const MINOR_UNITS: Record<string, { major: CurrencyCode; factor: number }> = {
@@ -200,11 +211,18 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
     return routes;
   };
 
+  const staleDays = input.fxStaleDays ?? 7;
+  let oldest = 0; // oldest leg date of the last evaluated route
   const evalRoute = (route: Route, day: number, nearest: boolean): number | undefined => {
     let rate = 1;
+    oldest = Infinity;
     for (const leg of route) {
-      let v = lookup(leg.series, day);
-      if (v === undefined && nearest) v = lookupAfter(leg.series, day);
+      const i = lastIndexAtOrBefore(leg.series.days, day);
+      let v: number | undefined;
+      if (i >= 0) {
+        v = leg.series.values[i];
+        oldest = Math.min(oldest, leg.series.days[i] as number);
+      } else if (nearest) v = lookupAfter(leg.series, day);
       if (v === undefined) return undefined;
       rate *= leg.invert ? 1 / v : v;
     }
@@ -217,12 +235,24 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
     const t = normalizeCurrency(to);
     const adj = t.factor / f.factor;
     if (f.currency === t.currency) return adj;
-    for (const r of routesFor(f.currency, t.currency)) {
+    const routes = routesFor(f.currency, t.currency);
+    let best: number | undefined;
+    let bestOldest = -Infinity;
+    for (const r of routes) {
       const v = evalRoute(r, day, false);
-      if (v !== undefined) return v * adj;
+      if (v === undefined) continue;
+      if (best === undefined) {
+        best = v;
+        bestOldest = oldest;
+        if (day - oldest <= staleDays) break; // preferred route is fresh enough
+      } else if (oldest > bestOldest + staleDays) {
+        best = v;
+        bestOldest = oldest;
+      }
     }
+    if (best !== undefined) return best * adj;
     if (nearest) {
-      for (const r of routesFor(f.currency, t.currency)) {
+      for (const r of routes) {
         const v = evalRoute(r, day, true);
         if (v !== undefined) return v * adj;
       }
@@ -230,8 +260,41 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
     return undefined;
   };
 
+  // ---- indices and dividends ---------------------------------------------
+  const indices = new Map<string, IndexData>();
+  for (const s of input.indexSeries ?? []) {
+    const d = s && buildIndex(s);
+    if (d) indices.set(s.id, d);
+  }
+  const divs = new Map<string, { days: number[]; amounts: number[] }>();
+  for (const a of (input.corporateActions ?? []) as CorporateAction[]) {
+    if (!a || a.type !== 'DIVIDEND' || !(a.amountPerShare && a.amountPerShare > 0)) continue;
+    let e = divs.get(a.instrumentId);
+    if (!e) divs.set(a.instrumentId, (e = { days: [], amounts: [] }));
+    e.days.push(isoToDay(a.date));
+    e.amounts.push(a.amountPerShare);
+  }
+  for (const e of divs.values()) {
+    const order = e.days.map((_, i) => i).sort((x, y) => (e.days[x] as number) - (e.days[y] as number));
+    e.days = order.map((i) => e.days[i] as number);
+    e.amounts = order.map((i) => e.amounts[i] as number);
+  }
+
   const market: MarketDataEx = {
     engineMarket: true,
+    index: (id) => indices.get(id),
+    indexLevel: (id, date) => indices.get(id)?.level(isoToDay(date)),
+    indexIds: () => Array.from(indices.keys()),
+    dividends(id, fromDay, toDay) {
+      const e = divs.get(id);
+      if (!e) return undefined;
+      const out: { day: number; amount: number }[] = [];
+      for (let i = 0; i < e.days.length; i++) {
+        const d = e.days[i] as number;
+        if (d > fromDay && d <= toDay) out.push({ day: d, amount: e.amounts[i] as number });
+      }
+      return out;
+    },
     price(instrumentId, date) {
       const s = prices.get(instrumentId);
       return s ? lookup(s, isoToDay(date)) : undefined;
@@ -277,5 +340,26 @@ export function toEngineMarket(m: MarketData): EngineMarket {
     fxAt: (a, b, day) => (a === b ? 1 : m.fx(a, b, dayToIso(day))),
     fxNearest: (a, b, day) => (a === b ? 1 : m.fx(a, b, dayToIso(day))),
     priceCurrency: () => undefined,
+    index: (id) => {
+      if (!m.indexLevel) return undefined;
+      const lv = (d: number) => m.indexLevel!(id, dayToIso(d));
+      const data: IndexData = {
+        id,
+        kind: 'level',
+        firstDay: -Infinity,
+        lastDay: Infinity,
+        level: (d) => lv(d),
+        factor: (a, b, opts = {}) => {
+          if (b <= a) return 1;
+          const la = lv(a);
+          const lb = lv(b);
+          if (la === undefined || lb === undefined || la <= 0) return undefined;
+          const p = opts.percent ?? 1;
+          return p === 1 ? lb / la : 1 + p * (lb / la - 1);
+        },
+      };
+      return data;
+    },
+    dividends: () => undefined,
   };
 }

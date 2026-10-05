@@ -38,6 +38,27 @@ export const MARKETS: readonly MarketInfo[] = [
   { mic: 'XLIM', suffix: '.LM', country: 'PE', currency: 'PEN', name: 'Bolsa de Valores de Lima' },
   { mic: 'XBUE', suffix: '.BA', country: 'AR', currency: 'ARS', name: 'Bolsas y Mercados Argentinos' },
   { mic: 'XTSE', suffix: '.TO', country: 'CA', currency: 'CAD', name: 'Toronto Stock Exchange' },
+  { mic: 'XTSX', suffix: '.V', country: 'CA', currency: 'CAD', name: 'TSX Venture' },
+  { mic: 'XHKG', suffix: '.HK', country: 'HK', currency: 'HKD', name: 'Hong Kong Exchanges' },
+  { mic: 'XTKS', suffix: '.T', country: 'JP', currency: 'JPY', name: 'Tokyo Stock Exchange' },
+  { mic: 'XNSE', suffix: '.NS', country: 'IN', currency: 'INR', name: 'National Stock Exchange of India' },
+  { mic: 'XBOM', suffix: '.BO', country: 'IN', currency: 'INR', name: 'BSE India' },
+  { mic: 'XASX', suffix: '.AX', country: 'AU', currency: 'AUD', name: 'ASX' },
+  { mic: 'XNZE', suffix: '.NZ', country: 'NZ', currency: 'NZD', name: 'NZX' },
+  { mic: 'XKRX', suffix: '.KS', country: 'KR', currency: 'KRW', name: 'Korea Exchange (KOSPI)' },
+  { mic: 'XKOS', suffix: '.KQ', country: 'KR', currency: 'KRW', name: 'Korea Exchange (KOSDAQ)' },
+  { mic: 'XTAI', suffix: '.TW', country: 'TW', currency: 'TWD', name: 'Taiwan Stock Exchange' },
+  { mic: 'XIDX', suffix: '.JK', country: 'ID', currency: 'IDR', name: 'Indonesia Stock Exchange' },
+  { mic: 'XKLS', suffix: '.KL', country: 'MY', currency: 'MYR', name: 'Bursa Malaysia' },
+  { mic: 'XSES', suffix: '.SI', country: 'SG', currency: 'SGD', name: 'Singapore Exchange' },
+  { mic: 'XBKK', suffix: '.BK', country: 'TH', currency: 'THB', name: 'Stock Exchange of Thailand' },
+  { mic: 'XSHG', suffix: '.SS', country: 'CN', currency: 'CNY', name: 'Shanghai Stock Exchange' },
+  { mic: 'XSHE', suffix: '.SZ', country: 'CN', currency: 'CNY', name: 'Shenzhen Stock Exchange' },
+  { mic: 'XJSE', suffix: '.JO', country: 'ZA', currency: 'ZAR', name: 'Johannesburg Stock Exchange' },
+  { mic: 'XTAE', suffix: '.TA', country: 'IL', currency: 'ILS', name: 'Tel Aviv Stock Exchange' },
+  { mic: 'XIST', suffix: '.IS', country: 'TR', currency: 'TRY', name: 'Borsa Istanbul' },
+  { mic: 'XWAR', suffix: '.WA', country: 'PL', currency: 'PLN', name: 'Warsaw Stock Exchange' },
+  { mic: 'XSAU', suffix: '.SR', country: 'SA', currency: 'SAR', name: 'Saudi Exchange' },
 ];
 
 const US: Omit<MarketInfo, 'mic'> = { suffix: '', country: 'US', currency: 'USD', name: 'United States' };
@@ -87,7 +108,43 @@ export const YAHOO_EXCHANGE_TO_MIC: Readonly<Record<string, ExchangeCode>> = {
   LIM: 'XLIM',
   BUE: 'XBUE',
   TOR: 'XTSE',
+  VAN: 'XTSX',
+  HKG: 'XHKG',
+  JPX: 'XTKS',
+  NSI: 'XNSE',
+  BSE: 'XBOM',
+  ASX: 'XASX',
+  NZE: 'XNZE',
+  KSC: 'XKRX',
+  KOE: 'XKOS',
+  TAI: 'XTAI',
+  JKT: 'XIDX',
+  KLS: 'XKLS',
+  SES: 'XSES',
+  SET: 'XBKK',
+  SHH: 'XSHG',
+  SHZ: 'XSHE',
+  JNB: 'XJSE',
+  TLV: 'XTAE',
+  IST: 'XIST',
+  WSE: 'XWAR',
+  SAU: 'XSAU',
 };
+
+/** Generic exchange code for Yahoo symbols on venues we do not map: the id keeps the Yahoo symbol verbatim. */
+export const GENERIC_EXCHANGE = 'YAHOO';
+
+/** Allowed characters of a provider symbol / the symbol part of an id. */
+const SYMBOL_RE = /^[A-Za-z0-9^][A-Za-z0-9.^=\-&]{0,31}$/;
+
+/**
+ * Validate a symbol (or the symbol part of an id) before it reaches a provider URL: 1-32 chars,
+ * letters, digits and `. ^ = - &`, must start with a letter, digit or `^`, and may not contain
+ * `..` (path traversal into other provider endpoints).
+ */
+export function isValidSymbol(s: string): boolean {
+  return SYMBOL_RE.test(s) && !s.includes('..') && !s.endsWith('.');
+}
 
 /** Suffixes of secondary German venues Yahoo uses; mapped to their MIC, currency EUR. */
 const DE_REGIONALS: Record<string, ExchangeCode> = { '.MU': 'XMUN', '.DU': 'XDUS', '.SG': 'XSTU', '.BE': 'XBER', '.HM': 'XHAM' };
@@ -151,6 +208,8 @@ export function parseYahooSymbol(yahoo: string, yahooExchange?: string): ParsedY
     }
     const de = DE_REGIONALS[suffix];
     if (de) return { symbol: s.slice(0, dot), exchange: de, country: 'DE', currency: 'EUR', kind: 'security' };
+    // Unmapped venue: keep the Yahoo symbol verbatim so the id round-trips (YAHOO:0254.HK style).
+    if (/^\.[A-Z]{1,3}$/.test(suffix)) return { symbol: s, exchange: GENERIC_EXCHANGE, kind: 'security' };
   }
   const mic = (yahooExchange && YAHOO_EXCHANGE_TO_MIC[yahooExchange]) || undefined;
   if (mic && !US_MICS.includes(mic)) {
@@ -180,7 +239,7 @@ export function yahooSymbolFromId(id: string): string | undefined {
   if (!symbol) return undefined;
   if (exchange === 'INDEX') return symbol.startsWith('^') ? symbol : `^${symbol}`;
   if (exchange === 'FX') return `${symbol.replace('/', '')}=X`;
-  if (exchange === 'CRYPTO' || exchange === 'FUT') return symbol;
+  if (exchange === 'CRYPTO' || exchange === 'FUT' || exchange === GENERIC_EXCHANGE) return symbol;
   if (US_MICS.includes(exchange)) return symbol.replace('.', '-');
   const m = BY_MIC.get(exchange);
   if (m) return `${symbol}${m.suffix}`;

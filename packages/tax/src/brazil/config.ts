@@ -99,13 +99,42 @@ export const BRAZIL_TAX_YEARS: Record<number, BrazilTaxYearConfig> = {
       ),
     },
   },
+  2027: {
+    ...BASE,
+    year: 2027,
+    jcpRate: 0.175,
+    foreignApplicationsRate: 0.15,
+    dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
+    meta: {
+      ...BASE_META,
+      swingRate: NV('Lei 11.033/2004 art. 2º II', 'Ano futuro: confirmar alíquotas vigentes.'),
+      jcpRate: NV('LC 224/2025 (17,5%)', 'Confirmar se há escalonamento posterior da alíquota do JCP.'),
+      dividendWithholding: NV('Lei 15.270/2025', 'Confirmar limite mensal e alíquota para o ano.'),
+    },
+  },
+  2028: {
+    ...BASE,
+    year: 2028,
+    jcpRate: 0.175,
+    foreignApplicationsRate: 0.15,
+    dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
+    meta: {
+      ...BASE_META,
+      swingRate: NV('Lei 11.033/2004 art. 2º II', 'Ano futuro: confirmar alíquotas vigentes.'),
+      jcpRate: NV(
+        'LC 224/2025',
+        'Uma fonte de mercado indica elevação do IRRF sobre JCP para 20% a partir de 2028; não confirmado no texto legal — ajustar se confirmado.',
+      ),
+      dividendWithholding: NV('Lei 15.270/2025', 'Confirmar limite mensal e alíquota para o ano.'),
+    },
+  },
 };
 
 export function brazilConfig(year: number): BrazilTaxYearConfig {
   const c = BRAZIL_TAX_YEARS[year];
   if (c) return c;
   const years = Object.keys(BRAZIL_TAX_YEARS).map(Number).sort((a, b) => a - b);
-  const latest = years[years.length - 1] ?? 2026;
+  const latest = years[years.length - 1] ?? 2028;
   const base = BRAZIL_TAX_YEARS[year > latest ? latest : (years[0] ?? latest)]!;
   const meta: Record<string, ParamMeta> = {};
   for (const k of Object.keys(base.meta)) meta[k] = NV(`Copiado do ano ${base.year}; sem parâmetros para ${year}`);
@@ -121,7 +150,27 @@ export const BENS_E_DIREITOS_CODES = {
   FOREIGN_STOCK: { grupo: '03', codigo: '01', descricao: 'Ações (exterior) — informar país de localização', meta: V('DIRPF 2024+; Lei 14.754/2023') },
   FOREIGN_FUND: { grupo: '07', codigo: '99', descricao: 'Fundos de investimento no exterior / ETF exterior', meta: NV('Fontes de mercado indicam 07-99; confirmar no programa da DIRPF do ano') },
   FOREIGN_CASH: { grupo: '06', codigo: '01', descricao: 'Depósito em conta corrente ou conta pagamento (exterior)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  ETF_RF: { grupo: '07', codigo: '08', descricao: 'Fundos de índice de renda fixa (ETF RF, Lei 13.043/2014)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  OPCAO: { grupo: '04', codigo: '04', descricao: 'Ativos negociados em bolsa no Brasil (opções)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  DIREITO: { grupo: '04', codigo: '04', descricao: 'Ativos negociados em bolsa no Brasil (direitos de subscrição)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  RENDA_FIXA_TRIBUTAVEL: { grupo: '04', codigo: '02', descricao: 'Títulos públicos e privados sujeitos à tributação (Tesouro, CDB, debêntures)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  RENDA_FIXA_ISENTA: { grupo: '04', codigo: '03', descricao: 'Títulos isentos de tributação (LCI, LCA, CRI, CRA, debêntures incentivadas)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  CRYPTO_BTC: { grupo: '08', codigo: '01', descricao: 'Criptoativo Bitcoin (BTC)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  CRYPTO_ALT: { grupo: '08', codigo: '02', descricao: 'Outros criptoativos (altcoins)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  CRYPTO_STABLE: { grupo: '08', codigo: '03', descricao: 'Stablecoins', meta: NV('DIRPF 2024+ tabela de códigos') },
 } as const;
+
+/**
+ * CNPJ of a few large B3 issuers (by root ticker) to prefill Bens e Direitos. Users and importers
+ * should extend it (`cnpjByIssuer` option); every value must be checked against the broker's informe.
+ */
+export const B3_CNPJ: Record<string, { cnpj: string; nome: string; meta: ParamMeta }> = {
+  PETR: { cnpj: '33.000.167/0001-01', nome: 'Petróleo Brasileiro S.A. - Petrobras', meta: NV('Cadastro CNPJ / RI da companhia') },
+  VALE: { cnpj: '33.592.510/0001-54', nome: 'Vale S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  ITUB: { cnpj: '60.872.504/0001-23', nome: 'Itaú Unibanco Holding S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  BBDC: { cnpj: '60.746.948/0001-12', nome: 'Banco Bradesco S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  BBAS: { cnpj: '00.000.000/0001-91', nome: 'Banco do Brasil S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+};
 
 /** DIRPF income lines for proventos. */
 export const DIRPF_INCOME_LINES = {

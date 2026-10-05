@@ -29,6 +29,8 @@ export interface LotState {
   unitCost: number;
   /** Per unit, base currency at historical FX. */
   unitCostBase: number;
+  /** Per unit value at purchase, instrument currency, BEFORE fees (anchor for accrual). */
+  unitValue: number;
 }
 
 export interface ClosedPiece {
@@ -61,10 +63,10 @@ export class LotBook {
   }
 
   /** Add a lot with total cost (instrument currency) and total cost in base currency. */
-  add(openDay: number, quantity: number, totalCost: number, totalCostBase: number): void {
+  add(openDay: number, quantity: number, totalCost: number, totalCostBase: number, unitValue?: number): void {
     const q = quantity;
     if (!(q > QTY_EPS)) return;
-    this.lots.push({ openDay, quantity: q, unitCost: totalCost / q, unitCostBase: totalCostBase / q });
+    this.lots.push({ openDay, quantity: q, unitCost: totalCost / q, unitCostBase: totalCostBase / q, unitValue: unitValue ?? totalCost / q });
     this.refresh();
     if (this.method === 'AVERAGE') this.reaverage();
   }
@@ -117,6 +119,7 @@ export class LotBook {
       l.quantity *= factor;
       l.unitCost /= factor;
       l.unitCostBase /= factor;
+      l.unitValue /= factor;
     }
     this.lots = this.lots.filter((l) => l.quantity > QTY_EPS);
     if ((addedCost !== 0 || addedCostBase !== 0) && before > 0) {
@@ -128,6 +131,35 @@ export class LotBook {
       }
     }
     this.refresh();
+  }
+
+  /** Remove and return every lot (merger / ticker change). */
+  extractAll(): LotState[] {
+    const out = this.lots;
+    this.lots = [];
+    this.refresh();
+    return out;
+  }
+
+  /** Insert lots keeping open-date order (AVERAGE re-averages). */
+  insert(lots: LotState[]): void {
+    for (const l of lots) if (l.quantity > QTY_EPS) this.lots.push({ ...l });
+    this.lots.sort((a, b) => a.openDay - b.openDay);
+    this.refresh();
+    if (this.method === 'AVERAGE') this.reaverage();
+  }
+
+  /** Keep (1 - fraction) of the cost of every lot; returns the lots' share that was removed (spin-off). */
+  carveOutCost(fraction: number): LotState[] {
+    const f = Math.min(1, Math.max(0, fraction));
+    const carved = this.lots.map((l) => ({ ...l, unitCost: l.unitCost * f, unitCostBase: l.unitCostBase * f, unitValue: l.unitValue * f }));
+    for (const l of this.lots) {
+      l.unitCost *= 1 - f;
+      l.unitCostBase *= 1 - f;
+      l.unitValue *= 1 - f;
+    }
+    this.refresh();
+    return carved;
   }
 
   /**
@@ -146,6 +178,7 @@ export class LotBook {
     for (const l of this.lots) {
       l.unitCost *= f;
       l.unitCostBase *= fb;
+      l.unitValue *= f;
     }
     this.refresh();
     return { excess: amount - applied, excessBase: amountBase - appliedBase };

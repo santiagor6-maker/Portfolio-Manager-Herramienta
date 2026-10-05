@@ -128,3 +128,60 @@ export function firstIndexAtOrAfter(sorted: ArrayLike<number>, x: number): numbe
   }
   return lo;
 }
+
+/** Exact `YYYY-MM-DD` that denotes a real calendar date (no time part, no time zone). */
+export function isStrictIsoDate(s: unknown): s is ISODate {
+  return isValidIsoDate(s);
+}
+
+/** Day of week for a day number: 0 = Sunday ... 6 = Saturday. */
+export function weekday(day: number): number {
+  return (((day + 4) % 7) + 7) % 7; // 1970-01-01 was a Thursday
+}
+
+/** Weekdays (Mon-Fri) in the half-open interval (a, b]. Negative when b < a. No holiday calendar. */
+export function businessDaysBetween(a: number, b: number): number {
+  if (b < a) return -businessDaysBetween(b, a);
+  const full = Math.floor((b - a) / 7);
+  let n = full * 5;
+  for (let d = a + full * 7 + 1; d <= b; d++) {
+    const w = weekday(d);
+    if (w !== 0 && w !== 6) n++;
+  }
+  return n;
+}
+
+/** 30/360 (US/NASD-like) day count between two day numbers. */
+export function days360(a: number, b: number): number {
+  const A = dayToIso(a);
+  const Bs = dayToIso(b);
+  const y1 = Number(A.slice(0, 4));
+  const m1 = Number(A.slice(5, 7));
+  let d1 = Number(A.slice(8, 10));
+  const y2 = Number(Bs.slice(0, 4));
+  const m2 = Number(Bs.slice(5, 7));
+  let d2 = Number(Bs.slice(8, 10));
+  if (d1 === 31) d1 = 30;
+  if (d2 === 31 && d1 === 30) d2 = 30;
+  return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1);
+}
+
+export function addYears(iso: ISODate, n: number): ISODate {
+  return addMonths(iso, 12 * n);
+}
+
+/**
+ * Calendar (ACT/ACT) year fraction between two dates: whole calendar years plus the remaining
+ * days divided by the length of the following year-long interval. Exactly 1 for 2023-12-31 ->
+ * 2024-12-31 even though 2024 is a leap year.
+ */
+export function yearFraction(a: number, b: number): number {
+  if (b === a) return 0;
+  if (b < a) return -yearFraction(b, a);
+  const A = dayToIso(a);
+  let k = Math.floor((b - a) / 366);
+  while (isoToDay(addYears(A, k + 1)) <= b) k++;
+  const s = isoToDay(addYears(A, k));
+  const e = isoToDay(addYears(A, k + 1));
+  return k + (b - s) / (e - s);
+}

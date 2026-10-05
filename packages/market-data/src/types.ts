@@ -7,10 +7,14 @@ import type {
   CorporateAction,
   CurrencyCode,
   FxSeries,
+  IndexId,
+  IndexSeries,
   Instrument,
   ISODate,
+  PricePoint,
   PriceSeries,
   ProviderId,
+  TransactionSubtype,
 } from '@pm/core';
 
 export type Interval = '1d' | '1mo';
@@ -18,18 +22,73 @@ export type Interval = '1d' | '1mo';
 /**
  * - `auto`: official source for the pair if there is one (TRM, PTAX, ECB), Yahoo as fallback.
  * - `official`: official sources only (error if the pair has none / it fails).
- * - `yahoo`: Yahoo only.
+ * - `yahoo`: Yahoo only (crypto pairs: Yahoo, then CoinGecko).
  */
 export type FxSourceMode = 'auto' | 'official' | 'yahoo';
+
+/** PTAX side: 'sell' (venda, default; contracts, most tax uses) or 'buy' (compra). */
+export type FxSide = 'buy' | 'sell';
 
 /**
  * How prices are adjusted.
  * - `none` (default): as-traded closes. Yahoo split-adjusts history retroactively; we undo that,
- *   so a close never changes after the fact (closed months are immutable and cacheable forever),
- *   and it matches the quantities in the user's transactions (splits are SPLIT transactions).
+ *   so a close never changes after the fact and matches the quantities in the user's transactions.
  * - `splits`: split-adjusted closes (Yahoo's `close`), handy for charts of long histories.
+ * - `total`: total-return index in price units (dividends reinvested at the ex-date close),
+ *   starting at the first as-traded close. Use it for ETF-proxy benchmarks (ICOLCAP, URTH).
  */
-export type PriceAdjustment = 'none' | 'splits';
+export type PriceAdjustment = 'none' | 'splits' | 'total';
+
+/** A price point with market-data extras. `provisional` = intraday / incomplete period. */
+export interface MarketPricePoint extends PricePoint {
+  provisional?: boolean;
+}
+
+/** PriceSeries (core contract) plus freshness information. */
+export interface MarketPriceSeries extends PriceSeries {
+  points: MarketPricePoint[];
+  /** Last date with a real trade (bars after it with no volume are dropped as phantom closes). */
+  lastTradeDate?: ISODate;
+  /** True when the last trade is older than 7 days (suspended, delisted or very illiquid). */
+  stale?: boolean;
+}
+
+/**
+ * Corporate action with the information core's CorporateAction does not carry yet (proposed to
+ * core as an additive change). Use `toCoreCorporateActions()` to feed the engine.
+ */
+export interface MarketCorporateAction extends Omit<CorporateAction, 'type'> {
+  type: 'DIVIDEND' | 'SPLIT' | 'STOCK_DIVIDEND';
+  /** DIVIDEND: 'JCP' | 'ORDINARY'; SPLIT: 'SPINOFF' | 'TICKER_CHANGE' (see core TransactionSubtype). */
+  subtype?: TransactionSubtype;
+  /** DIVIDEND: ex-date (= `date`) and payment date when the provider knows it. */
+  exDate?: ISODate;
+  payDate?: ISODate;
+  /** DIVIDEND: currency of `amountPerShare` when it differs from the instrument currency. */
+  currency?: CurrencyCode;
+  /** SPINOFF / TICKER_CHANGE: receiving instrument. */
+  targetInstrumentId?: string;
+  /** SPINOFF: share (0..1) of the cost basis that moves to the spun-off instrument (approximate). */
+  costFraction?: number;
+  /** Price factor the provider applied for this event (Yahoo's numerator/denominator). */
+  priceFactor?: number;
+  /** Heuristic classification: confirm before applying to holdings. */
+  reviewRequired?: boolean;
+  source?: ProviderId;
+  note?: string;
+}
+
+export interface RenameInfo {
+  /** Old instrument id, e.g. XBOG:PFBCOLOM. */
+  fromId: string;
+  /** New instrument id, e.g. XBOG:PFCIBEST. */
+  toId: string;
+  /** New shares per old share. */
+  ratio: number;
+  /** Date of the change when known. */
+  effective?: ISODate;
+  note?: string;
+}
 
 export interface Quote {
   /** Instrument id `${exchange}:${symbol}`. */
@@ -52,11 +111,14 @@ export interface Quote {
   time: string;
   /** True when the last price is older than 7 days (suspended, delisted or illiquid). */
   stale?: boolean;
+  /** 'open' while the regular session is running (price is intraday), else 'closed'. */
+  marketState?: 'open' | 'closed';
+  renamedFrom?: RenameInfo;
   source: ProviderId;
 }
 
 export interface HistoryRequest {
-  /** Instrument id (`BVMF:PETR4`) or provider symbol (`PETR4.SA`). */
+  /** Instrument id (`BVMF:PETR4`), provider symbol (`PETR4.SA`), ISIN or benchmark id. */
   symbol: string;
   from: ISODate;
   /** Defaults to today. */
@@ -72,9 +134,18 @@ export interface HistoryResponse {
   providerSymbol: string;
   instrument: Instrument;
   interval: Interval;
-  series: PriceSeries;
-  /** Dividends and splits in [from, to]. Amounts in instrument currency, as paid (not split-adjusted unless adjust=splits). */
-  actions: CorporateAction[];
+  series: MarketPriceSeries;
+  /** Dividends, splits, bonificações, spin-offs and ticker changes in [from, to]. */
+  actions: MarketCorporateAction[];
+  /** Provider chain failures before `series.source` answered. */
+  fallbacks?: { source: string; error: string }[];
+  /** True when the data is known to be incomplete (e.g. split history unavailable). Never cached long. */
+  degraded?: boolean;
+  /** When the data was obtained (ISO timestamp). */
+  asOf: string;
+  /** 'open' while the instrument's regular session is running: the last point is intraday. */
+  marketState?: 'open' | 'closed';
+  renamedFrom?: RenameInfo;
   /** Diagnostic notes, e.g. 'currency GBp normalized to GBP'. */
   notes?: string[];
 }
@@ -86,22 +157,57 @@ export interface FxRequest {
   to?: ISODate;
   interval?: Interval;
   source?: FxSourceMode;
+  /** PTAX side for BRL pairs (default 'sell'). */
+  side?: FxSide;
 }
 
 export interface FxResponse {
   series: FxSeries;
   interval: Interval;
+  side?: FxSide;
   /** Sources that were tried and failed before the one that answered. */
   fallbacks?: { source: ProviderId; error: string }[];
 }
 
+/** Rate / inflation index request (`/api/index`). */
+export interface IndexRequest {
+  id: IndexId;
+  from: ISODate;
+  to?: ISODate;
+}
+
+export interface IndexInfo {
+  id: IndexId;
+  name: string;
+  country: string;
+  description: string;
+  /** How the series is obtained (dataset / series code). */
+  sourceDetail: string;
+  frequency: 'daily' | 'monthly';
+}
+
+/** `series` follows core's IndexSeries exactly; `info` documents it. */
+export interface IndexResponse {
+  series: IndexSeries;
+  info: IndexInfo;
+  /** Last observation date available from the source. */
+  lastObservation?: ISODate;
+  notes?: string[];
+}
+
+export type SearchOrigin = 'catalog' | 'yahoo' | 'tesouro' | 'fic' | 'afp' | 'template' | 'crypto' | 'alias';
+
 export interface SearchResult extends Instrument {
-  /** Where the result came from: curated catalog and/or provider search. */
-  origin: 'catalog' | 'yahoo';
-  /** Yahoo quoteType / typeDisp, e.g. EQUITY, ETF, INDEX. */
+  /** Where the result came from. */
+  origin: SearchOrigin;
+  /** Provider quoteType / typeDisp, e.g. EQUITY, ETF, INDEX. */
   providerType?: string;
   /** Free-text exchange label from the provider (e.g. 'São Paulo'). */
   exchangeLabel?: string;
+  renamedFrom?: RenameInfo;
+  /** Template instruments (CDT, CDB...) are to be cloned by the user, not traded as-is. */
+  template?: boolean;
+  note?: string;
 }
 
 export interface Benchmark {
@@ -109,6 +215,8 @@ export interface Benchmark {
   name: string;
   instrumentId: string;
   currency: CurrencyCode;
+  /** Suggested price adjustment for comparisons ('total' for ETF proxies). */
+  adjust?: PriceAdjustment;
   note?: string;
 }
 
@@ -123,6 +231,7 @@ export interface BatchRequest {
   histories?: HistoryRequest[];
   fx?: FxRequest[];
   quotes?: string[];
+  indices?: IndexRequest[];
 }
 
 export type Settled<T> = { ok: true; data: T } | { ok: false; error: ApiErrorBody['error'] };
@@ -131,6 +240,7 @@ export interface BatchResponse {
   histories: Settled<HistoryResponse>[];
   fx: Settled<FxResponse>[];
   quotes: Settled<Quote>[];
+  indices: Settled<IndexResponse>[];
   tookMs: number;
 }
 
@@ -140,6 +250,7 @@ export interface HealthResponse {
   version: string;
   time: string;
   cache?: { memoryEntries: number; persistent: boolean };
+  providers?: { prices: string[]; fx: string[]; indices: string[] };
 }
 
 export interface ApiErrorBody {

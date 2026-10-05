@@ -139,7 +139,7 @@ describe('Bens e Direitos', () => {
       { year: 2025, ptax },
     );
     const by = (t?: string) => r.items.find((i) => i.ticker === t)!;
-    expect(by('PETR4')).toMatchObject({ grupo: '03', codigo: '01', situacaoAnterior: 3004.9, situacaoAtual: 3004.9, cnpj: '' });
+    expect(by('PETR4')).toMatchObject({ grupo: '03', codigo: '01', situacaoAnterior: 3004.9, situacaoAtual: 3004.9, cnpj: '33.000.167/0001-01', cnpjFonte: 'tabela' });
     expect(by('HGLG11')).toMatchObject({ grupo: '07', codigo: '03', situacaoAnterior: 0, situacaoAtual: 1600 });
     expect(by('BOVA11')).toMatchObject({ grupo: '07', codigo: '09' });
     expect(by('AAPL')).toMatchObject({ grupo: '03', codigo: '01', localizacao: 'US', situacaoAtual: 5000 });
