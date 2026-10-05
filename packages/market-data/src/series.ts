@@ -57,6 +57,12 @@ export function dedupeByDate<T extends DatedValue>(points: readonly T[]): T[] {
   return [...map.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
+/** Round to `digits` significant digits (Yahoo floats are float32: ~7 significant digits). */
+export function roundSig(x: number, digits = 7): number {
+  if (x === 0 || !Number.isFinite(x)) return x;
+  return Number(x.toPrecision(digits));
+}
+
 export function round(x: number, decimals: number): number {
   const f = 10 ** decimals;
   return Math.round(x * f) / f;

@@ -1,0 +1,132 @@
+import type { ParamMeta } from '../common/types';
+
+/** Parameters for a Brazilian resident individual (pessoa física residente), per calendar year. */
+export interface BrazilTaxYearConfig {
+  year: number;
+  /** Lei 11.033/2004 art. 3º I; IN RFB 1.585/2015 art. 59: monthly sales limit for the stock exemption. */
+  stockSalesExemptionLimit: number;
+  /** Swing trade ("operações comuns") rate on net gains: ações, ETFs, BDRs. */
+  swingRate: number;
+  dayTradeRate: number;
+  /** FII quota sales (Lei 8.668/1993 art. 18). */
+  fiiRate: number;
+  /** IRRF "dedo-duro" on swing-trade sale value (Lei 11.033/2004 art. 2º §1º). */
+  irrfSwingRate: number;
+  /** IRRF on positive day-trade results (1%). */
+  irrfDayTradeRate: number;
+  /** IRRF of up to this amount is not withheld (dispensa). */
+  irrfMinimum: number;
+  /** DARF below this amount is carried to the next month (Lei 9.430/1996 art. 68). */
+  darfMinimum: number;
+  darfCode: string;
+  /** Losses on common operations may also offset day-trade gains (the opposite is not allowed). */
+  commonLossOffsetsDayTrade: boolean;
+  /** JCP withholding (Lei 9.249/1995 art. 9º §2º). */
+  jcpRate: number;
+  /** Lei 15.270/2025: IRRF on dividends from the same company above a monthly amount (from 2026). */
+  dividendWithholding?: { monthlyThresholdPerPayer: number; rate: number };
+  /** Lei 14.754/2023: annual rate on foreign financial applications (from 2024). */
+  foreignApplicationsRate?: number;
+  meta: Record<string, ParamMeta>;
+}
+
+const V = (source: string, note?: string): ParamMeta => ({ status: 'verified', source, checkedOn: '2026-10-05', note });
+const NV = (source: string, note?: string): ParamMeta => ({ status: 'needs-verification', source, checkedOn: '2026-10-05', note });
+
+const BASE = {
+  stockSalesExemptionLimit: 20_000,
+  swingRate: 0.15,
+  dayTradeRate: 0.2,
+  fiiRate: 0.2,
+  irrfSwingRate: 0.00005,
+  irrfDayTradeRate: 0.01,
+  irrfMinimum: 1,
+  darfMinimum: 10,
+  darfCode: '6015',
+  commonLossOffsetsDayTrade: true,
+};
+
+const BASE_META: Record<string, ParamMeta> = {
+  stockSalesExemptionLimit: V('Lei 11.033/2004 art. 3º I; IN RFB 1.585/2015 art. 59'),
+  swingRate: V('Lei 11.033/2004 art. 2º II'),
+  dayTradeRate: V('Lei 8.981/1995 art. 72 / Lei 9.959/2000; IN RFB 1.585/2015 art. 65'),
+  fiiRate: V('Lei 8.668/1993 art. 18; IN RFB 1.585/2015 art. 88'),
+  irrfSwingRate: V('Lei 11.033/2004 art. 2º §1º (0,005%)'),
+  irrfDayTradeRate: V('IRRF de 1% sobre o resultado positivo de day trade (IN RFB 1.585/2015)', 'Artigo exato a conferir.'),
+  irrfMinimum: V('Lei 11.033/2004 art. 2º §1º (dispensa de retenção ≤ R$ 1,00)'),
+  darfMinimum: V('Lei 9.430/1996 art. 68'),
+  darfCode: V('Código 6015 (ganhos líquidos em operações em bolsa, PF)'),
+  commonLossOffsetsDayTrade: NV(
+    'IN RFB 1.585/2015 art. 65 e Perguntas e Respostas IRPF',
+    'Prejuízo de day trade só compensa ganho de day trade; prejuízo de operações comuns pode compensar ambos.',
+  ),
+  jcpRate: V('Lei 9.249/1995 art. 9º §2º (15%)'),
+  foreignApplicationsRate: V('Lei 14.754/2023 arts. 2º-3º; IN RFB 2.180/2024'),
+};
+
+export const BRAZIL_TAX_YEARS: Record<number, BrazilTaxYearConfig> = {
+  2023: { ...BASE, year: 2023, jcpRate: 0.15, meta: { ...BASE_META } },
+  2024: { ...BASE, year: 2024, jcpRate: 0.15, foreignApplicationsRate: 0.15, meta: { ...BASE_META } },
+  2025: {
+    ...BASE,
+    year: 2025,
+    jcpRate: 0.15,
+    foreignApplicationsRate: 0.15,
+    meta: {
+      ...BASE_META,
+      swingRate: V(
+        'Lei 11.033/2004 art. 2º II',
+        'A MP 1.303/2025 (alíquota única de 17,5%) perdeu a vigência sem conversão em lei (out/2025).',
+      ),
+    },
+  },
+  2026: {
+    ...BASE,
+    year: 2026,
+    jcpRate: 0.175,
+    foreignApplicationsRate: 0.15,
+    dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
+    meta: {
+      ...BASE_META,
+      swingRate: NV(
+        'Lei 11.033/2004 art. 2º II',
+        'MP 1.303/2025 perdeu a vigência; confirmar que não houve nova lei alterando as alíquotas em 2026.',
+      ),
+      jcpRate: V('LC 224/2025: IRRF sobre JCP de 17,5% a partir de 01/01/2026 (pagamento ou crédito)'),
+      dividendWithholding: V(
+        'Lei 15.270/2025: IRRF de 10% sobre dividendos pagos pela mesma PJ à mesma PF acima de R$ 50.000 no mês (sobre o total)',
+        'Também institui a tributação mínima anual (IRPFM) para rendas acima de R$ 600 mil/ano — não calculada aqui.',
+      ),
+    },
+  },
+};
+
+export function brazilConfig(year: number): BrazilTaxYearConfig {
+  const c = BRAZIL_TAX_YEARS[year];
+  if (c) return c;
+  const years = Object.keys(BRAZIL_TAX_YEARS).map(Number).sort((a, b) => a - b);
+  const latest = years[years.length - 1] ?? 2026;
+  const base = BRAZIL_TAX_YEARS[year > latest ? latest : (years[0] ?? latest)]!;
+  const meta: Record<string, ParamMeta> = {};
+  for (const k of Object.keys(base.meta)) meta[k] = NV(`Copiado do ano ${base.year}; sem parâmetros para ${year}`);
+  return { ...base, year, meta };
+}
+
+/** DIRPF "Bens e Direitos" codes (layout in force since DIRPF 2024). */
+export const BENS_E_DIREITOS_CODES = {
+  ACAO: { grupo: '03', codigo: '01', descricao: 'Ações (inclusive as listadas em bolsa)', meta: V('DIRPF 2024+ tabela de códigos') },
+  FII: { grupo: '07', codigo: '03', descricao: 'Fundos de Investimento Imobiliário (FII)', meta: V('DIRPF 2024+ tabela de códigos') },
+  ETF: { grupo: '07', codigo: '09', descricao: 'Demais fundos de índice de mercado (ETF)', meta: NV('DIRPF 2024+; ETF de renda fixa usa 07-08') },
+  BDR: { grupo: '04', codigo: '04', descricao: 'Ativos negociados em bolsa no Brasil (BDR, opções...)', meta: NV('DIRPF 2024+ tabela de códigos') },
+  FOREIGN_STOCK: { grupo: '03', codigo: '01', descricao: 'Ações (exterior) — informar país de localização', meta: V('DIRPF 2024+; Lei 14.754/2023') },
+  FOREIGN_FUND: { grupo: '07', codigo: '99', descricao: 'Fundos de investimento no exterior / ETF exterior', meta: NV('Fontes de mercado indicam 07-99; confirmar no programa da DIRPF do ano') },
+  FOREIGN_CASH: { grupo: '06', codigo: '01', descricao: 'Depósito em conta corrente ou conta pagamento (exterior)', meta: NV('DIRPF 2024+ tabela de códigos') },
+} as const;
+
+/** DIRPF income lines for proventos. */
+export const DIRPF_INCOME_LINES = {
+  DIVIDENDO: { ficha: 'Rendimentos Isentos e Não Tributáveis', linha: '09', meta: V('DIRPF: Lucros e dividendos recebidos') },
+  RENDIMENTO_FII: { ficha: 'Rendimentos Isentos e Não Tributáveis', linha: '26', meta: NV('Mercado indica linha 26; conferir no programa do ano') },
+  ISENCAO_20K: { ficha: 'Rendimentos Isentos e Não Tributáveis', linha: '20', meta: NV('Ganhos líquidos em ações com alienações ≤ R$ 20 mil/mês') },
+  JCP: { ficha: 'Rendimentos Sujeitos à Tributação Exclusiva/Definitiva', linha: '10', meta: V('DIRPF: Juros sobre capital próprio') },
+} as const;

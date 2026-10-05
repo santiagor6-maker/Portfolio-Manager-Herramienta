@@ -50,6 +50,8 @@ export interface Quote {
   date: ISODate;
   /** ISO-8601 timestamp of `price`. */
   time: string;
+  /** True when the last price is older than 7 days (suspended, delisted or illiquid). */
+  stale?: boolean;
   source: ProviderId;
 }
 

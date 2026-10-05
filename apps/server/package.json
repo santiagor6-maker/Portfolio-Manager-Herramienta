@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",
+    "@pm/core": "*",
+    "@pm/market-data": "*",
     "hono": "^4.13.13"
   }
 }

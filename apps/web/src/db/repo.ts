@@ -159,7 +159,8 @@ export async function cachePriceSeries(series: PriceSeries[], isDemo = false): P
 export async function mergePriceSeries(series: PriceSeries): Promise<void> {
   const prev = await db.priceSeries.get(series.instrumentId);
   const map = new Map<string, number>();
-  for (const p of prev?.points ?? []) map.set(p.date, p.close);
+  // Real data fully replaces synthetic sample series.
+  if (prev && !prev.isDemo) for (const p of prev.points) map.set(p.date, p.close);
   for (const p of series.points) map.set(p.date, p.close);
   const points = [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, close]) => ({ date, close }));
   await db.priceSeries.put({ ...series, points, updatedAt: Date.now(), isDemo: false });
@@ -175,7 +176,7 @@ export async function mergeFxSeries(series: FxSeries): Promise<void> {
   const pair = `${series.base}/${series.quote}`;
   const prev = await db.fxSeries.get(pair);
   const map = new Map<string, number>();
-  for (const p of prev?.points ?? []) map.set(p.date, p.rate);
+  if (prev && !prev.isDemo) for (const p of prev.points) map.set(p.date, p.rate);
   for (const p of series.points) map.set(p.date, p.rate);
   const points = [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, rate]) => ({ date, rate }));
   await db.fxSeries.put({ ...series, pair, points, updatedAt: Date.now(), isDemo: false });

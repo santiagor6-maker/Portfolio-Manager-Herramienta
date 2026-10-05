@@ -217,10 +217,13 @@ export function assetClassFromYahoo(quoteType: string | undefined, symbol: strin
     default:
       break;
   }
-  // Brazilian listed funds end in 11: FIIs (real estate), ETFs and units (e.g. TAEE11, KLBN11).
-  // Only flag as REIT when the name says so; ETFs come back as quoteType ETF.
-  if (/\.SA$/i.test(symbol) && /11$/.test(symbol.replace(/\.SA$/i, '')) && /(FII|IMOBILI|REAL ESTATE|LOGIST|RENDA|FDO INV|FUNDO DE INVESTIMENTO IMOB)/i.test(name)) {
-    return 'reit';
+  // Brazilian listed funds end in 11 and Yahoo reports them as EQUITY: FIIs (real estate),
+  // ETFs ("fundo de índice" / "classe de índice") and also share units (TAEE11, KLBN11), so
+  // decide by name.
+  if (/\.SA$/i.test(symbol) && /11$/.test(symbol.replace(/\.SA$/i, ''))) {
+    const n = name.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (/(\bFII\b|IMOBILI)/i.test(n)) return 'reit';
+    if (/(INDICE|\bETF\b)/i.test(n)) return 'etf';
   }
   return 'equity';
 }

@@ -249,12 +249,16 @@ export interface Holding {
   priceGainBase?: number;
   weight?: number; // share of total portfolio value (0..1)
   lots: Lot[];
+  /** Quantity held per account/broker ('' = no account). Additive; used by allocation('account'). */
+  accountQuantities?: Record<string, number>;
 }
 
 export interface CashBalance {
   currency: CurrencyCode;
   amount: number;
   amountBase?: number;
+  /** Balance per account/broker ('' = no account). Additive; used by allocation('account'). */
+  accountAmounts?: Record<string, number>;
 }
 
 export interface Valuation {

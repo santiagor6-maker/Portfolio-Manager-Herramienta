@@ -290,13 +290,13 @@ export class Ledger {
   private moveAccountQty(instrumentId: string, account: string, delta: number): void {
     let m = this.accountQty.get(instrumentId);
     if (!m) this.accountQty.set(instrumentId, (m = new Map()));
-    m.set(account, roundQty((m.get(account) ?? 0) + delta));
+    m.set(account, (m.get(account) ?? 0) + delta);
   }
 
   private scaleAccountQty(instrumentId: string, factor: number): void {
     const m = this.accountQty.get(instrumentId);
     if (!m) return;
-    for (const [k, v] of m) m.set(k, roundQty(v * factor));
+    for (const [k, v] of m) m.set(k, v * factor);
   }
 
   /** Market price in instrument currency at day (series currency converted if needed). */
