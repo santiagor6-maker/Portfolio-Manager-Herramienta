@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p . && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run --config vitest.config.ts",
+    "e2e": "playwright test",
+    "typecheck": "tsc --noEmit -p ."
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

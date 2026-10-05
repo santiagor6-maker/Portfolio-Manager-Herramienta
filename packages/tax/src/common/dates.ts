@@ -82,10 +82,12 @@ export function easterSunday(year: number): ISODate {
 /**
  * Brazilian national bank holidays used for DARF due dates: fixed national holidays (Lei 662/1949,
  * Lei 6.802/1980, Lei 14.759/2023 for 20-Nov) plus Carnival Monday/Tuesday, Good Friday and
- * Corpus Christi (no banking). Local (state/municipal) holidays are not considered.
+ * Corpus Christi (no banking), and 31-Dec, which has no bank business ("não há expediente
+ * bancário", FEBRABAN/PGFN), so guides due in December are paid by 30-Dec.
+ * Local (state/municipal) holidays are not considered.
  */
 export function brazilBankHolidays(year: number): Set<ISODate> {
-  const fixed = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '12-25'];
+  const fixed = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '12-25', '12-31'];
   if (year >= 2024) fixed.push('11-20');
   const easter = easterSunday(year);
   const movable = [addDays(easter, -48), addDays(easter, -47), addDays(easter, -2), addDays(easter, 60)];
@@ -104,5 +106,23 @@ export function isBrazilBusinessDay(date: ISODate): boolean {
 export function lastBrazilBusinessDayOfMonth(ym: YearMonth): ISODate {
   let d = lastDayOfMonth(ym);
   while (!isBrazilBusinessDay(d)) d = addDays(d, -1);
+  return d;
+}
+
+/** Next Brazilian bank business day on or after `date`. */
+export function nextBrazilBusinessDay(date: ISODate): ISODate {
+  let d = date;
+  while (!isBrazilBusinessDay(d)) d = addDays(d, 1);
+  return d;
+}
+
+/** Adds N weekdays (Mon-Fri), ignoring holidays. Used for settlement-date estimates. */
+export function addWeekdays(date: ISODate, n: number): ISODate {
+  let d = date;
+  let left = n;
+  while (left > 0) {
+    d = addDays(d, 1);
+    if (!isWeekend(d)) left--;
+  }
   return d;
 }
