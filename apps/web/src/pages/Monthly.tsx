@@ -60,7 +60,7 @@ export default function MonthlyPage() {
   const { analysis: a, loading } = useAnalysis();
   const f = useFmt();
   const settingsBench = useApp((s) => s.settings.benchmarks);
-  const [bench, setBench] = useState<string>(settingsBench[0] ?? 'INDEX:COLCAP');
+  const [bench, setBench] = useState<string>(settingsBench[0] ?? 'XBOG:ICOLCAP');
   const [year, setYear] = useState<string>('all');
   const [focus, setFocus] = useState<string>();
 

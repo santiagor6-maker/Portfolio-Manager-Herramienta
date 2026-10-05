@@ -17,12 +17,9 @@ export async function bootstrap(): Promise<AppSettings> {
   return settings;
 }
 
-export async function seedDemo(): Promise<'core' | 'fallback'> {
-  const { data, source } = loadDemoData();
-  await seedData(data, true);
+export async function seedDemo(): Promise<void> {
+  await seedData(loadDemoData(), true);
   await setMeta('demoSeeded', true);
-  await setMeta('demoSource', source);
-  return source;
 }
 
 /** Removes the sample data and creates an empty portfolio the user can fill. */

@@ -9,7 +9,7 @@ import type { TransactionType } from '@pm/core';
 import { B3_TICKER_RE_STRICT } from '../markets';
 import type { DraftTransaction, InstrumentHint, ParsedRow } from '../types';
 import { normalizeText } from '../util';
-import { type ParseContext, type PresetDefinition, cell, columnValues, locateHeader, str } from './common';
+import { type PresetDefinition, cell, columnValues, locateHeader, str } from './common';
 
 const NEG_GROUPS = [
   ['Data do Negócio'], ['Tipo de Movimentação'], ['Mercado'], ['Código de Negociação'], ['Quantidade'], ['Preço'], ['Valor'],
@@ -219,5 +219,3 @@ export const b3MovimentacaoPreset: PresetDefinition = {
     return rows;
   },
 };
-
-export type { ParseContext };

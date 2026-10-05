@@ -10,7 +10,7 @@ import { useApp, type SourceStatus } from '../store/app';
 import { addDays, todayIso } from '../lib/ids';
 import { BENCHMARKS } from '../lib/benchmarks';
 import { createHttpMarketClient, type MarketClient } from './marketClient';
-import type { FxRequest, HistoryRequest, SearchResult } from './marketTypes';
+import type { FxRequest, HistoryRequest, SearchResult } from './marketClient';
 
 let inflight: Promise<void> | null = null;
 let lastAuto = 0;

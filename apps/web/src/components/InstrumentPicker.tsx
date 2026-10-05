@@ -4,7 +4,7 @@ import { Loader2, Plus, Search, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
 import type { Instrument } from '@pm/core';
 import { searchInstruments } from '../services/marketData';
-import type { SearchResult } from '../services/marketTypes';
+import type { SearchResult } from '../services/marketClient';
 import { flagEmoji } from '../lib/labels';
 
 /** Accessible combobox for ticker search (server search with offline catalog fallback). */

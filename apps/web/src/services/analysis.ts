@@ -116,6 +116,7 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
       instruments: ds.instruments,
       market,
       baseCurrency: ds.reportingCurrency,
+      options: { asOf: ds.asOf },
     };
   }
   const portfolio = ds.portfolios.find((p) => p.id === ds.selectedPortfolioId);
@@ -126,6 +127,7 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
     instruments: ds.instruments,
     market,
     baseCurrency: ds.reportingCurrency,
+    options: { asOf: ds.asOf },
   };
 }
 

@@ -86,7 +86,7 @@ export function createFakeFetch(opts: FakeFetchOptions = {}): FakeFetch {
     if (url.host === 'www.datos.gov.co') return json(fixture('banrep/trm-2025-01-04.json'));
     if (url.host === 'olinda.bcb.gov.br') {
       if (url.pathname.includes('CotacaoDolarPeriodo')) return json(fixture('bcb/ptax-usd-2025-01.json'));
-      if (url.pathname.includes('CotacaoMoedaPeriodo') && url.search.includes("'EUR'")) return json(fixture('bcb/ptax-eur-2025-01.json'));
+      if (url.pathname.includes('CotacaoMoedaPeriodo') && decodeURIComponent(url.search).includes("'EUR'")) return json(fixture('bcb/ptax-eur-2025-01.json'));
       return json({ value: [] });
     }
     if (url.host === 'api.bcb.gov.br') {

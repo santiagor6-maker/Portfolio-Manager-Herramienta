@@ -11,6 +11,7 @@ import {
   type StoredTransaction,
 } from './schema';
 import { newId, todayIso } from '../lib/ids';
+import { BENCHMARK_IDS } from '../lib/benchmarks';
 import type { Lang } from '../lib/format';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   selectedPortfolioId: 'all',
   serverUrl: '',
   defaultCostMethod: 'FIFO',
-  benchmarks: [],
+  benchmarks: BENCHMARK_IDS,
   riskFreeRate: 0.04,
   autoRefresh: true,
 };

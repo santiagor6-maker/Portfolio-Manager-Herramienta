@@ -16,7 +16,7 @@ import { HOUR, historyTtlMs, type TieredCache } from './cache';
 import { addDays, eachDay, todayISO } from './dates';
 import { MarketDataError, errorMessage } from './errors';
 import type { FxProvider } from './providers/types';
-import { roundSig } from './series';
+import { roundSig, sliceRange } from './series';
 import type { FxSourceMode } from './types';
 
 export interface FxResult {
@@ -106,7 +106,8 @@ export class FxRouter {
       const label = route.kind === 'direct' ? String(route.provider.id) : `cross:${route.via}`;
       try {
         if (route.kind === 'direct') {
-          const points = await route.provider.daily(base, quote, from, to);
+          // Trim defensively: some APIs return whole periods around the requested window.
+          const points = sliceRange(await route.provider.daily(base, quote, from, to), from, to);
           if (!points.length) throw new MarketDataError('NOT_FOUND', 'empty series');
           return { points, source: String(route.provider.id), fallbacks };
         }

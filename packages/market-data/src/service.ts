@@ -192,8 +192,8 @@ export class MarketDataService {
     if (!isISODate(from)) throw new MarketDataError('BAD_REQUEST', `Invalid or missing "from" date (YYYY-MM-DD): ${String(from)}`);
     const end = to === undefined || to === null || to === '' ? today : to;
     if (!isISODate(end)) throw new MarketDataError('BAD_REQUEST', `Invalid "to" date (YYYY-MM-DD): ${String(to)}`);
+    if (from > today) throw new MarketDataError('BAD_REQUEST', `"from" (${from}) is in the future (today is ${today})`);
     if (from > end) throw new MarketDataError('BAD_REQUEST', `"from" (${from}) is after "to" (${end})`);
-    if (from > today) throw new MarketDataError('BAD_REQUEST', `"from" (${from}) is in the future`);
     if (daysBetween(from, end) > this.maxRangeDays) throw new MarketDataError('BAD_REQUEST', 'Date range too long');
     return { from, to: end > today ? today : end };
   }
