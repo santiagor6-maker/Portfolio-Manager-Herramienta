@@ -85,7 +85,9 @@ async function buildPlan(): Promise<{ histories: HistoryRequest[]; fx: FxRequest
 
 export async function refreshMarketData(opts: { force?: boolean } = {}): Promise<void> {
   if (inflight) return inflight;
-  if (!opts.force && Date.now() - lastAuto < 5 * 60_000) return;
+  // Auto refreshes are throttled across reloads using the persisted timestamp.
+  const last = Math.max(lastAuto, useApp.getState().market.lastRefresh ?? 0);
+  if (!opts.force && Date.now() - last < 5 * 60_000) return;
   lastAuto = Date.now();
   inflight = doRefresh().finally(() => {
     inflight = null;
@@ -159,6 +161,7 @@ async function doRefresh(): Promise<void> {
       // Today's quote extends the daily series so valuations are live.
       for (const q of quotes) await mergePriceSeries({ instrumentId: q.instrumentId, currency: q.currency, points: [{ date: q.date, close: q.price }], source: q.source });
     }
+    await dropSupersededDemoFx();
     const now = Date.now();
     await db.meta.put({ key: 'lastRefresh', value: now });
     await db.meta.put({ key: 'sources', value: sources });
@@ -171,6 +174,22 @@ async function doRefresh(): Promise<void> {
   } catch (e) {
     setMarket({ status: 'offline', sources: { server: { ok: false, message: String(e) } } });
   }
+}
+
+/**
+ * Sample FX series must not linger next to real ones (they would win triangulation for their
+ * pair). Remove a demo pair once both of its currencies have a real USD rate.
+ */
+async function dropSupersededDemoFx(): Promise<void> {
+  const all = await db.fxSeries.toArray();
+  const realUsd = new Set<string>(['USD']);
+  for (const s of all) {
+    if (s.isDemo) continue;
+    if (s.base === 'USD') realUsd.add(s.quote);
+    if (s.quote === 'USD') realUsd.add(s.base);
+  }
+  const stale = all.filter((s) => s.isDemo && realUsd.has(s.base) && realUsd.has(s.quote)).map((s) => s.pair);
+  if (stale.length) await db.fxSeries.bulkDelete(stale);
 }
 
 async function lastRefreshFromDb(): Promise<number | undefined> {

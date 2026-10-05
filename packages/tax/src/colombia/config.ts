@@ -30,6 +30,11 @@ export interface ColombiaTaxYearConfig {
   dividendWithholding: { exemptUpToUvt: number; rate: number };
   /** Art. 254-1 ET (Ley 2277/2022): tax discount on national dividends above the threshold. */
   dividendDiscount?: { rate: number; fromUvt: number };
+  /**
+   * Arts. 38-41 ET: share of interest paid by Colombian financial entities that is "componente
+   * inflacionario" (ingreso no constitutivo de renta), fixed yearly by decree. Undefined = not applied.
+   */
+  componenteInflacionario?: number;
   /** Gravamen a los Movimientos Financieros (Art. 871-872 ET). */
   gmfRate: number;
   /** Art. 879 num. 1 ET: monthly exempt withdrawals from one designated savings account. */
@@ -176,4 +181,33 @@ export function colombiaConfig(year: number): ColombiaTaxYearConfig {
     meta[k] = { status: 'needs-verification', source: `Copiado del año ${base.year}; sin parámetros para ${year}` };
   }
   return { ...base, year, meta };
+}
+
+/**
+ * Art. 241 ET marginal table for the cédula general of resident individuals (in UVT), in force
+ * since Ley 2010/2019 and kept by Ley 2277/2022 (which also routes dividends through it).
+ * [from UVT, rate, base tax in UVT at `from`]
+ */
+export const ART_241_TABLE: { fromUvt: number; rate: number; baseUvt: number }[] = [
+  { fromUvt: 0, rate: 0, baseUvt: 0 },
+  { fromUvt: 1090, rate: 0.19, baseUvt: 0 },
+  { fromUvt: 1700, rate: 0.28, baseUvt: 116 },
+  { fromUvt: 4100, rate: 0.33, baseUvt: 788 },
+  { fromUvt: 8670, rate: 0.35, baseUvt: 2296 },
+  { fromUvt: 18970, rate: 0.37, baseUvt: 5901 },
+  { fromUvt: 31000, rate: 0.39, baseUvt: 10352 },
+];
+
+export const ART_241_META: ParamMeta = {
+  status: 'verified',
+  source: 'Art. 241 ET (Ley 2010/2019, Ley 2277/2022 art. 2)',
+  checkedOn: '2026-10-05',
+};
+
+/** Income tax (COP) of the cédula general per Art. 241 ET for a taxable base in COP. */
+export function art241TaxCop(baseCop: number, uvt: number): { taxCop: number; marginalRate: number } {
+  const baseUvt = Math.max(0, baseCop) / uvt;
+  let row = ART_241_TABLE[0]!;
+  for (const r of ART_241_TABLE) if (baseUvt > r.fromUvt) row = r;
+  return { taxCop: (row.baseUvt + (baseUvt - row.fromUvt) * row.rate) * uvt, marginalRate: row.rate };
 }

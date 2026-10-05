@@ -233,14 +233,18 @@ export default function TransactionsPage() {
                       <td>
                         <TxTypeBadge type={x.type} />
                       </td>
-                      <td className="max-w-[220px]">
+                      <td>
                         {inst ? (
-                          <div className="min-w-0">
-                            <span className="font-semibold">{inst.symbol}</span>{' '}
-                            <span className="text-xs text-muted truncate">{inst.name}</span>
+                          <div className="flex items-baseline gap-1.5 max-w-[240px]">
+                            <span className="font-semibold shrink-0">{inst.symbol}</span>
+                            <span className="text-xs text-muted truncate" title={inst.name}>
+                              {inst.name}
+                            </span>
                           </div>
                         ) : (
-                          <span className="text-muted text-xs">{x.note ?? '—'}</span>
+                          <div className="text-muted text-xs truncate max-w-[240px]" title={x.note}>
+                            {x.note ?? '—'}
+                          </div>
                         )}
                       </td>
                       <td className="r num">{x.quantity !== undefined ? formatQuantity(x.quantity, f.locale, f.privacy) : x.ratio ? `×${x.ratio}` : '—'}</td>

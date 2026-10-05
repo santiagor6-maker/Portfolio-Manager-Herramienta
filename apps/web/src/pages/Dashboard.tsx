@@ -327,6 +327,7 @@ function FreshnessCard() {
 
 function WarningsCard() {
   const { t } = useTranslation();
+  const f = useFmt();
   const { analysis: a } = useAnalysis();
   const label = useInstrumentLabel();
   const map = useInstrumentMap();
@@ -361,7 +362,7 @@ function WarningsCard() {
             <li key={h.instrumentId} className="flex items-start gap-2">
               <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">
-                {t('dashboard.stalePrice', { symbol: label(h.instrumentId).symbol, date: h.priceDate })}{' '}
+                {t('dashboard.stalePrice', { symbol: label(h.instrumentId).symbol, date: formatDate(h.priceDate, f.locale) })}{' '}
                 <Link className="text-accent hover:underline" to="/mensual/cierre">
                   {t('dashboard.closeMonth')}
                 </Link>

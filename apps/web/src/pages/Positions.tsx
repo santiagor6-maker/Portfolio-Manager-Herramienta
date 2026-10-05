@@ -67,7 +67,7 @@ export default function PositionsPage() {
       sticky: true,
       sortValue: (r) => r.inst?.symbol ?? r.instrumentId,
       cell: (r) => (
-        <div className="flex items-center gap-2.5 min-w-[150px] max-w-[260px]">
+        <div className="flex items-center gap-2.5 min-w-[150px] max-w-[210px]">
           <span className="text-base leading-none" aria-hidden>
             {flagEmoji(r.inst?.country ?? '')}
           </span>
@@ -88,7 +88,8 @@ export default function PositionsPage() {
     },
     {
       id: 'avg',
-      header: t('pos.avgCost'),
+      header: t('pos.avgCostShort'),
+      headerTitle: t('pos.avgCost'),
       align: 'right',
       sortValue: (r) => r.avgCost,
       cell: (r) => <span className="text-ink-2">{f.privacy ? '•••' : formatPrice(r.avgCost, r.currency, f.locale)}</span>,
@@ -127,7 +128,8 @@ export default function PositionsPage() {
     },
     {
       id: 'gain',
-      header: t('pos.unrealized'),
+      header: t('pos.unrealizedShort'),
+      headerTitle: t('pos.unrealized'),
       align: 'right',
       sortValue: (r) => r.unrealizedGainBase,
       cell: (r) => (
@@ -140,7 +142,7 @@ export default function PositionsPage() {
     },
     {
       id: 'priceEffect',
-      header: t('pos.priceEffect'),
+      header: t('pos.priceEffectShort'),
       headerTitle: t('pos.priceEffectHint'),
       align: 'right',
       sortValue: (r) => r.priceGainBase,
@@ -149,7 +151,7 @@ export default function PositionsPage() {
     },
     {
       id: 'fxEffect',
-      header: t('pos.fxEffect'),
+      header: t('pos.fxEffectShort'),
       headerTitle: t('pos.fxEffectHint'),
       align: 'right',
       sortValue: (r) => r.fxGainBase,

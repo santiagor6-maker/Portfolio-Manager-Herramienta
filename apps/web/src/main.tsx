@@ -20,7 +20,7 @@ async function start() {
     document.documentElement.lang = settings.language;
     useApp.getState().setReady(settings);
     await hydrateMarketState();
-    if (settings.autoRefresh) void refreshMarketData({ force: true });
+    if (settings.autoRefresh) void refreshMarketData();
   } catch (e) {
     console.error('Bootstrap failed', e);
     useApp.getState().setReady(useApp.getState().settings);

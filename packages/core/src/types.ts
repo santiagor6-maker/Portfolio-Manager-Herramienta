@@ -82,6 +82,37 @@ export interface Instrument {
   pricing?: 'auto' | 'manual';
   /** Price quoted per N units (some bonds quote per 100). Defaults to 1. */
   priceMultiplier?: number;
+  /**
+   * Fixed income valued by accrual (CDT, CDB, LCI/LCA, Tesouro, TES...). When set, holdings
+   * without a market/manual price are valued as purchase price x accrual factor; a manual or
+   * market price re-anchors the accrual from its date. Additive (round 2).
+   */
+  accrual?: AccrualSpec;
+}
+
+/** Day-count / compounding convention. BUS/252 = Brazilian business days (Mon-Fri). */
+export type DayCount = 'ACT/365' | 'ACT/360' | 'BUS/252' | '30/360';
+
+/** Rate and inflation indices. */
+export type IndexId = 'CDI' | 'SELIC' | 'IPCA' | 'IPC_CO' | 'IBR' | 'UVR' | 'CPI_US' | 'HICP_EA' | (string & {});
+
+export interface AccrualSpec {
+  /** 'fixed' = prefixado / tasa fija E.A.; 'indexed' = % of an index and/or index + spread. */
+  kind: 'fixed' | 'indexed';
+  /** fixed: annual effective rate as a decimal (0.12 = 12 % E.A.). */
+  annualRate?: number;
+  /** indexed: the index (CDI, SELIC, IPCA, IPC_CO, IBR, UVR...). */
+  index?: IndexId;
+  /** indexed: annual spread on top of the index as a decimal (IPCA + 6 % -> 0.06). */
+  spread?: number;
+  /** indexed: share of the index as a decimal (110 % do CDI -> 1.10). Values > 3 are read as percent. */
+  percentOfIndex?: number;
+  /** Defaults: BUS/252 for CDI/SELIC and BRL instruments, ACT/365 otherwise. */
+  dayCount?: DayCount;
+  /** Accrual stops at maturity; the position is redeemed automatically at its accrued value. */
+  maturity?: ISODate;
+  /** Accrual never starts before the issue date. */
+  issueDate?: ISODate;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +192,21 @@ export interface Transaction {
   source?: string;
   /** Hash of the source row for de-duplication on re-import. */
   importHash?: string;
+  /**
+   * Optional refinement of `type` (additive, round 2):
+   * - DIVIDEND: 'JCP' (juros sobre capital próprio), 'ORDINARY', 'EXTRAORDINARY'.
+   * - SPLIT: 'SPINOFF' (targetInstrumentId receives `ratio` shares per share and `costFraction`
+   *   of the cost), 'MERGER' / 'TICKER_CHANGE' (all lots move to targetInstrumentId at `ratio`
+   *   new shares per old share, cost and open dates preserved).
+   */
+  subtype?: TransactionSubtype;
+  /** SPLIT with subtype SPINOFF / MERGER / TICKER_CHANGE: the receiving instrument. */
+  targetInstrumentId?: string;
+  /** SPINOFF: share (0..1) of the parent cost basis allocated to the spun-off instrument. */
+  costFraction?: number;
 }
+
+export type TransactionSubtype = 'JCP' | 'ORDINARY' | 'EXTRAORDINARY' | 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE' | (string & {});
 
 // ---------------------------------------------------------------------------
 // Market data
@@ -214,6 +259,40 @@ export interface MarketData {
   price(instrumentId: string, date: ISODate): number | undefined;
   /** Units of `to` per 1 unit of `from` on date (fill-forward, triangulate via USD if needed). 1 when equal. */
   fx(from: CurrencyCode, to: CurrencyCode, date: ISODate): number | undefined;
+  /**
+   * Optional (additive, round 2): accumulated level of a rate/inflation index on date
+   * (normalized to 1 at the first point; returns between two dates = ratio of levels).
+   */
+  indexLevel?(indexId: IndexId, date: ISODate): number | undefined;
+}
+
+/** One observation of a rate or inflation index. */
+export interface IndexPoint {
+  date: ISODate;
+  value: number;
+}
+
+/**
+ * Rate / inflation index series (additive, round 2). Shapes:
+ * - kind 'level': index levels (IPCA número-índice, DANE IPC índice, UVR value in COP).
+ *   Monthly levels are dated on the LAST day of the reference month.
+ * - kind 'periodRate': the rate earned over one `period`:
+ *     period 'day'   -> BCB SGS 12 (CDI) / SGS 11 (Selic): % per business day, dated on the day it applies;
+ *     period 'month' -> BCB SGS 433 (IPCA) / DANE IPC monthly variation: dated any day of the reference month.
+ * - kind 'annualRate': annualized rate valid from its date until the next point (BanRep IBR, DTF,
+ *   CDI annualized SGS 4389), compounded with `dayCount` (BUS/252 and ACT/365 effective, ACT/360 nominal).
+ */
+export interface IndexSeries {
+  id: IndexId;
+  kind: 'level' | 'periodRate' | 'annualRate';
+  period?: 'day' | 'month';
+  /** Rates: 'percent' (default; as published, 13.65 = 13.65 %) or 'decimal'. Ignored for levels. */
+  unit?: 'percent' | 'decimal';
+  dayCount?: DayCount;
+  /** Economy of the index (COP for IPC_CO, BRL for IPCA/CDI). */
+  currency?: CurrencyCode;
+  points: IndexPoint[];
+  source: ProviderId;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +330,10 @@ export interface Holding {
   lots: Lot[];
   /** Quantity held per account/broker ('' = no account). Additive; used by allocation('account'). */
   accountQuantities?: Record<string, number>;
+  /** Where `price` came from (additive): market close, trade print, accrual model, or cost (no price). */
+  priceSource?: 'market' | 'trade' | 'accrual' | 'cost';
+  /** Price older than the staleness threshold (additive). */
+  stale?: boolean;
 }
 
 export interface CashBalance {
@@ -271,6 +354,10 @@ export interface Valuation {
   /** Instruments with no price on/before date (valued at cost, flagged in UI). */
   missingPrices: string[];
   missingFx: CurrencyCode[];
+  /** Holdings priced with an observation older than the staleness threshold (additive). */
+  stalePrices?: string[];
+  /** Fixed-income holdings whose index data is missing (valued at cost) (additive). */
+  missingIndex?: IndexId[];
 }
 
 export interface RealizedGain {
@@ -285,6 +372,9 @@ export interface RealizedGain {
   costBase: number;
   gainBase: number; // includes FX effect
   holdingDays: number;
+  /** gainBase split (additive): price effect at historical FX + currency effect on proceeds. Sum = gainBase. */
+  priceGainBase?: number;
+  fxGainBase?: number;
 }
 
 export interface IncomeEvent {
@@ -296,6 +386,8 @@ export interface IncomeEvent {
   net: number;
   currency: CurrencyCode;
   netBase: number;
+  /** e.g. 'JCP' (additive). */
+  subtype?: TransactionSubtype;
 }
 
 /** One row of the monthly tracking table (the heart of the product). */
@@ -318,6 +410,31 @@ export interface MonthlyRow {
   localReturn?: number;
   fxReturn?: number;
   benchmarkReturns?: Record<string, number>;
+  // ---- additive (round 2) ----
+  /** How each benchmark return was computed: price only, total return (dividends reinvested) or rate index. */
+  benchmarkKinds?: Record<string, 'price' | 'total' | 'rate'>;
+  /** True when the month is cut by `asOf` (current month). Risk metrics skip partial rows by default. */
+  partial?: boolean;
+  /** Money waterfall for the month (base currency). gainBase = realized + unrealized + income + fxCash + other. */
+  realizedGainBase?: number;
+  /** Change in unrealized gain over the month. */
+  unrealizedGainBase?: number;
+  /** Currency effect in money: realized FX + change in unrealized FX + revaluation of foreign cash. */
+  fxGainBase?: number;
+  /** Cost of FX conversions executed away from the market rate (positive = cost). */
+  fxSpreadBase?: number;
+  /** Inflation of the month (inflation index of the base currency) and the deflated TWR. */
+  inflation?: number;
+  realTwr?: number;
+  cumulativeRealTwr?: number;
+  /** Return of rate indices (CDI, SELIC, IBR...) over the month, and twr / index return. */
+  indexReturns?: Record<string, number>;
+  percentOfIndex?: Record<string, number>;
+  /** Data quality for the month. */
+  missingFx?: CurrencyCode[];
+  missingPrices?: string[];
+  stalePrices?: string[];
+  warnings?: string[];
 }
 
 export interface PerformanceSummary {
@@ -336,6 +453,83 @@ export interface PerformanceSummary {
   twrAnnualized?: number;
   /** Money-weighted return (XIRR), annualized. */
   mwr?: number;
+  // ---- additive (round 2) ----
+  /** Length of the period in years (ACT/ACT calendar years). */
+  years?: number;
+  /** MWR for the period, not annualized (show this for periods shorter than a year). */
+  mwrPeriod?: number;
+  /** XIRR equation has more than one root: MWR is ambiguous. */
+  mwrMultipleRoots?: boolean;
+  /**
+   * Money waterfall that reconciles exactly:
+   * gainBase = realizedGainBase + unrealizedGainBase + incomeBase + fxCashGainBase + fxConversionResultBase
+   *          + otherCostsBase + transferAdjustmentBase + corporateActionAdjustmentBase + rateDifferenceBase.
+   * (feesBase is informational: trade fees are already inside realized/unrealized.)
+   */
+  fxCashGainBase?: number;
+  fxConversionResultBase?: number;
+  otherCostsBase?: number;
+  transferAdjustmentBase?: number;
+  corporateActionAdjustmentBase?: number;
+  rateDifferenceBase?: number;
+  /** Currency effect in money: realized FX + change in unrealized FX + foreign cash revaluation. */
+  fxGainBase?: number;
+  priceGainBase?: number;
+  /** Inflation over the period and the deflated (real) TWR. */
+  inflation?: number;
+  realTwr?: number;
+  realTwrAnnualized?: number;
+  /** Return of rate indices over the period and twr / index return ("% do CDI"). */
+  indexReturns?: Record<string, number>;
+  percentOfIndex?: Record<string, number>;
+  missingFx?: CurrencyCode[];
+  missingPrices?: string[];
+  stalePrices?: string[];
+  warnings?: string[];
+}
+
+/** Performance of one position over a period (additive, round 2). Base currency unless noted. */
+export interface PositionPerformance {
+  instrumentId: string;
+  currency: CurrencyCode;
+  from: ISODate;
+  to: ISODate;
+  quantityStart: number;
+  quantityEnd: number;
+  startValueBase: number;
+  endValueBase: number;
+  /** Cash put into the position: buys incl. fees, transfers in at market value. */
+  investedBase: number;
+  /** Cash taken out: net sale proceeds, transfers out at market value, redemptions. */
+  proceedsBase: number;
+  /** Dividends/interest/return of capital net of withholding. */
+  incomeBase: number;
+  /** Fees and taxes paid on the position's trades (already inside the gains). */
+  feesBase: number;
+  realizedGainBase: number;
+  /** Change in unrealized gain over the period. */
+  unrealizedGainBase: number;
+  /** Currency part of realized + unrealized change. */
+  fxGainBase: number;
+  /** end - start - invested + proceeds + income. */
+  totalReturnBase: number;
+  /** Time-weighted return of the position (trades split the day at the trade price). */
+  twr: number;
+  twrAnnualized?: number;
+  /** Money-weighted return (XIRR, annualized) and not annualized for the period. */
+  irr?: number;
+  irrPeriod?: number;
+  /** totalReturnBase / (startValueBase + investedBase). */
+  simpleReturn?: number;
+}
+
+/** Goal / contribution projection (additive, round 2). */
+export interface GoalProjectionPoint {
+  date: ISODate;
+  contributed: number;
+  pessimistic: number;
+  expected: number;
+  optimistic: number;
 }
 
 export interface RiskMetrics {

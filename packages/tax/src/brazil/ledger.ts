@@ -1,4 +1,5 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
+import { basisTotalCost, transferBasisOf, type TransferBasisMap } from '../common/basis';
 import { monthOf } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
@@ -21,6 +22,10 @@ export interface BrTrade {
   result: number;
   /** IRRF reported by the broker on these sells (`taxes` field), if present. */
   irrfReported?: number;
+  /** Closing (buy-back) of a short sale (venda a descoberto); result recognized at the cover date. */
+  shortCover?: boolean;
+  /** Date of the short sale, for short covers. */
+  shortSaleDate?: ISODate;
   transactionIds: string[];
 }
 
@@ -34,9 +39,21 @@ export interface BrPosition {
   averageCost: number;
 }
 
+export interface BrShortPosition {
+  instrumentId: string;
+  symbol: string;
+  category: BrCategory;
+  quantity: number;
+  /** Net proceeds of the open short sales. */
+  proceeds: number;
+  since: ISODate;
+}
+
 export interface BrLedgerResult {
   trades: BrTrade[];
   positions: BrPosition[];
+  /** Short sales not yet bought back — or sells without recorded purchases (missing history). */
+  openShorts: BrShortPosition[];
   issues: TaxIssue[];
 }
 
@@ -44,6 +61,8 @@ export interface BrLedgerOptions {
   /** Process transactions up to and including this date. */
   until?: ISODate;
   categoryOverrides?: Record<string, BrCategory>;
+  /** Original cost of securities received by TRANSFER_IN (custody transfer between brokers). */
+  transferBasis?: TransferBasisMap;
 }
 
 interface Side {
@@ -57,15 +76,31 @@ interface Side {
 }
 const emptySide = (): Side => ({ qty: 0, gross: 0, value: 0, irrf: 0, irrfKnown: false, ids: [] });
 
+interface Pos {
+  qty: number;
+  cost: number;
+  shortQty: number;
+  shortNet: number;
+  shortGross: number;
+  shortIrrf: number;
+  shortIrrfKnown: boolean;
+  shortSince?: ISODate;
+}
+
 /**
  * Brazilian B3 ledger with preço médio (weighted average cost incl. fees, IN RFB 1.585/2015 art. 58)
  * regardless of the portfolio display cost method, and day-trade detection: buys and sells of the
  * same asset on the same day at the same broker (account) are matched first as day trade.
+ *
+ * Sells above the long position open a short position (venda a descoberto); its result is
+ * recognized when bought back (IN RFB 1.585/2015: in "vendas a descoberto" the gain is computed
+ * on the date of the buy-back). A short never bought back produces no tax and is reported in `openShorts`, which
+ * also catches incomplete purchase history instead of inventing a zero-cost gain.
  */
 export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): BrLedgerResult {
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
-  const pos = new Map<string, { qty: number; cost: number }>();
+  const pos = new Map<string, Pos>();
   const trades: BrTrade[] = [];
 
   const cat = (id: string | undefined): BrCategory =>
@@ -75,7 +110,6 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     (t) => t.instrumentId && isB3Category(cat(t.instrumentId)) && (!opts.until || t.date <= opts.until),
   );
 
-  // Group by date then instrument.
   const byDay = new Map<string, Transaction[]>();
   for (const t of txs) {
     const k = `${t.date}|${t.instrumentId}`;
@@ -89,15 +123,31 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     const inst = instruments.get(id);
     const symbol = displaySymbol(id, inst);
     const category = cat(id);
-    const p = pos.get(id) ?? { qty: 0, cost: 0 };
+    const p: Pos = pos.get(id) ?? { qty: 0, cost: 0, shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false };
     pos.set(id, p);
 
     // 1) corporate actions and transfers in
     for (const t of dayTxs) {
       switch (t.type) {
-        case 'SPLIT':
-          p.qty *= t.ratio ?? 1;
+        case 'SPLIT': {
+          const ratio = t.ratio ?? 1;
+          p.qty *= ratio;
+          p.shortQty *= ratio;
+          const frac = p.qty - Math.floor(p.qty + 1e-9);
+          if (frac > 1e-6) {
+            issues.push({
+              level: 'warning',
+              code: 'FRACAO_GRUPAMENTO',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `O ${ratio < 1 ? 'grupamento' : 'desdobramento'} de ${symbol} deixou fração de ${frac.toFixed(4)} ação(ões) ` +
+                `(custo R$ ${((p.cost * frac) / p.qty).toFixed(2)}). A fração é vendida em leilão pela empresa: registre a venda ` +
+                `(SELL de ${frac.toFixed(4)}) com o valor recebido — é uma alienação tributável.`,
+            });
+          }
           break;
+        }
         case 'STOCK_DIVIDEND': {
           // Bonificação: cost of new shares = capitalized value per share informed by the company
           // (Lei 9.249/1995 art. 10 par. único; IN RFB 1.585/2015 art. 58 §2º). Missing => 0.
@@ -115,10 +165,25 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           p.cost += newQty * (t.price ?? 0);
           break;
         }
-        case 'TRANSFER_IN':
-          p.qty += t.quantity ?? 0;
-          p.cost += grossAmount(t) + (t.fees ?? 0);
+        case 'TRANSFER_IN': {
+          const qty = t.quantity ?? 0;
+          const basis = transferBasisOf(t, opts.transferBasis);
+          const original = basis ? basisTotalCost(basis, qty) : undefined;
+          if (original === undefined) {
+            issues.push({
+              level: 'warning',
+              code: 'TRANSFER_COST_UNKNOWN',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `Transferência de custódia de ${symbol} sem custo original: usado o valor informado na transferência. ` +
+                'Informe o custo de aquisição original (transferBasis ou nota "[custo: AAAA-MM-DD @ preço]").',
+            });
+          }
+          p.qty += qty;
+          p.cost += original ?? grossAmount(t) + (t.fees ?? 0);
           break;
+        }
         case 'RETURN_OF_CAPITAL': {
           const amt = grossAmount(t);
           if (amt > p.cost) {
@@ -158,6 +223,14 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
 
     const restBuy = emptySide();
     const restSell = emptySide();
+    const addRest = (target: Side, src: Side, f: number) => {
+      target.qty += src.qty * f;
+      target.gross += src.gross * f;
+      target.value += src.value * f;
+      target.irrf += src.irrf * f;
+      target.irrfKnown ||= src.irrfKnown;
+      target.ids.push(...src.ids);
+    };
     for (const { buy, sell } of byAccount.values()) {
       const dt = Math.min(buy.qty, sell.qty);
       if (dt > 1e-12) {
@@ -181,59 +254,98 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           transactionIds: [...new Set([...buy.ids, ...sell.ids])],
         });
       }
-      const addRest = (target: Side, src: Side, f: number) => {
-        target.qty += src.qty * f;
-        target.gross += src.gross * f;
-        target.value += src.value * f;
-        target.irrf += src.irrf * f;
-        target.irrfKnown ||= src.irrfKnown;
-        target.ids.push(...src.ids);
-      };
       if (buy.qty - dt > 1e-12) addRest(restBuy, buy, (buy.qty - dt) / buy.qty);
       if (sell.qty - dt > 1e-12) addRest(restSell, sell, (sell.qty - dt) / sell.qty);
     }
 
+    // 2a) buys: first cover an open short, the rest goes long
     if (restBuy.qty > 0) {
-      p.qty += restBuy.qty;
-      p.cost += restBuy.value;
-    }
-    if (restSell.qty > 0) {
-      let costOut: number;
-      if (restSell.qty > p.qty + 1e-9) {
-        issues.push({
-          level: 'error',
-          code: 'OVERSELL',
+      let buyQty = restBuy.qty;
+      let buyValue = restBuy.value;
+      if (p.shortQty > 1e-12) {
+        const cover = Math.min(buyQty, p.shortQty);
+        const f = cover / p.shortQty;
+        const proceeds = p.shortNet * f;
+        const gross = p.shortGross * f;
+        const cost = (buyValue * cover) / buyQty;
+        trades.push({
+          date,
+          month: monthOf(date),
           instrumentId: id,
-          transactionId: restSell.ids[0],
-          message: `Venda de ${restSell.qty} ${symbol} em ${date} acima da posição (${p.qty}); custo do excedente = 0.`,
+          symbol,
+          category,
+          kind: 'swing',
+          quantity: cover,
+          grossSales: gross,
+          netProceeds: proceeds,
+          cost,
+          result: proceeds - cost,
+          irrfReported: p.shortIrrfKnown ? p.shortIrrf * f : undefined,
+          shortCover: true,
+          shortSaleDate: p.shortSince,
+          transactionIds: restBuy.ids,
         });
-        costOut = p.cost;
-        p.qty = 0;
-        p.cost = 0;
-      } else {
-        costOut = p.qty > 0 ? (p.cost * restSell.qty) / p.qty : 0;
-        p.qty -= restSell.qty;
+        p.shortQty -= cover;
+        p.shortNet -= proceeds;
+        p.shortGross -= gross;
+        p.shortIrrf -= p.shortIrrf * f;
+        if (p.shortQty < 1e-9) Object.assign(p, { shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false, shortSince: undefined });
+        buyValue -= cost;
+        buyQty -= cover;
+      }
+      if (buyQty > 1e-12) {
+        p.qty += buyQty;
+        p.cost += buyValue;
+      }
+    }
+
+    // 2b) sells: close the long position at preço médio; the excess opens a short
+    if (restSell.qty > 0) {
+      const closeQty = Math.min(restSell.qty, p.qty);
+      const excess = restSell.qty - closeQty;
+      if (closeQty > 1e-12) {
+        const f = closeQty / restSell.qty;
+        const costOut = (p.cost * closeQty) / p.qty;
+        p.qty -= closeQty;
         p.cost -= costOut;
         if (p.qty < 1e-9) {
           p.qty = 0;
           p.cost = 0;
         }
+        trades.push({
+          date,
+          month: monthOf(date),
+          instrumentId: id,
+          symbol,
+          category,
+          kind: 'swing',
+          quantity: closeQty,
+          grossSales: restSell.gross * f,
+          netProceeds: restSell.value * f,
+          cost: costOut,
+          result: restSell.value * f - costOut,
+          irrfReported: restSell.irrfKnown ? restSell.irrf * f : undefined,
+          transactionIds: restSell.ids,
+        });
       }
-      trades.push({
-        date,
-        month: monthOf(date),
-        instrumentId: id,
-        symbol,
-        category,
-        kind: 'swing',
-        quantity: restSell.qty,
-        grossSales: restSell.gross,
-        netProceeds: restSell.value,
-        cost: costOut,
-        result: restSell.value - costOut,
-        irrfReported: restSell.irrfKnown ? restSell.irrf : undefined,
-        transactionIds: restSell.ids,
-      });
+      if (excess > 1e-9) {
+        const f = excess / restSell.qty;
+        p.shortQty += excess;
+        p.shortNet += restSell.value * f;
+        p.shortGross += restSell.gross * f;
+        p.shortIrrf += restSell.irrf * f;
+        p.shortIrrfKnown ||= restSell.irrfKnown;
+        p.shortSince ??= date;
+        issues.push({
+          level: 'warning',
+          code: 'SHORT_SALE',
+          instrumentId: id,
+          transactionId: restSell.ids[0],
+          message:
+            `Venda de ${excess} ${symbol} em ${date} sem posição comprada: tratada como venda a descoberto; o resultado ` +
+            'é apurado na recompra. Se faltar histórico de compras, registre a compra/transferência com o custo original.',
+        });
+      }
     }
 
     // 3) transfers out (no taxable event; reduce at average cost)
@@ -247,18 +359,38 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
   }
 
   const positions: BrPosition[] = [];
+  const openShorts: BrShortPosition[] = [];
   for (const [id, p] of pos) {
-    if (p.qty <= 1e-9) continue;
     const inst = instruments.get(id);
-    positions.push({
-      instrumentId: id,
-      symbol: displaySymbol(id, inst),
-      category: cat(id),
-      quantity: p.qty,
-      totalCost: p.cost,
-      averageCost: p.cost / p.qty,
-    });
+    if (p.qty > 1e-9) {
+      positions.push({
+        instrumentId: id,
+        symbol: displaySymbol(id, inst),
+        category: cat(id),
+        quantity: p.qty,
+        totalCost: p.cost,
+        averageCost: p.cost / p.qty,
+      });
+    }
+    if (p.shortQty > 1e-9) {
+      openShorts.push({
+        instrumentId: id,
+        symbol: displaySymbol(id, inst),
+        category: cat(id),
+        quantity: p.shortQty,
+        proceeds: p.shortNet,
+        since: p.shortSince ?? '',
+      });
+      issues.push({
+        level: 'error',
+        code: 'SHORT_OR_MISSING_HISTORY',
+        instrumentId: id,
+        message:
+          `Posição vendida em aberto: ${p.shortQty} ${displaySymbol(id, inst)} desde ${p.shortSince}. Nenhum ganho foi apurado ` +
+          '(nem DARF gerado) para essa venda. Se não é venda a descoberto, falta registrar a compra ou a transferência com o custo.',
+      });
+    }
   }
   positions.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  return { trades, positions, issues };
+  return { trades, positions, openShorts, issues };
 }
