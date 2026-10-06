@@ -200,3 +200,54 @@ export function checkUsEstateTaxExposure(
     meta: { status: 'verified', source: 'IRC §2101-2106; exención de US$ 60.000 para no residentes (§2102(b))', checkedOn: '2026-10-05' },
   };
 }
+
+/** IRS Form 1042-S (Foreign Person's U.S. Source Income Subject to Withholding), one per income code/broker. */
+export interface Form1042S {
+  year: number;
+  /** Income code: '06' dividends paid by U.S. corporations, '01' interest... */
+  incomeCode: string;
+  grossIncome: number;
+  taxRate: number;
+  taxWithheld: number;
+  withholdingAgent?: string;
+}
+
+export interface Us1042SReconciliation {
+  year: number;
+  ours: { grossDividends: number; withheld: number };
+  form: { grossDividends: number; withheld: number };
+  diffGross: number;
+  diffWithheld: number;
+  ok: boolean;
+  rateMismatch: { formRate: number; expectedRate: number } | undefined;
+  note: string;
+}
+
+/** Reconciles US-source dividends and withholding recorded in the portfolio with the 1042-S forms. */
+export function reconcileUs1042S(
+  input: Pick<TaxInput, 'transactions' | 'instruments'>,
+  residence: CountryCode | undefined,
+  year: number,
+  forms: Form1042S[],
+): Us1042SReconciliation {
+  const rows = checkUsDividendWithholding(input, residence, { from: `${year}-01-01`, to: `${year}-12-31` });
+  const ours = { grossDividends: rows.reduce((a, r) => a + r.gross, 0), withheld: rows.reduce((a, r) => a + r.withheld, 0) };
+  const div = forms.filter((f) => f.year === year && f.incomeCode === '06');
+  const form = { grossDividends: div.reduce((a, f) => a + f.grossIncome, 0), withheld: div.reduce((a, f) => a + f.taxWithheld, 0) };
+  const expected = expectedUsDividendWithholding(residence).rate;
+  const odd = div.find((f) => Math.abs(f.taxRate - expected) > 0.001);
+  const diffGross = ours.grossDividends - form.grossDividends;
+  const diffWithheld = ours.withheld - form.withheld;
+  return {
+    year,
+    ours,
+    form,
+    diffGross,
+    diffWithheld,
+    ok: Math.abs(diffGross) <= 1 && Math.abs(diffWithheld) <= 1,
+    rateMismatch: odd ? { formRate: odd.taxRate, expectedRate: expected } : undefined,
+    note:
+      'Diferencias suelen indicar dividendos importados netos, reclasificaciones de fin de año (ROC/ganancias de capital de ETF/REIT) ' +
+      'o un W-8BEN vencido. El 1042-S es el documento oficial para el descuento por impuestos pagados en el exterior.',
+  };
+}

@@ -86,7 +86,8 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
   const snaps = new Map<string, Snap>();
   const runner = new Ledger(ctx);
   for (const r of reqs) {
-    runner.applyUntil(r.stateDay);
+    if (r.pre) runner.applyStartOfDay(r.priceDay);
+    else runner.applyUntil(r.stateDay);
     const ov = r.pre ? ctx.firstTradePrice.get(r.priceDay) : undefined;
     const snap: Snap = { value: new Map() };
     if (r.full) snap.unreal = new Map();

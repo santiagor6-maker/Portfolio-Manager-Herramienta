@@ -123,6 +123,8 @@ interface Seg {
 }
 
 interface Req {
+  /** State: all transactions up to stateDay; with `sod`, only the start-of-day actions of stateDay. */
+  sod?: boolean;
   stateDay: number;
   priceDay: number;
   fxDay: number;
@@ -177,7 +179,9 @@ export function computePeriods(
   // ---- value requests (generated in non-decreasing state-day order) --------------------
   const reqs: Req[] = [];
   const req = (stateDay: number, priceDay: number, fxDay: number, period: number, override = false, agg = false): number => {
-    reqs.push({ stateDay, priceDay, fxDay, override, agg, period });
+    // Pre-flow requests (override) see the state "before the trades" of priceDay (C22).
+    if (override) reqs.push({ sod: true, stateDay: priceDay, priceDay, fxDay, override, agg, period });
+    else reqs.push({ stateDay, priceDay, fxDay, override, agg, period });
     return reqs.length - 1;
   };
   const b0 = B[0] as number;
@@ -224,7 +228,8 @@ export function computePeriods(
   const runner = new Ledger(ctx);
   for (let k = 0; k < reqs.length; k++) {
     const r = reqs[k] as Req;
-    runner.applyUntil(r.stateDay);
+    if (r.sod) runner.applyStartOfDay(r.stateDay);
+    else runner.applyUntil(r.stateDay);
     const iss = issues[Math.min(r.period, issues.length - 1)];
     if (r.agg) {
       const a = valueAggregates(runner, r.priceDay, iss, k === v0Req ? undefined : stale[r.period]);

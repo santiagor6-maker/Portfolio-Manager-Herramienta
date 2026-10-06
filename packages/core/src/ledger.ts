@@ -333,6 +333,23 @@ export class Ledger {
     this.applyUntil(Infinity);
   }
 
+  /**
+   * State "before the trades" of `day`: everything up to the previous day plus the start-of-day
+   * corporate actions of `day` (rank < 0: splits, bonus shares, spin-offs, mergers). Used for
+   * the pre-flow valuation P(f), whose prices are already post-split on an ex-date (C22).
+   */
+  applyStartOfDay(day: number): void {
+    this.applyUntil(day - 1);
+    const sorted = this.ctx.sorted;
+    while (this.cursor < sorted.length) {
+      const s = sorted[this.cursor] as SortedTx;
+      if (s.day !== day || s.rank >= 0) break;
+      this.cursor++;
+      this.lastDay = s.day;
+      this.applyWrapped(s.tx, s.day);
+    }
+  }
+
   // ---- helpers --------------------------------------------------------------
 
   diag(tx: Transaction | undefined, day: number, code: string, message: string, severity: Diagnostic['severity'] = 'warning'): void {

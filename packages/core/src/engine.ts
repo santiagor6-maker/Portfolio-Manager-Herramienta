@@ -191,7 +191,7 @@ export class Engine {
       const fl = k > 0 ? inOut.get(d) : undefined;
       let pre = 0;
       if (fl) {
-        runner.applyUntil(d - 1);
+        runner.applyStartOfDay(d);
         pre = totalValue(runner, d, d, ctx.firstTradePrice.get(d), iss);
       }
       runner.applyUntil(d);
