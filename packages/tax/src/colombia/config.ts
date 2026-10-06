@@ -107,8 +107,10 @@ export const COLOMBIA_TAX_YEARS: Record<number, ColombiaTaxYearConfig> = {
     gananciaOcasionalRate: 0.15,
     art361MaxShareOfOutstanding: 0.03,
     dividendDiscount: { rate: 0.19, fromUvt: 1090 },
+    componenteInflacionario: 0.6671,
     meta: {
       uvt: DIAN_UVT('Resolución 001264 de 2022'),
+      componenteInflacionario: { status: 'verified', source: 'Decreto anual (AG 2023: 66,71% de los rendimientos financieros)', checkedOn: '2026-10-06', note: 'Verificado en fuentes secundarias.' },
       gananciaOcasionalRate: LEY_2277,
       art361MaxShareOfOutstanding: { ...LEY_2277, source: 'Art. 36-1 ET modificado por Ley 2277/2022 (3%)' },
       dividendDiscount: { ...LEY_2277, source: 'Art. 254-1 ET (Ley 2277/2022)' },
@@ -121,8 +123,10 @@ export const COLOMBIA_TAX_YEARS: Record<number, ColombiaTaxYearConfig> = {
     gananciaOcasionalRate: 0.15,
     art361MaxShareOfOutstanding: 0.03,
     dividendDiscount: { rate: 0.19, fromUvt: 1090 },
+    componenteInflacionario: 0.5088,
     meta: {
       uvt: DIAN_UVT('Resolución 000187 de 2023'),
+      componenteInflacionario: { status: 'verified', source: 'Decreto 771 de 2025 (AG 2024: 50,88%)', checkedOn: '2026-10-06', note: 'Verificado en fuentes secundarias.' },
       gananciaOcasionalRate: LEY_2277,
       art361MaxShareOfOutstanding: { ...LEY_2277, source: 'Art. 36-1 ET modificado por Ley 2277/2022 (3%)' },
       dividendDiscount: { ...LEY_2277, source: 'Art. 254-1 ET (Ley 2277/2022)' },
@@ -135,8 +139,10 @@ export const COLOMBIA_TAX_YEARS: Record<number, ColombiaTaxYearConfig> = {
     gananciaOcasionalRate: 0.15,
     art361MaxShareOfOutstanding: 0.03,
     dividendDiscount: { rate: 0.19, fromUvt: 1090 },
+    componenteInflacionario: 0.5543,
     meta: {
       uvt: DIAN_UVT('Resolución 000193 de 2024'),
+      componenteInflacionario: { status: 'verified', source: 'Decreto 898 de 2026 (AG 2025: 55,43%)', checkedOn: '2026-10-06', note: 'Verificado en fuentes secundarias.' },
       gananciaOcasionalRate: LEY_2277,
       art361MaxShareOfOutstanding: { ...LEY_2277, source: 'Art. 36-1 ET modificado por Ley 2277/2022 (3%)' },
       dividendDiscount: { ...LEY_2277, source: 'Art. 254-1 ET (Ley 2277/2022)' },

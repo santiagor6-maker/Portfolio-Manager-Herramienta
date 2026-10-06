@@ -1,7 +1,7 @@
 import type { CountryCode, CurrencyCode, Instrument, ISODate, Transaction } from '@pm/core';
 import { basisTotalCost, issuerKey, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool } from '../common/cashPool';
-import { addWeekdays, addYears, daysBetween } from '../common/dates';
+import { addBusinessDays, addWeekdays, addYears, colombiaHolidays, daysBetween, usMarketHolidays } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
@@ -53,6 +53,17 @@ export interface ColombiaReportOptions {
    * country != CO). Default false: DIAN doctrine is not settled; the accountant decides.
    */
   art361IncludeMgc?: boolean;
+  /**
+   * Asset classes covered by Art. 153 ET (non-deductible losses). Default ['equity', 'etf']: shares and
+   * listed fund shares (ETF units are shares of investment companies/trusts) — conservative choice.
+   * Bonds, crypto and other funds keep deductible/offsettable losses.
+   */
+  art153AssetClasses?: string[];
+  /**
+   * Share (0..1) of a national dividend that the company certified as GRAVADO (Art. 49 par. 2 ET,
+   * 2a subcédula), by transaction id. Default 0 (all non-gravado, 1a subcédula).
+   */
+  dividendosGravados?: Record<string, number>;
   /** Original purchase date/cost of securities received by TRANSFER_IN (by transaction id). */
   transferBasis?: TransferBasisMap;
   /** Apply free-text cost hints found in notes ("bought 2019 at 50"); default false (proposal only). */
@@ -90,6 +101,8 @@ export interface CoSaleRow {
   deductibleCostCop: number;
   /** Loss on the sale of shares — not deductible nor offsettable (Art. 153 ET). */
   nonDeductibleLossCop: number;
+  /** Held >= the ganancia ocasional minimum (2 years). */
+  longTerm: boolean;
   classification: CoSaleClass;
   legalBasis: string;
 }
@@ -115,6 +128,8 @@ export interface CoIncomeRow {
   foreignTaxCreditCapCop?: number;
   /** National interest: componente inflacionario not constituting income (Arts. 38-41 ET). */
   componenteInflacionarioCop?: number;
+  /** National dividends: part certified as gravado (Art. 49 par. 2 ET, 2a subcédula). */
+  gravadoCop?: number;
 }
 
 export interface CoFxRow {
@@ -205,6 +220,8 @@ export interface ColombiaTaxReport {
       nationalDividendsCop: number;
       nationalDividendWithholdingCop: number;
       nationalDividendExpectedWithholdingCop: number;
+      /** Part of national dividends certified as gravados (2a subcédula, Art. 49 par. 2). */
+      nationalDividendsGravadosCop: number;
       /** Art. 254-1 ET: 19% of national dividends above 1,090 UVT. */
       descuentoArt2541Cop: number;
       foreignDividendsCop: number;
@@ -219,7 +236,16 @@ export interface ColombiaTaxReport {
   ventas: {
     rows: CoSaleRow[];
     totals: {
-      noGravadaArt361: { ingresosCop: number; costosCop: number; utilidadCop: number; perdidaNoDeducibleCop: number };
+      noGravadaArt361: {
+        ingresosCop: number;
+        costosCop: number;
+        utilidadCop: number;
+        perdidaNoDeducibleCop: number;
+        /** Held < 2 years: declared in rentas no laborales (ingresos, costos and INCRNGO) — T28. */
+        rentaNoLaboral: { ingresosCop: number; costosCop: number; incrngoCop: number };
+        /** Held >= 2 years: declared in ganancias ocasionales (ingresos, costos and no gravadas). */
+        gananciaOcasional: { ingresosCop: number; costosCop: number; noGravadaCop: number };
+      };
       gananciaOcasional: {
         ingresosCop: number;
         /** Deductible costs (loss part excluded, Art. 153 ET). */
@@ -289,10 +315,14 @@ function isArt361Eligible(inst: Instrument | undefined, includeMgc: boolean): bo
 
 const US_EXCHANGES = new Set(['XNYS', 'XNAS', 'ARCX', 'BATS', 'XASE']);
 
-/** Estimated settlement date of a trade (weekends skipped, holidays ignored). */
+/**
+ * Estimated settlement date of a trade: T+2 BVC (Colombian holidays), T+1 US exchanges since
+ * 2024-05-28 (NYSE holidays), T+2 elsewhere (weekends only).
+ */
 export function settlementDate(inst: Instrument | undefined, tradeDate: ISODate): ISODate {
-  if (inst && US_EXCHANGES.has(inst.exchange)) return addWeekdays(tradeDate, tradeDate >= '2024-05-28' ? 1 : 2);
+  if (inst && US_EXCHANGES.has(inst.exchange)) return addBusinessDays(tradeDate, tradeDate >= '2024-05-28' ? 1 : 2, usMarketHolidays);
   if (inst?.exchange === 'MANUAL' || inst?.exchange === 'OTC') return tradeDate;
+  if (inst?.exchange === 'XBOG') return addBusinessDays(tradeDate, 2, colombiaHolidays);
   return addWeekdays(tradeDate, 2);
 }
 
@@ -655,6 +685,7 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
       gainCop,
       deductibleCostCop: slice.costCop,
       nonDeductibleLossCop: 0,
+      longTerm,
       classification: longTerm ? 'ganancia_ocasional' : 'renta_ordinaria',
       legalBasis: longTerm ? 'Arts. 300 y 314 ET' : 'Arts. 26, 330 y 241 ET (cédula general)',
     };
@@ -683,6 +714,7 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
       trm: rate,
       grossCop: gross * rate,
       withheldCop: withheld * rate,
+      gravadoCop: national && type !== 'interes' ? gross * rate * Math.min(1, Math.max(0, opts.dividendosGravados?.[tx.id] ?? 0)) : undefined,
     };
   }
 
@@ -720,8 +752,11 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
   // Netting is allowed only within one sale (same transaction and classification); a net loss
   // cannot reduce other gains.
   const groups = new Map<string, CoSaleRow[]>();
+  const art153Classes = opts.art153AssetClasses ?? ['equity', 'etf'];
   for (const r of sales) {
     if (r.classification === 'pendiente_costo') continue;
+    // Art. 153 covers "acciones o cuotas de interés social" only (T27): bonds, crypto, funds keep their losses.
+    if (!art153Classes.includes(instruments.get(r.instrumentId)?.assetClass ?? 'equity')) continue;
     const k = `${r.transactionId}|${r.classification}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
@@ -943,6 +978,8 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
     perdidaNoDeducibleCop: sum(rows.map((r) => r.nonDeductibleLossCop)),
   });
   const ex = totalsOf(by('no_gravada_art_36_1'));
+  const exShort = totalsOf(by('no_gravada_art_36_1').filter((r) => !r.longTerm));
+  const exLong = totalsOf(by('no_gravada_art_36_1').filter((r) => r.longTerm));
   const go = totalsOf(by('ganancia_ocasional'));
   const ro = totalsOf(by('renta_ordinaria'));
   const pend = by('pendiente_costo');
@@ -992,6 +1029,7 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
   const ingresosTotals = {
     nationalDividendsCop,
     nationalDividendWithholdingCop: sum(nat.map((d) => d.withheldCop)),
+    nationalDividendsGravadosCop: sum(nat.map((d) => d.gravadoCop ?? 0)),
     nationalDividendExpectedWithholdingCop: sum(nat.map((d) => d.expectedWithholdingCop ?? 0)),
     descuentoArt2541Cop,
     foreignDividendsCop,
@@ -1023,7 +1061,7 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
       ? 'Activos y efectivo en moneda extranjera a la TRM del reconocimiento inicial (Art. 269 ET); la diferencia en cambio solo se reconoce al realizarse (Art. 288 ET).'
       : 'Activos y efectivo en moneda extranjera a la TRM del 31 de diciembre (criterio alternativo seleccionado por el usuario).',
     'Venta de acciones con tenencia >= 2 años: ganancia ocasional (Art. 300 ET); < 2 años: renta ordinaria en la cédula general.',
-    'Pérdidas en venta de acciones: no deducibles ni compensables (Art. 153 ET); solo se netean lotes de una misma venta.',
+    'Pérdidas en venta de acciones y ETF: no deducibles ni compensables (Art. 153 ET; ETF por decisión conservadora, configurable con art153AssetClasses); solo se netean lotes de una misma venta. Bonos, cripto y otros fondos sí compensan pérdidas.',
     realization === 'settlement'
       ? 'Las ventas se imputan al año en que se cumplen (liquidación T+2 BVC/Europa, T+1 EE.UU. desde 28-may-2024), Art. 27 ET.'
       : 'Las ventas se imputan al año de la fecha de negociación.',
@@ -1051,7 +1089,12 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
     ventas: {
       rows: sales,
       totals: {
-        noGravadaArt361: { ...ex, utilidadCop: Math.max(0, ex.ingresosCop - ex.costosCop) },
+        noGravadaArt361: {
+          ...ex,
+          utilidadCop: Math.max(0, ex.ingresosCop - ex.costosCop),
+          rentaNoLaboral: { ingresosCop: exShort.ingresosCop, costosCop: exShort.costosCop, incrngoCop: Math.max(0, exShort.ingresosCop - exShort.costosCop) },
+          gananciaOcasional: { ingresosCop: exLong.ingresosCop, costosCop: exLong.costosCop, noGravadaCop: Math.max(0, exLong.ingresosCop - exLong.costosCop) },
+        },
         gananciaOcasional: {
           ...go,
           gananciaGravableCop: goGravable,

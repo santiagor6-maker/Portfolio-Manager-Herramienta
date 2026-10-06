@@ -27,9 +27,18 @@ function axisCommon(t: ChartTokens) {
 // Value vs invested
 // ---------------------------------------------------------------------------
 
-export function ValueChart({ data, height = 300 }: { data: SeriesPoint[]; height?: number }) {
+/** Picks at most `n` evenly spaced points (always keeps the last one). */
+export function sample<T>(arr: T[], n: number): T[] {
+  if (arr.length <= n) return arr;
+  const step = (arr.length - 1) / (n - 1);
+  return Array.from({ length: n }, (_, i) => arr[Math.round(i * step)]!);
+}
+
+export function ValueChart({ data, height = 300, inflationLabel }: { data: SeriesPoint[]; height?: number; inflationLabel?: string }) {
   const { t } = useTranslation();
   const f = useFmt();
+  const hasReal = !!inflationLabel && data.some((p) => p.investedRealBase !== undefined);
+  const realName = t('chart.investedReal', { index: inflationLabel ?? '' });
   const option = useCallback(
     (tk: ChartTokens): EChartsOption => {
       const money = (v: number, compact = false) => formatMoney(v, f.currency, f.locale, { compact, privacy: f.privacy });
@@ -43,7 +52,7 @@ export function ValueChart({ data, height = 300 }: { data: SeriesPoint[]; height
           itemHeight: 3,
           icon: 'rect',
           textStyle: { color: tk.text2, fontSize: 12 },
-          data: [t('chart.value'), t('chart.invested')],
+          data: [t('chart.value'), t('chart.invested'), ...(hasReal ? [realName] : [])],
         },
         tooltip: {
           ...(baseOption(tk).tooltip as object),
@@ -104,12 +113,35 @@ export function ValueChart({ data, height = 300 }: { data: SeriesPoint[]; height
             lineStyle: { width: 1.5, color: tk.muted },
             itemStyle: { color: tk.muted },
           },
+          ...(hasReal
+            ? [
+                {
+                  name: realName,
+                  type: 'line' as const,
+                  showSymbol: false,
+                  data: data.map((p) => [p.date, p.investedRealBase ?? p.netInvestedBase]),
+                  lineStyle: { width: 1.5, color: tk.series[1], type: 'dotted' as const },
+                  itemStyle: { color: tk.series[1] },
+                },
+              ]
+            : []),
         ],
       };
     },
-    [data, f.currency, f.locale, f.privacy, t],
+    [data, f.currency, f.locale, f.privacy, t, hasReal, realName],
   );
-  return <Chart option={option} height={height} ariaLabel={t('chart.valueAria')} />;
+  const money = (v: number | undefined) => formatMoney(v, f.currency, f.locale, { privacy: f.privacy });
+  const first = data[0];
+  const last = data[data.length - 1];
+  const summary =
+    first && last
+      ? t('chart.valueSummary', { from: formatDate(first.date, f.locale), to: formatDate(last.date, f.locale), start: money(first.valueBase), end: money(last.valueBase), invested: money(last.netInvestedBase), max: money(Math.max(...data.map((p) => p.valueBase))) })
+      : undefined;
+  const table = {
+    headers: [t('tx.date'), t('chart.value'), t('chart.invested'), ...(hasReal ? [realName] : [])],
+    rows: sample(data, 24).map((p) => [formatDate(p.date, f.locale, 'short'), money(p.valueBase), money(p.netInvestedBase), ...(hasReal ? [money(p.investedRealBase)] : [])]),
+  };
+  return <Chart option={option} height={height} ariaLabel={t('chart.valueAria')} summary={summary} data={table} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +288,11 @@ export function ReturnBars({
     }),
     [data, f.locale, benchmark, t],
   );
-  return <Chart option={option} height={height} ariaLabel={t('chart.returnsAria')} />;
+  const rows = data.map((d) => [formatMonth(d.month, f.locale), formatPct(d.twr, f.locale, { signed: true }), ...(benchmark ? [d.bench !== undefined ? formatPct(d.bench, f.locale, { signed: true }) : '—'] : [])]);
+  const best = data.reduce<typeof data[number] | undefined>((m, d) => (!m || d.twr > m.twr ? d : m), undefined);
+  const worst = data.reduce<typeof data[number] | undefined>((m, d) => (!m || d.twr < m.twr ? d : m), undefined);
+  const summary = best && worst ? t('chart.returnsSummary', { best: formatMonth(best.month, f.locale), bestV: formatPct(best.twr, f.locale, { signed: true }), worst: formatMonth(worst.month, f.locale), worstV: formatPct(worst.twr, f.locale, { signed: true }) }) : undefined;
+  return <Chart option={option} height={height} ariaLabel={t('chart.returnsAria')} summary={summary} data={{ headers: [t('monthly.col.month'), t('chart.portfolio'), ...(benchmark ? [benchmark] : [])], rows }} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +362,15 @@ export function LineChart({
     [series, valueFormat, scale],
   );
   void f;
-  return <Chart option={option} height={height} ariaLabel={ariaLabel} />;
+  const lens = series.map((x) => x.data.length);
+  const base = series[0]?.data ?? [];
+  const table = {
+    headers: ['', ...series.map((x) => x.name)],
+    rows: sample(base.map((_, i) => i), 24).map((i) => [base[i]![0], ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
+  };
+  const lastV = base[base.length - 1];
+  const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${lastV[0]})` : undefined;
+  return <Chart option={option} height={height} ariaLabel={ariaLabel} summary={summary} data={table} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,5 +425,6 @@ export function GroupedBars({
     }),
     [categories, series, valueFormat, stacked],
   );
-  return <Chart option={option} height={height} ariaLabel={ariaLabel} />;
+  const table = { headers: ['', ...series.map((x) => x.name)], rows: categories.map((c, i) => [c, ...series.map((x) => valueFormat(x.data[i] ?? 0))]) };
+  return <Chart option={option} height={height} ariaLabel={ariaLabel} data={table} />;
 }

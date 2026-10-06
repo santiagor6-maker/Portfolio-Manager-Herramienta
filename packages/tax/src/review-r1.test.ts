@@ -579,11 +579,12 @@ describe('T20 — Colombia realization date, componente inflacionario, GMF', () 
     tx({ date: '2025-12-31', type: 'SELL', instrumentId: I.ECOPETROL.id, quantity: 1000, price: 2500, currency: 'COP' }),
   ];
   it('a sale on 31-dec settling T+2 is realized the next year (Art. 27 ET)', () => {
-    expect(settlementDate(I.ECOPETROL, '2025-12-31')).toBe('2026-01-02');
-    expect(settlementDate(I.AAPL, '2025-12-31')).toBe('2026-01-01');
+    // round 2 (T20): holidays count — 1-Jan (CO/US) and Reyes moved to 12-Jan don't affect 2-Jan/5-Jan
+    expect(settlementDate(I.ECOPETROL, '2025-12-31')).toBe('2026-01-05');
+    expect(settlementDate(I.AAPL, '2025-12-31')).toBe('2026-01-02');
     expect(buildColombiaTaxReport(co(txs), { year: 2025 }).ventas.rows).toHaveLength(0);
     const r26 = buildColombiaTaxReport(co(txs), { year: 2026 });
-    expect(r26.ventas.rows[0]!.realizationDate).toBe('2026-01-02');
+    expect(r26.ventas.rows[0]!.realizationDate).toBe('2026-01-05');
     expect(buildColombiaTaxReport(co(txs), { year: 2025, realization: 'trade' }).ventas.rows).toHaveLength(1);
   });
   it('componente inflacionario when the decree % is configured', () => {

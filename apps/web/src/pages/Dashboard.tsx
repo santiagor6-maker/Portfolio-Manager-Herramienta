@@ -8,7 +8,9 @@ import { AllocationDonut, ReturnBars, ValueChart } from '../components/charts';
 import { seriesForPeriod, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
-import { formatDate, formatRelative } from '../lib/format';
+import { formatDate, formatMonth, formatRelative } from '../lib/format';
+import { indexName } from '../lib/labels';
+import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd } from '../lib/ids';
 import { useInstrumentMap } from '../hooks/useData';
 import { previousBusinessDay } from '../services/analysis';
@@ -35,6 +37,7 @@ export default function DashboardPage() {
 
   // Prices older than the previous business day: a "today" change would be meaningless.
   const stalePrices = !!a?.latestPriceDate && a.latestPriceDate < previousBusinessDay(a.asOf);
+  const rateIdx = a?.rateIndices[0];
   const periodSummary =
     period === 'MTD' ? mtd : period === 'YTD' ? ytd : period === '1Y' ? a?.summaries['1Y'] : period === '3Y' ? a?.summaries['3Y'] : si;
 
@@ -55,6 +58,7 @@ export default function DashboardPage() {
         }
       />
 
+      <GettingStarted />
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" data-testid="kpis">
         <Kpi
           loading={loading}
@@ -92,9 +96,14 @@ export default function DashboardPage() {
           sub={
             <span className="flex items-center gap-2 flex-wrap">
               <Pct value={si?.twr} signed colored />
-              {si?.mwr !== undefined && (
-                <span className="text-muted text-xs">
-                  TIR <Pct value={si.mwr} signed />
+              {si?.realTwr !== undefined && (
+                <span className="text-muted text-xs" title={t('dashboard.realHint', { index: indexName(a?.inflationIndex) })}>
+                  {t('dashboard.real')} <Pct value={si.realTwr} signed />
+                </span>
+              )}
+              {rateIdx && si?.percentOfIndex?.[rateIdx] !== undefined && (
+                <span className="text-muted text-xs" data-testid="pct-index">
+                  <Pct value={si.percentOfIndex[rateIdx]} decimals={0} /> {t('dashboard.ofIndex', { index: indexName(rateIdx) })}
                 </span>
               )}
             </span>
@@ -129,7 +138,7 @@ export default function DashboardPage() {
             />
           }
         >
-          {loading ? <Skeleton className="h-[300px]" /> : series.length ? <ValueChart data={series} /> : <NoSeries />}
+          {loading ? <Skeleton className="h-[300px]" /> : series.length ? <ValueChart data={series} inflationLabel={a?.inflationIndex ? indexName(a.inflationIndex) : undefined} /> : <NoSeries />}
         </Card>
 
         <Card
@@ -223,18 +232,8 @@ function DividendsCard() {
   const { analysis: a, loading } = useAnalysis();
   const f = useFmt();
   const label = useInstrumentLabel();
-  const holdings = new Map((a?.valuation?.holdings ?? []).map((h) => [h.instrumentId, h.quantity]));
-
-  // Upcoming = same-month payments a year ago for positions still held (estimate).
-  const upcoming = useMemo(() => {
-    if (!a) return [];
-    const from = addDays(a.asOf, -365);
-    const to = addDays(a.asOf, -365 + 75);
-    return a.income
-      .filter((e) => e.type === 'DIVIDEND' && e.instrumentId && e.date > from && e.date <= to && holdings.get(e.instrumentId))
-      .map((e) => ({ ...e, date: addDays(e.date, 365) }))
-      .slice(0, 4);
-  }, [a]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Announced by the provider first, then projected from last year's payments.
+  const upcoming = (a?.upcomingDividends ?? []).filter((d) => d.payDate <= addDays(a!.asOf, 90)).slice(0, 4).map((d) => ({ ...d, date: d.payDate }));
   const last = useMemo(() => [...(a?.income ?? [])].filter((e) => e.date <= (a?.asOf ?? '')).sort((x, y) => (x.date < y.date ? 1 : -1)).slice(0, 4), [a]);
 
   return (
@@ -259,7 +258,11 @@ function DividendsCard() {
                 {upcoming.map((e, i) => (
                   <li key={i} className="flex items-center gap-2">
                     <span className="w-[86px] font-semibold truncate">{label(e.instrumentId).symbol}</span>
-                    <span className="text-muted text-xs flex-1">≈ {formatDate(e.date, f.locale)}</span>
+                    <span className="text-muted text-xs flex-1">
+                      {e.source === 'provider' ? '' : '≈ '}
+                      {formatDate(e.date, f.locale)}
+                      {e.source === 'provider' && <span className="chip !h-4 ml-1.5 !text-[10px]">{t('div.announced')}</span>}
+                    </span>
                     <Money value={e.netBase} className="text-ink-2" />
                   </li>
                 ))}
@@ -340,7 +343,10 @@ function WarningsCard() {
     // Manual prices are due at every month end: flag when the last closed month has none.
     return inst?.pricing === 'manual' && h.priceDate && h.priceDate < monthEnd(addMonths(a!.asOf.slice(0, 7), -1));
   });
-  const total = missing.length + missingFx.length + issues.length + manualStale.length + market.failedSymbols.length;
+  const pending = a?.pendingCloses ?? [];
+  const pendingIds = new Set(pending.map((p) => p.instrumentId));
+  const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
+  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length;
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -358,7 +364,18 @@ function WarningsCard() {
               </span>
             </li>
           ))}
-          {manualStale.map((h) => (
+          {pending.map((p) => (
+            <li key={p.instrumentId} className="flex items-start gap-2" data-testid="pending-close-warning">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('dashboard.pendingCloses', { symbol: label(p.instrumentId).symbol, count: p.months.length, months: p.months.map((m) => formatMonth(m, f.locale)).join(', ') })}{' '}
+                <Link className="text-accent hover:underline" to="/mensual/cierre">
+                  {t('dashboard.closeMonth')}
+                </Link>
+              </span>
+            </li>
+          ))}
+          {manualStaleOnly.map((h) => (
             <li key={h.instrumentId} className="flex items-start gap-2">
               <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">

@@ -12,6 +12,9 @@ import { useFmt } from '../store/app';
 import { formatDate, formatMonth, formatPrice, formatQuantity } from '../lib/format';
 import { addMonths, monthEnd, todayIso } from '../lib/ids';
 import { holdingsAt } from '../services/engineDirect';
+import { pendingCloses, pendingMonths } from '../lib/pendingCloses';
+import { groupManualPrices } from '../hooks/useData';
+import clsx from 'clsx';
 import { parseDecimal, toInputNumber } from '../lib/parse';
 
 export default function MonthClosePage() {
@@ -20,11 +23,19 @@ export default function MonthClosePage() {
   const map = useInstrumentMap();
   const today = todayIso();
   const defaultMonth = addMonths(today.slice(0, 7), -1);
-  const [month, setMonth] = useState(defaultMonth);
+  const [monthChoice, setMonth] = useState<string>();
+  // Every month-end still missing a manual price since each instrument was bought (W5).
+  const pending = useLiveQuery(async () => {
+    const [txs, insts, manual] = await Promise.all([db.transactions.toArray(), db.instruments.toArray(), db.manualPrices.toArray()]);
+    return pendingCloses(txs, insts, groupManualPrices(manual), today);
+  }, [today]);
+  const pendingList = pending ? pendingMonths(pending) : [];
+  const month = monthChoice ?? pendingList[0] ?? defaultMonth;
   const [holdings, setHoldings] = useState<Holding[]>();
   const [error, setError] = useState<string>();
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  const [nextMsg, setNextMsg] = useState<string>();
   const closed = useLiveQuery(() => getMeta<string[]>('closedMonths'), [], undefined);
   const end = monthEnd(month);
   const manualRows = useLiveQuery(() => db.manualPrices.toArray(), []);
@@ -61,6 +72,8 @@ export default function MonthClosePage() {
   const needsManual = (holdings ?? []).filter((h) => {
     const inst = map.get(h.instrumentId);
     const lp = lastPrice.get(h.instrumentId);
+    // Accrual instruments (CDT, CDB...) are valued by the engine: nothing to type.
+    if (inst?.accrual) return false;
     return inst?.pricing === 'manual' || !lp || lp.date < `${month}-01`;
   });
   const automatic = (holdings ?? []).filter((h) => !needsManual.includes(h));
@@ -98,9 +111,15 @@ export default function MonthClosePage() {
     list.add(month);
     await setMeta('closedMonths', [...list].sort());
     setSaved(true);
+    // Walk the user through the remaining pending months, oldest first.
+    const next = pendingList.find((m) => m !== month);
+    if (next) {
+      setNextMsg(t('close.nextPending', { month: formatMonth(next, f.locale, 'long') }));
+      setMonth(next);
+    } else setNextMsg(undefined);
   };
 
-  const months = Array.from({ length: 24 }, (_, i) => addMonths(today.slice(0, 7), -i));
+  const months = [...new Set([...Array.from({ length: 24 }, (_, i) => addMonths(today.slice(0, 7), -i)), ...pendingList])].sort().reverse();
 
   return (
     <div>
@@ -120,6 +139,7 @@ export default function MonthClosePage() {
                 <option key={m} value={m}>
                   {formatMonth(m, f.locale, 'long')}
                   {closed?.includes(m) ? ' ✓' : ''}
+                  {pendingList.includes(m) ? ` · ${t('close.pendingShort')}` : ''}
                 </option>
               ))}
             </select>
@@ -127,6 +147,27 @@ export default function MonthClosePage() {
         }
       />
 
+      {pendingList.length > 0 && (
+        <div className="mb-3" data-testid="pending-months">
+          <Banner tone="warn">
+            <div className="font-semibold">{t('close.pendingTitle', { count: pendingList.length })}</div>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {(pending ?? []).flatMap((p) =>
+                p.months.map((m) => (
+                  <button key={`${p.instrumentId}${m}`} type="button" className={clsx('chip hover:!border-accent', m === month && '!border-accent !text-accent')} onClick={() => setMonth(m)}>
+                    {formatMonth(m, f.locale)} · {map.get(p.instrumentId)?.symbol ?? p.instrumentId}
+                  </button>
+                )),
+              )}
+            </div>
+          </Banner>
+        </div>
+      )}
+      {nextMsg && (
+        <div className="mb-3">
+          <Banner tone="info">{nextMsg}</Banner>
+        </div>
+      )}
       {isClosed && !saved && (
         <div className="mb-3">
           <Banner tone="success">{t('close.alreadyClosed', { month: formatMonth(month, f.locale, 'long') })}</Banner>
@@ -258,7 +299,7 @@ export default function MonthClosePage() {
                       <td className="r num">{lp ? formatPrice(lp.close, h.currency, f.locale) : '—'}</td>
                       <td className="r text-muted">
                         <span className="inline-flex items-center gap-1">
-                          <Lock size={12} aria-hidden /> {lp ? formatDate(lp.date, f.locale, 'short') : '—'}
+                          <Lock size={12} aria-hidden /> {inst?.accrual ? t('close.accrual') : lp ? formatDate(lp.date, f.locale, 'short') : '—'}
                         </span>
                       </td>
                     </tr>

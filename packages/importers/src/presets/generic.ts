@@ -5,6 +5,7 @@
  */
 import type { AssetClass, TransactionType } from '@pm/core';
 import { findHeaderRow } from '../mapping';
+import { exchangeCurrency } from '../markets';
 import { parseRatio } from '../numbers';
 import { classifyTypeDetailed } from '../txtypes';
 import type { ColumnMapping, DraftTransaction, InstrumentHint, MappingField, NumberFormat, ParsedRow, RawTable } from '../types';
@@ -177,7 +178,9 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       if (symbol) hint.symbol = symbol;
       if (isin) hint.isin = isin;
       if (name) hint.name = name;
-      const ex = str(raw, c.exchange) || mapping.defaultExchange;
+      // A default market (e.g. BVC for Colombian statements) only applies to rows in its currency.
+      const defEx = mapping.defaultExchange && (!currency || exchangeCurrency(mapping.defaultExchange) === currency) ? mapping.defaultExchange : undefined;
+      const ex = str(raw, c.exchange) || defEx;
       if (ex) hint.exchange = ex;
       if (currency) hint.currency = currency;
       const ac = assetClassFromText(str(raw, c.assetClass));

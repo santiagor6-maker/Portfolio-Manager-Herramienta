@@ -52,7 +52,7 @@ type Token =
   | { kind: 'named'; y: number; m: number; d: number };
 
 function tokenize(raw: string): Token | undefined {
-  let s = raw.trim();
+  let s = raw.trim().replace(/^(mon|tue|wed|thu|fri|sat|sun|lun|mar|mie|mié|jue|vie|sab|sáb|dom|seg|ter|qua|qui|sex)[a-záéíóú]*\.?,?\s+/i, '');
   // Schwab: "02/16/2023 as of 02/15/2023" → the effective ("as of") date.
   const asOf = /\bas of\s+(.+)$/i.exec(s);
   if (asOf) s = asOf[1]!.trim();

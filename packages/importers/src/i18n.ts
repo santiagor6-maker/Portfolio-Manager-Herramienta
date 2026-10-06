@@ -10,9 +10,9 @@ export const ISSUE_MESSAGES: Catalog = {
     en: 'The file is empty or has no data rows.',
   },
   FILE_XLS_LEGACY: {
-    es: 'Formato .xls antiguo no soportado: ábrelo en Excel y guárdalo como .xlsx o CSV.',
-    pt: 'Formato .xls antigo não suportado: abra no Excel e salve como .xlsx ou CSV.',
-    en: 'Legacy .xls is not supported: open it in Excel and save as .xlsx or CSV.',
+    es: 'No se pudo leer el archivo .xls (Excel 97-2003): {detail}. Ábrelo en Excel y guárdalo como .xlsx o CSV.',
+    pt: 'Não foi possível ler o arquivo .xls (Excel 97-2003): {detail}. Abra no Excel e salve como .xlsx ou CSV.',
+    en: 'Could not read the .xls (Excel 97-2003) file: {detail}. Open it in Excel and save as .xlsx or CSV.',
   },
   FILE_UNSUPPORTED: {
     es: 'No se reconoce el tipo de archivo. Usa CSV o XLSX.',
@@ -190,6 +190,160 @@ export const ISSUE_MESSAGES: Catalog = {
     en: '{field} must be greater than zero.',
   },
 };
+
+const R2: Catalog = {
+  FILE_PDF_UNSUPPORTED: {
+    es: 'PDF no reconocido: se leen notas de corretagem SINACOR, extractos con tabla de movimientos y certificados de CDT. Si es otro documento, exporta a Excel/CSV.',
+    pt: 'PDF não reconhecido: são lidas notas de corretagem SINACOR, extratos com tabela de movimentações e certificados de CDT. Se for outro documento, exporte para Excel/CSV.',
+    en: 'Unrecognized PDF: supported are SINACOR brokerage notes, statements with a transactions table and CDT certificates. Otherwise export to Excel/CSV.',
+  },
+  PDF_READ_ERROR: {
+    es: 'No se pudo leer el PDF ({detail}). Si tiene contraseña, quítala y vuelve a intentarlo.',
+    pt: 'Não foi possível ler o PDF ({detail}). Se tiver senha, remova-a e tente de novo.',
+    en: 'Could not read the PDF ({detail}). If it is password-protected, remove the password and retry.',
+  },
+  CONFIRM_DATE_FORMAT: {
+    es: 'Todas las fechas son ambiguas (día y mes ≤ 12). Confirma el formato antes de importar (sugerido: {format}).',
+    pt: 'Todas as datas são ambíguas (dia e mês ≤ 12). Confirme o formato antes de importar (sugerido: {format}).',
+    en: 'All dates are ambiguous (day and month ≤ 12). Confirm the format before importing (suggested: {format}).',
+  },
+  CONFIRM_NUMBER_FORMAT: {
+    es: 'Hay números ambiguos (p. ej. 1.000 o 2,450). Confirma el separador decimal antes de importar (sugerido: "{separator}").',
+    pt: 'Há números ambíguos (ex.: 1.000 ou 2,450). Confirme o separador decimal antes de importar (sugerido: "{separator}").',
+    en: 'Some numbers are ambiguous (e.g. 1.000 or 2,450). Confirm the decimal separator before importing (suggested: "{separator}").',
+  },
+  DATE_FORMAT_INFERRED: {
+    es: 'Formato de fecha {format} deducido del orden de las filas, la fecha de liquidación o la hora AM/PM.',
+    pt: 'Formato de data {format} deduzido da ordem das linhas, da data de liquidação ou da hora AM/PM.',
+    en: 'Date format {format} inferred from row order, settlement dates or AM/PM times.',
+  },
+  NUMBER_FORMAT_INFERRED: {
+    es: 'Separador decimal "{separator}" deducido del delimitador ";" del archivo.',
+    pt: 'Separador decimal "{separator}" deduzido do delimitador ";" do arquivo.',
+    en: 'Decimal separator "{separator}" inferred from the ";" delimiter.',
+  },
+  POSSIBLE_DUPLICATE_IN_FILE: {
+    es: 'Fila idéntica a la línea {line} del mismo archivo; no se importa salvo que la aceptes.',
+    pt: 'Linha idêntica à linha {line} do mesmo arquivo; não é importada a menos que você aceite.',
+    en: 'Identical to line {line} of the same file; not imported unless you accept it.',
+  },
+  SETTLEMENT_MATCHED: {
+    es: 'Liquidación de una operación del {date} ya importada desde Negociação/nota; se omite para no contarla dos veces.',
+    pt: 'Liquidação de uma operação de {date} já importada da Negociação/nota; ignorada para não contar duas vezes.',
+    en: 'Settlement of a trade on {date} already imported from Negociação/note; skipped to avoid double counting.',
+  },
+  UNHANDLED_SECTION: {
+    es: 'La sección "{section}" ({count} filas) no se importa; revísala.',
+    pt: 'A seção "{section}" ({count} linhas) não é importada; revise.',
+    en: 'Section "{section}" ({count} rows) is not imported; please review.',
+  },
+  TRANSFER_COST_FROM_MARKET: {
+    es: 'Costo de la transferencia tomado del valor de mercado; corrígelo con tu costo original si lo conoces.',
+    pt: 'Custo da transferência tomado do valor de mercado; corrija com o custo original se souber.',
+    en: 'Transfer cost taken from market value; replace it with your original cost if known.',
+  },
+  FX_FEE_SEPARATE: {
+    es: 'Comisión de la conversión ({amount} {currency}) registrada como comisión aparte.',
+    pt: 'Comissão da conversão ({amount} {currency}) registrada como tarifa separada.',
+    en: 'Conversion commission ({amount} {currency}) recorded as a separate fee.',
+  },
+  QUANTITY_SIGN_CONTRADICTS: {
+    es: 'La cantidad es negativa pero el movimiento es {type}; revisa la fila.',
+    pt: 'A quantidade é negativa mas a movimentação é {type}; revise a linha.',
+    en: 'Quantity is negative but the row is a {type}; please check.',
+  },
+  DIVIDEND_REVERSAL_ROW: {
+    es: 'Monto negativo: se registra como reversión del pago.',
+    pt: 'Valor negativo: registrado como estorno do pagamento.',
+    en: 'Negative amount: recorded as a reversal of the payment.',
+  },
+  REFUND: {
+    es: 'Devolución/reintegro: se registra con monto negativo.',
+    pt: 'Devolução/estorno: registrado com valor negativo.',
+    en: 'Refund: recorded with a negative amount.',
+  },
+  JCP_GROSS_ESTIMATED: {
+    es: 'JCP neto {net} → bruto estimado {gross} con IRRF de 15 %.',
+    pt: 'JCP líquido {net} → bruto estimado {gross} com IRRF de 15 %.',
+    en: 'Net JCP {net} → estimated gross {gross} with 15 % withholding.',
+  },
+  FRACTION_SOLD: {
+    es: 'Subasta de fracciones unida a la venta de la fracción.',
+    pt: 'Leilão de frações unido à venda da fração.',
+    en: 'Fraction auction merged into the fraction sale.',
+  },
+  FRACTION_PENDING: {
+    es: 'Fracción retirada sin el valor de la subasta; actualiza el monto cuando lo recibas.',
+    pt: 'Fração retirada sem o valor do leilão; atualize o valor quando receber.',
+    en: 'Fraction removed without auction proceeds; update the amount when received.',
+  },
+  CORPORATE_ACTION_PENDING: {
+    es: 'Evento corporativo "{value}": confírmalo en el asistente de eventos corporativos.',
+    pt: 'Evento corporativo "{value}": confirme no assistente de eventos corporativos.',
+    en: 'Corporate event "{value}": confirm it in the corporate-action wizard.',
+  },
+  MGC_FOREIGN_LISTING: {
+    es: '{symbol} en COP (Mercado Global Colombiano) se asoció al activo {id}; la operación queda en COP.',
+    pt: '{symbol} em COP (Mercado Global Colombiano) associado ao ativo {id}; a operação fica em COP.',
+    en: '{symbol} in COP (Colombian Global Market) linked to {id}; the trade stays in COP.',
+  },
+  EXCHANGE_REQUIRED: {
+    es: 'Indica la bolsa de {symbol} ({currency}): el símbolo existe en varias bolsas.',
+    pt: 'Informe a bolsa de {symbol} ({currency}): o símbolo existe em várias bolsas.',
+    en: 'Choose the exchange for {symbol} ({currency}): the symbol exists on several venues.',
+  },
+  EXCHANGE_REFINED: {
+    es: 'El activo {id} cotiza en {exchange}; se sugiere actualizar su bolsa.',
+    pt: 'O ativo {id} é negociado em {exchange}; sugere-se atualizar a bolsa.',
+    en: 'Instrument {id} trades on {exchange}; updating its exchange is suggested.',
+  },
+  FEES_MODE_AMBIGUOUS: {
+    es: 'Nota {nota}: costos iguales en todas las filas; se tomaron por fila. Elige "totales de la nota" si corresponde.',
+    pt: 'Nota {nota}: custos iguais em todas as linhas; considerados por linha. Escolha "totais da nota" se for o caso.',
+    en: 'Note {nota}: identical costs on every row; taken per row. Choose "note totals" if applicable.',
+  },
+  NOTA_TOTALS_MISMATCH: {
+    es: 'Nota {nota}: el líquido calculado ({expected}) no coincide con el de la nota ({actual}); revisa la lectura.',
+    pt: 'Nota {nota}: o líquido calculado ({expected}) não confere com o da nota ({actual}); revise a leitura.',
+    en: 'Note {nota}: computed net ({expected}) differs from the note ({actual}); please review.',
+  },
+  UNKNOWN_SECURITY: {
+    es: 'No se reconoce el título "{spec}": indica su ticker.',
+    pt: 'Título "{spec}" não reconhecido: informe o ticker.',
+    en: 'Unknown security "{spec}": please provide its ticker.',
+  },
+  CDT_IMPORTED: {
+    es: 'CDT de {issuer} ({rate}) con vencimiento {maturity}: se valorará por causación.',
+    pt: 'CDT de {issuer} ({rate}) com vencimento {maturity}: avaliado por acúmulo.',
+    en: 'CDT from {issuer} ({rate}) maturing {maturity}: valued by accrual.',
+  },
+  AUTOFX_PAIRED: {
+    es: 'Conversión automática unida con la línea {line}.',
+    pt: 'Conversão automática unida à linha {line}.',
+    en: 'Automatic FX leg paired with line {line}.',
+  },
+  AUTOFX_UNPAIRED: {
+    es: 'Conversión de divisas "{value}" sin su contraparte; no se importa.',
+    pt: 'Conversão de moedas "{value}" sem contrapartida; não importada.',
+    en: 'FX leg "{value}" without its counterpart; not imported.',
+  },
+  SPLIT_PAIR_MERGED: {
+    es: 'Split inverso en dos filas unido (proporción {ratio}).',
+    pt: 'Grupamento em duas linhas unido (proporção {ratio}).',
+    en: 'Two-row reverse split merged (ratio {ratio}).',
+  },
+  OPENING_POSITION: {
+    es: 'Posición inicial importada como transferencia de entrada.',
+    pt: 'Posição inicial importada como transferência de entrada.',
+    en: 'Opening position imported as a transfer in.',
+  },
+  RECONCILIATION_DIFF: {
+    es: 'Hay {count} diferencias entre lo importado y la posición/caja informada por el corredor.',
+    pt: 'Há {count} diferenças entre o importado e a posição/caixa informada pela corretora.',
+    en: '{count} differences between imported data and the broker-reported positions/cash.',
+  },
+};
+Object.assign(ISSUE_MESSAGES, R2);
 
 export function formatMessage(code: string, locale: Locale = 'es', params?: Record<string, string | number>): string {
   const entry = ISSUE_MESSAGES[code];

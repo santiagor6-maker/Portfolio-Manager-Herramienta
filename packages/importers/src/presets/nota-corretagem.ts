@@ -94,7 +94,10 @@ export const notaCorretagemPreset: PresetDefinition = {
       const broker = str(raw, c.broker);
       if (broker) d.account = broker;
       const nota = str(raw, c.nota);
-      if (nota) d.note = `Nota ${nota}`;
+      if (nota) {
+        d.note = `Nota ${nota}`;
+        d.brokerRef = `nota:${nota}:${code}:${qty}:${price ?? ''}:${r}`;
+      }
       row.draft = d;
       entries.push({ row, d, nota: nota || `row${r}`, fees, taxes });
     }
@@ -109,6 +112,8 @@ export const notaCorretagemPreset: PresetDefinition = {
     for (const [nota, group] of byNota) {
       const totalValue = group.reduce((acc, e) => acc + (e.d.amount ?? 0), 0);
       const valuesDiffer = group.some((e) => Math.abs((e.d.amount ?? 0) - (group[0]!.d.amount ?? 0)) > 0.005);
+      // A fee column whose values vary inside the note proves the file is per row (totals repeat every column).
+      const anyVaries = feeCols.some((_, k) => group.some((e) => Math.abs((e.fees[k] ?? 0) - (group[0]!.fees[k] ?? 0)) > 1e-9));
       const allocate = (pick: (e: (typeof entries)[number]) => (number | undefined)[], cols: number, forceTotalFrom = Infinity): number[] => {
         const perRow = group.map(() => 0);
         let allocated = false;
@@ -116,8 +121,8 @@ export const notaCorretagemPreset: PresetDefinition = {
           const vals = group.map((e) => Math.abs(pick(e)[k] ?? 0));
           const repeated = group.length > 1 && vals.every((v) => v === vals[0]) && vals[0]! > 0;
           const asTotal =
-            k >= forceTotalFrom ? vals.some((v) => v > 0) : mode === 'per-note' ? repeated : mode === 'per-row' ? false : repeated && valuesDiffer;
-          if (repeated && !valuesDiffer && mode === 'auto' && k < forceTotalFrom) {
+            k >= forceTotalFrom ? vals.some((v) => v > 0) : mode === 'per-note' ? repeated : mode === 'per-row' ? false : repeated && valuesDiffer && !anyVaries;
+          if (repeated && !valuesDiffer && !anyVaries && mode === 'auto' && k < forceTotalFrom) {
             group[0]!.row.issues.push(ctx.issue('FEES_MODE_AMBIGUOUS', 'warning', { nota }, group[0]!.row.line));
           }
           const total = k >= forceTotalFrom ? Math.max(...vals) : vals[0]!;

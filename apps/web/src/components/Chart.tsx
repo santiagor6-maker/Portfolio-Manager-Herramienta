@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import ReactEChartsCoreModule from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
 import { BarChart, HeatmapChart, LineChart, PieChart } from 'echarts/charts';
@@ -82,25 +83,41 @@ export function baseOption(t: ChartTokens): EChartsOption {
   };
 }
 
+export interface ChartData {
+  headers: string[];
+  rows: (string | number)[][];
+}
+
+/**
+ * ECharts wrapper. Accessibility: the canvas is an `img` with a label plus an optional text
+ * summary (aria-describedby) and a "Ver datos" table with the plotted values.
+ */
 export function Chart({
   option,
   height = 280,
   ariaLabel,
   className,
   onEvents,
+  summary,
+  data,
 }: {
   option: (t: ChartTokens) => EChartsOption;
   height?: number | string;
   ariaLabel: string;
   className?: string;
   onEvents?: Record<string, (params: unknown) => void>;
+  summary?: string;
+  data?: ChartData;
 }) {
+  const { t } = useTranslation();
+  const sid = useId();
   const { resolved } = useTheme();
   const [tokens, setTokens] = useState(readTokens);
   useEffect(() => setTokens(readTokens()), [resolved]);
   const opt = useMemo(() => option(tokens), [option, tokens]);
   return (
-    <div role="img" aria-label={ariaLabel} className={className}>
+    <div className={className}>
+      <div role="img" aria-label={ariaLabel} aria-describedby={summary ? sid : undefined}>
       <ReactEChartsCore
         echarts={echarts}
         option={opt}
@@ -110,6 +127,42 @@ export function Chart({
         opts={{ renderer: 'canvas' }}
         onEvents={onEvents}
       />
+      </div>
+      {summary && (
+        <p id={sid} className="sr-only">
+          {summary}
+        </p>
+      )}
+      {data && data.rows.length > 0 && (
+        <details className="mt-1 text-xs print:hidden">
+          <summary className="cursor-pointer text-muted hover:text-ink w-fit">{t('chart.showData')}</summary>
+          <div className="max-h-56 overflow-auto mt-1 rounded border border-line">
+            <table className="table table-compact">
+              <caption className="sr-only">{ariaLabel}</caption>
+              <thead>
+                <tr>
+                  {data.headers.map((h, i) => (
+                    <th key={i} className={i ? 'r' : undefined}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={i}>
+                    {r.map((c, j) => (
+                      <td key={j} className={j ? 'r num' : undefined}>
+                        {c}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
     </div>
   );
 }
