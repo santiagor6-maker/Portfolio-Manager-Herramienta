@@ -242,12 +242,29 @@ export interface FxSeries {
 
 export interface CorporateAction {
   instrumentId: string;
+  /** Ex-date (for DIVIDEND the same as exDate when both are given). */
   date: ISODate;
-  type: 'DIVIDEND' | 'SPLIT';
-  /** DIVIDEND: amount per share in instrument currency. */
+  /** STOCK_DIVIDEND (bonificação) added in round 2. */
+  type: 'DIVIDEND' | 'SPLIT' | 'STOCK_DIVIDEND';
+  /** DIVIDEND: amount per share in instrument currency (or in `currency` when given). */
   amountPerShare?: number;
-  /** SPLIT: new shares per old share. */
+  /** SPLIT: new shares per old share. STOCK_DIVIDEND: new shares received per share held. */
   ratio?: number;
+  // ---- additive (round 2) ----
+  /** 'JCP' | 'ORDINARY' | 'EXTRAORDINARY' | 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE' ... */
+  subtype?: TransactionSubtype;
+  /** DIVIDEND: ex-date and payment date (`date` stays = ex-date). */
+  exDate?: ISODate;
+  payDate?: ISODate;
+  /** Dividend currency when it differs from the instrument currency (VUSA.L pays USD, quotes GBP). */
+  currency?: CurrencyCode;
+  /** SPINOFF / MERGER / TICKER_CHANGE: receiving instrument and share of cost moved (SPINOFF). */
+  targetInstrumentId?: string;
+  costFraction?: number;
+  /** Heuristic classification by the provider: never applied automatically. */
+  reviewRequired?: boolean;
+  source?: ProviderId;
+  note?: string;
 }
 
 /**

@@ -131,6 +131,13 @@ export const YAHOO_EXCHANGE_TO_MIC: Readonly<Record<string, ExchangeCode>> = {
   SAU: 'XSAU',
 };
 
+/** Crypto assets understood as "currencies" in FX pairs (BTC/USD, ETH/BRL...). */
+export const CRYPTO_CURRENCIES: readonly string[] = ['BTC', 'ETH', 'SOL', 'USDT', 'USDC', 'BNB', 'XRP', 'ADA', 'DOGE', 'LTC', 'DOT', 'AVAX', 'LINK', 'TRX', 'MATIC'];
+
+export function isCryptoCurrency(c: string): boolean {
+  return CRYPTO_CURRENCIES.includes(c.toUpperCase());
+}
+
 /** Generic exchange code for Yahoo symbols on venues we do not map: the id keeps the Yahoo symbol verbatim. */
 export const GENERIC_EXCHANGE = 'YAHOO';
 

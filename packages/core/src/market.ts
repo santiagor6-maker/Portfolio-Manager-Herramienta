@@ -41,8 +41,10 @@ export interface EngineMarket extends MarketData {
   priceCurrency(instrumentId: string): CurrencyCode | undefined;
   /** Rate/inflation index data, if loaded. */
   index(id: IndexId): IndexData | undefined;
-  /** Cash dividends per share (price currency) with ex-date in (fromDay, toDay]; undefined when no dividend data exists for the instrument. */
-  dividends(instrumentId: string, fromDay: number, toDay: number): { day: number; amount: number }[] | undefined;
+  /** Cash dividends per share with ex-date in (fromDay, toDay]; undefined when no dividend data exists for the instrument. */
+  dividends(instrumentId: string, fromDay: number, toDay: number): { day: number; amount: number; currency?: CurrencyCode }[] | undefined;
+  /** Product of split / bonus factors with ex-date in (fromDay, toDay] (1 when none). */
+  splitFactor(instrumentId: string, fromDay: number, toDay: number): number;
 }
 
 /** Public extension of MarketData returned by createMarketData. */
@@ -266,19 +268,26 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
     const d = s && buildIndex(s);
     if (d) indices.set(s.id, d);
   }
-  const divs = new Map<string, { days: number[]; amounts: number[] }>();
+  const divs = new Map<string, { day: number; amount: number; currency?: CurrencyCode }[]>();
+  const splits = new Map<string, { day: number; factor: number }[]>();
   for (const a of (input.corporateActions ?? []) as CorporateAction[]) {
-    if (!a || a.type !== 'DIVIDEND' || !(a.amountPerShare && a.amountPerShare > 0)) continue;
-    let e = divs.get(a.instrumentId);
-    if (!e) divs.set(a.instrumentId, (e = { days: [], amounts: [] }));
-    e.days.push(isoToDay(a.date));
-    e.amounts.push(a.amountPerShare);
+    if (!a || !a.instrumentId || typeof a.date !== 'string' || a.reviewRequired) continue;
+    const day = isoToDay(a.exDate ?? a.date);
+    if (!Number.isFinite(day)) continue;
+    if (a.type === 'DIVIDEND' && a.amountPerShare && a.amountPerShare > 0) {
+      let e = divs.get(a.instrumentId);
+      if (!e) divs.set(a.instrumentId, (e = []));
+      e.push({ day, amount: a.amountPerShare, currency: a.currency });
+    } else if ((a.type === 'SPLIT' && !a.subtype) || a.type === 'STOCK_DIVIDEND') {
+      const r = a.ratio ?? 0;
+      const factor = a.type === 'SPLIT' ? r : 1 + r;
+      if (!(factor > 0)) continue;
+      let e = splits.get(a.instrumentId);
+      if (!e) splits.set(a.instrumentId, (e = []));
+      e.push({ day, factor });
+    }
   }
-  for (const e of divs.values()) {
-    const order = e.days.map((_, i) => i).sort((x, y) => (e.days[x] as number) - (e.days[y] as number));
-    e.days = order.map((i) => e.days[i] as number);
-    e.amounts = order.map((i) => e.amounts[i] as number);
-  }
+  for (const e of divs.values()) e.sort((x, y) => x.day - y.day);
 
   const market: MarketDataEx = {
     engineMarket: true,
@@ -288,12 +297,12 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
     dividends(id, fromDay, toDay) {
       const e = divs.get(id);
       if (!e) return undefined;
-      const out: { day: number; amount: number }[] = [];
-      for (let i = 0; i < e.days.length; i++) {
-        const d = e.days[i] as number;
-        if (d > fromDay && d <= toDay) out.push({ day: d, amount: e.amounts[i] as number });
-      }
-      return out;
+      return e.filter((d) => d.day > fromDay && d.day <= toDay);
+    },
+    splitFactor(id, fromDay, toDay) {
+      let f = 1;
+      for (const sp of splits.get(id) ?? []) if (sp.day > fromDay && sp.day <= toDay) f *= sp.factor;
+      return f;
     },
     price(instrumentId, date) {
       const s = prices.get(instrumentId);
@@ -361,5 +370,6 @@ export function toEngineMarket(m: MarketData): EngineMarket {
       return data;
     },
     dividends: () => undefined,
+    splitFactor: () => 1,
   };
 }

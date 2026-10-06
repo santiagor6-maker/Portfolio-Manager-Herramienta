@@ -1,16 +1,27 @@
 import type { CurrencyCode, FxPoint, ISODate, PricePoint, ProviderId } from '@pm/core';
-import type { PriceAdjustment, Quote, SearchResult } from '../types';
+import type { Quote, SearchResult } from '../types';
 
 export interface DividendEvent {
+  /** Ex-date. */
   date: ISODate;
   amount: number;
+  payDate?: ISODate;
+  /** 'JCP' (juros sobre capital próprio) or 'ORDINARY' when the provider says so. */
+  kind?: 'JCP' | 'ORDINARY';
+  /** Set when the amount is NOT in the instrument currency (e.g. VUSA.L pays USD, quotes GBP). */
+  currency?: CurrencyCode;
 }
 
 export interface SplitEvent {
   date: ISODate;
-  /** New shares per old share (2 = 2-for-1; 0.1 = 1-for-10 reverse split). */
+  /** Price/share factor (numerator / denominator). */
   ratio: number;
+  numerator?: number;
+  denominator?: number;
 }
+
+/** What a price provider's closes are. Only 'as-traded' data is cached as immutable. */
+export type PriceBasis = 'as-traded' | 'split-adjusted';
 
 export interface ProviderHistory {
   providerSymbol: string;
@@ -27,6 +38,14 @@ export interface ProviderHistory {
   dividends: DividendEvent[];
   splits: SplitEvent[];
   notes: string[];
+  basis: PriceBasis;
+  /** Local date of the last real trade (phantom bars after it are removed). */
+  lastTradeDate?: ISODate;
+  /** Regular session of the latest trading day (epoch seconds), for provisional detection. */
+  session?: { start: number; end: number };
+  /** Reasons the data is incomplete; degraded data is never cached long. */
+  degraded?: string[];
+  source: ProviderId;
 }
 
 export type ProviderQuote = Omit<Quote, 'instrumentId' | 'requested'> & {
@@ -34,13 +53,28 @@ export type ProviderQuote = Omit<Quote, 'instrumentId' | 'requested'> & {
   providerType?: string;
 };
 
-/** A source of security prices (Yahoo today; others can be added behind the same interface). */
+/** What a price provider is asked to price. */
+export interface PriceTarget {
+  /** Our instrument id, e.g. BVMF:PETR4. */
+  instrumentId: string;
+  /** MIC / pseudo exchange (XNAS, BVMF, INDEX, CRYPTO, YAHOO...). */
+  exchange: string;
+  /** Local symbol (PETR4, AAPL, BTC-USD). */
+  symbol: string;
+  /** Yahoo symbol (PETR4.SA) — the lingua franca for mapping to other providers. */
+  yahoo: string;
+  currency?: CurrencyCode;
+}
+
+/** A source of security prices behind a common interface (Yahoo, brapi, stooq, keyed APIs, custom feeds). */
 export interface PriceProvider {
   readonly id: ProviderId;
-  search(query: string, opts?: { limit?: number }): Promise<SearchResult[]>;
-  quote(symbol: string): Promise<ProviderQuote>;
+  /** Whether this provider can price the target (exchange coverage, API key present...). */
+  supports(target: PriceTarget): boolean;
   /** Daily closes in [from, to] (inclusive, exchange-local dates). */
-  dailyHistory(symbol: string, from: ISODate, to: ISODate, opts?: { adjust?: PriceAdjustment }): Promise<ProviderHistory>;
+  dailyHistory(target: PriceTarget, from: ISODate, to: ISODate): Promise<ProviderHistory>;
+  quote?(target: PriceTarget): Promise<ProviderQuote>;
+  search?(query: string, opts?: { limit?: number }): Promise<SearchResult[]>;
 }
 
 /** A source of FX rates. `daily` returns units of `quote` per 1 `base`, sorted ascending. */
@@ -50,5 +84,5 @@ export interface FxProvider {
   supports(base: CurrencyCode, quote: CurrencyCode): boolean;
   /** Official central-bank / government source (vs. market data such as Yahoo). */
   readonly official: boolean;
-  daily(base: CurrencyCode, quote: CurrencyCode, from: ISODate, to: ISODate): Promise<FxPoint[]>;
+  daily(base: CurrencyCode, quote: CurrencyCode, from: ISODate, to: ISODate, opts?: { side?: 'buy' | 'sell' }): Promise<FxPoint[]>;
 }

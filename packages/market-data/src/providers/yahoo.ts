@@ -3,38 +3,42 @@
  *
  * - Prices/quotes: `v8/finance/chart/{symbol}` (no crumb needed). `v7/finance/quote` requires a
  *   cookie+crumb and answers 401 without it, so quotes come from the chart `meta` instead.
- * - Search: `v1/finance/search`.
+ * - Search: `v1/finance/search` (also resolves many ISINs: US0378331005 -> AAPL).
  * - Needs a browser User-Agent; 429s are retried with backoff by HttpClient.
  *
  * Data quirks handled here (all verified against recorded responses in test/fixtures/yahoo):
  * - `close` is split-adjusted retroactively (NVDA closed ~1,150 USD before the 2024-06-10
- *   10:1 split but Yahoo shows ~115). Dividends are split-adjusted too. We undo it using the
- *   full split history so closes are as traded (see `PriceAdjustment`).
+ *   10:1 split but Yahoo shows ~115), even for ranges that end before the split. Dividends too.
+ *   We undo it with the symbol's full split history. If that history cannot be fetched the
+ *   result is marked `degraded` (closes may still be adjusted) and is never cached long.
+ * - "Splits" also encode bonificações (ITUB4 11:10) and spin-offs (GE 1253:1000); see corporate.ts.
  * - London equities quote in GBp (pence), dividends too: divided by 100 -> GBP. LSE ETFs
- *   often quote in USD/GBP; we always trust `meta.currency`. Occasional 100x glitches in
- *   GBp series are repaired.
- * - Daily bars: the last bar can be a live bar with timestamp = regularMarketTime, sometimes
- *   duplicating the date of the previous bar; holidays can come as null closes.
+ *   often quote in USD/GBP; we always trust `meta.currency`. Occasional 100x glitches repaired.
+ * - Suspended stocks keep getting zero-volume bars after the last trade (CNEC.CL: last trade
+ *   2025-11-14 at 5000, then months of 6240 with volume 0): bars after the last trade date with
+ *   no volume are dropped.
+ * - Holidays can come as null closes; the last daily bar can be a live bar.
  * - BVC (`.CL`) is reported with time zone America/New_York; bars still map to the right
  *   local date because they are stamped at the session open.
  */
 import type { FxPoint, ISODate, PricePoint, ProviderId } from '@pm/core';
 import type { TieredCache } from '../cache';
 import { TTL } from '../cache';
-import { addDays, dateInZone, toEpochSeconds } from '../dates';
-import { MarketDataError } from '../errors';
+import { addDays, dateInZone, todayISO, toEpochSeconds } from '../dates';
+import { MarketDataError, errorMessage } from '../errors';
 import { HttpError, type HttpClient } from '../http';
 import { cleanPrice, combine, dedupeByDate, roundSig, sliceRange } from '../series';
 import {
   assetClassFromYahoo,
   instrumentIdFromYahoo,
+  isCryptoCurrency,
   marketByMic,
   normalizeCurrency,
   parseYahooSymbol,
   yahooFxSymbol,
 } from '../symbols';
-import type { PriceAdjustment, SearchResult } from '../types';
-import type { DividendEvent, FxProvider, PriceProvider, ProviderHistory, ProviderQuote, SplitEvent } from './types';
+import type { SearchResult } from '../types';
+import type { DividendEvent, FxProvider, PriceProvider, PriceTarget, ProviderHistory, ProviderQuote, SplitEvent } from './types';
 
 export interface YahooChartMeta {
   currency?: string | null;
@@ -51,12 +55,13 @@ export interface YahooChartMeta {
   longName?: string;
   shortName?: string;
   priceHint?: number;
+  currentTradingPeriod?: { regular?: { start: number; end: number } };
 }
 
 export interface YahooChartResult {
   meta: YahooChartMeta;
   timestamp?: number[];
-  indicators?: { quote?: { close?: (number | null)[] }[] };
+  indicators?: { quote?: { close?: (number | null)[]; volume?: (number | null)[] }[] };
   events?: {
     dividends?: Record<string, { amount: number; date: number }>;
     splits?: Record<string, { date: number; numerator: number; denominator: number; splitRatio?: string }>;
@@ -67,7 +72,7 @@ interface YahooChartResponse {
   chart: { result: YahooChartResult[] | null; error: { code: string; description: string } | null };
 }
 
-interface YahooSearchQuote {
+export interface YahooSearchQuote {
   symbol: string;
   exchange?: string;
   exchDisp?: string;
@@ -90,7 +95,22 @@ export interface YahooOptions {
   now?: () => Date;
 }
 
+/**
+ * Dividends Yahoo reports in a currency different from the quote currency (UCITS ETFs that
+ * declare distributions in USD but trade in GBP on the LSE). Verified on VUSA.L / VWRL.L:
+ * Yahoo amounts match the USD distributions declared by Vanguard.
+ */
+export const DIVIDEND_CURRENCY_OVERRIDES: Readonly<Record<string, string>> = {
+  'VUSA.L': 'USD',
+  'VWRL.L': 'USD',
+  'VHYL.L': 'USD',
+  'VUKE.L': 'GBP',
+  'IUSA.L': 'USD',
+};
+
 const SEARCH_TYPES = new Set(['EQUITY', 'ETF', 'MUTUALFUND', 'INDEX', 'CURRENCY', 'CRYPTOCURRENCY']);
+
+const asSymbol = (t: string | PriceTarget) => (typeof t === 'string' ? t : t.yahoo);
 
 export class YahooProvider implements PriceProvider {
   readonly id: ProviderId = 'yahoo';
@@ -100,6 +120,10 @@ export class YahooProvider implements PriceProvider {
   constructor(private readonly opts: YahooOptions) {
     this.base = opts.baseUrl ?? 'https://query2.finance.yahoo.com';
     this.now = opts.now ?? (() => new Date());
+  }
+
+  supports(target: PriceTarget): boolean {
+    return !!target.yahoo;
   }
 
   // -------------------------------------------------------------------------- raw endpoints
@@ -145,7 +169,8 @@ export class YahooProvider implements PriceProvider {
 
   // -------------------------------------------------------------------------- quote
 
-  async quote(symbol: string): Promise<ProviderQuote> {
+  async quote(t: string | PriceTarget): Promise<ProviderQuote> {
+    const symbol = asSymbol(t);
     const r = await this.chart(symbol, { range: '1d', interval: '1d' });
     const m = r.meta;
     if (m.regularMarketPrice == null || m.regularMarketTime == null) {
@@ -157,6 +182,8 @@ export class YahooProvider implements PriceProvider {
     const prevRaw = m.chartPreviousClose ?? m.previousClose;
     const previousClose = prevRaw != null ? cleanPrice(prevRaw / cur.divisor, decimals) : undefined;
     const change = previousClose != null ? cleanPrice(price - previousClose, decimals) : undefined;
+    const reg = m.currentTradingPeriod?.regular;
+    const nowS = this.now().getTime() / 1000;
     return {
       providerSymbol: m.symbol ?? symbol,
       name: m.longName ?? m.shortName,
@@ -170,13 +197,14 @@ export class YahooProvider implements PriceProvider {
       changePct: previousClose ? round6(price / previousClose - 1) : undefined,
       date: dateInZone(m.regularMarketTime, m.exchangeTimezoneName, m.gmtoffset ?? 0),
       time: new Date(m.regularMarketTime * 1000).toISOString(),
+      marketState: reg && nowS >= reg.start && nowS < reg.end ? 'open' : 'closed',
       source: 'yahoo',
     };
   }
 
   // -------------------------------------------------------------------------- history
 
-  /** Full split history of a symbol (cached one day). */
+  /** Full split history of a symbol (cached one day; failures are not cached). */
   async splits(symbol: string): Promise<SplitEvent[]> {
     const load = async () => {
       const r = await this.chart(symbol, {
@@ -191,14 +219,12 @@ export class YahooProvider implements PriceProvider {
     return (await this.opts.cache.getOrLoad(`yahoo:splits:${symbol}`, TTL.SPLITS, load)).value;
   }
 
-  async dailyHistory(
-    symbol: string,
-    from: ISODate,
-    to: ISODate,
-    opts: { adjust?: PriceAdjustment } = {},
-  ): Promise<ProviderHistory> {
-    const adjust = opts.adjust ?? 'none';
-    // Pad the window: bars are stamped in exchange time and we slice by local date afterwards.
+  /**
+   * As-traded daily closes in [from, to]. When the range ends in the past, the full split
+   * history is needed to undo later splits; if it cannot be fetched the result is `degraded`.
+   */
+  async dailyHistory(t: string | PriceTarget, from: ISODate, to: ISODate): Promise<ProviderHistory> {
+    const symbol = asSymbol(t);
     const r = await this.chart(symbol, {
       period1: toEpochSeconds(addDays(from, -1)),
       period2: toEpochSeconds(addDays(to, 2)),
@@ -206,8 +232,23 @@ export class YahooProvider implements PriceProvider {
       events: 'div,splits',
       includeAdjustedClose: 'false',
     });
-    const allSplits = adjust === 'none' ? mergeSplits(parseSplits(r), await this.splits(symbol).catch(() => [])) : parseSplits(r);
-    return buildHistory(r, symbol, from, to, adjust, allSplits);
+    const inRange = parseSplits(r);
+    const reachesPresent = to >= addDays(todayISO(this.now()), -3);
+    let splits = inRange;
+    const degraded: string[] = [];
+    if (!reachesPresent) {
+      try {
+        splits = mergeSplits(inRange, await this.splits(symbol));
+      } catch (e) {
+        degraded.push(`split-history-unavailable: ${errorMessage(e)}`);
+      }
+    }
+    const h = buildHistory(r, symbol, from, to, splits);
+    if (degraded.length) {
+      h.degraded = degraded;
+      h.notes.push('split history unavailable: closes may be split-adjusted for later splits (not cached)');
+    }
+    return h;
   }
 }
 
@@ -235,7 +276,7 @@ export function parseSplits(r: YahooChartResult): SplitEvent[] {
   const off = r.meta.gmtoffset ?? 0;
   return Object.values(r.events?.splits ?? {})
     .filter((s) => s.numerator > 0 && s.denominator > 0)
-    .map((s) => ({ date: dateInZone(s.date, tz, off), ratio: s.numerator / s.denominator }))
+    .map((s) => ({ date: dateInZone(s.date, tz, off), ratio: s.numerator / s.denominator, numerator: s.numerator, denominator: s.denominator }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
@@ -277,14 +318,17 @@ export function repairHundredfoldGlitches(points: PricePoint[]): { points: Price
   return { points: out, fixed };
 }
 
+/**
+ * Build an as-traded history from a chart response. `splits` must contain every split after
+ * `from` that Yahoo applied (range events + full split history).
+ */
 export function buildHistory(
   r: YahooChartResult,
   symbol: string,
   from: ISODate,
   to: ISODate,
-  adjust: PriceAdjustment,
   splits: SplitEvent[],
-  decimalsOverride?: number,
+  opts: { decimals?: number; adjusted?: boolean } = {},
 ): ProviderHistory {
   const m = r.meta;
   const notes: string[] = [];
@@ -293,16 +337,28 @@ export function buildHistory(
   const cur = normalizeCurrency(m.currency) ?? { currency: inferCurrency(symbol, m.exchangeName), divisor: 1 };
   if (!m.currency) notes.push(`currency missing in provider data; inferred ${cur.currency}`);
   if (cur.divisor !== 1) notes.push(`prices quoted in ${m.currency} normalized to ${cur.currency} (/${cur.divisor})`);
-  const decimals = decimalsOverride ?? Math.max(2, (m.priceHint ?? 2) + (cur.divisor > 1 ? 2 : 0));
+  const decimals = opts.decimals ?? Math.max(2, (m.priceHint ?? 2) + (cur.divisor > 1 ? 2 : 0));
+  const lastTradeDate = m.regularMarketTime ? dateInZone(m.regularMarketTime, tz, off) : undefined;
 
   const ts = r.timestamp ?? [];
-  const closes = r.indicators?.quote?.[0]?.close ?? [];
+  const q = r.indicators?.quote?.[0];
+  const closes = q?.close ?? [];
+  const volumes = q?.volume;
   let raw: PricePoint[] = [];
+  let phantom = 0;
   for (let i = 0; i < ts.length; i++) {
     const c = closes[i];
     if (c == null || !Number.isFinite(c) || c <= 0) continue;
-    raw.push({ date: dateInZone(ts[i]!, tz, off), close: c });
+    const date = dateInZone(ts[i]!, tz, off);
+    const vol = volumes?.[i];
+    // Zero-volume bars after the last real trade are carried-forward phantom closes.
+    if (lastTradeDate && date > lastTradeDate && volumes && !vol) {
+      phantom++;
+      continue;
+    }
+    raw.push({ date, close: c });
   }
+  if (phantom) notes.push(`dropped ${phantom} zero-volume bar(s) after the last trade on ${lastTradeDate}`);
   raw = dedupeByDate(raw);
 
   if (cur.divisor !== 1) {
@@ -311,24 +367,28 @@ export function buildHistory(
     raw = rep.points;
   }
 
-  const unadjust = adjust === 'none';
-  if (unadjust && splits.some((s) => s.date > from)) {
-    notes.push('split adjustment removed: closes are as traded');
-  }
+  const unadjust = !opts.adjusted;
   const points = sliceRange(raw, from, to).map((p) => ({
     date: p.date,
     close: cleanPrice(((unadjust ? splitFactorAfter(splits, p.date) : 1) * p.close) / cur.divisor, decimals),
   }));
 
+  const divCurrency = DIVIDEND_CURRENCY_OVERRIDES[symbol.toUpperCase()];
   const dividends: DividendEvent[] = Object.values(r.events?.dividends ?? {})
     .map((d) => {
       const date = dateInZone(d.date, tz, off);
       const f = unadjust ? splitFactorAfter(splits, date) : 1;
-      return { date, amount: cleanPrice((d.amount * f) / cur.divisor, 6) };
+      // An override currency means the amount is already in major units of that currency.
+      const divisor = divCurrency ? 1 : cur.divisor;
+      const ev: DividendEvent = { date, amount: cleanPrice((d.amount * f) / divisor, 6) };
+      if (divCurrency && divCurrency !== cur.currency) ev.currency = divCurrency;
+      return ev;
     })
     .filter((d) => d.date >= from && d.date <= to && d.amount > 0)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (divCurrency && divCurrency !== cur.currency) notes.push(`dividends declared in ${divCurrency} (instrument quotes in ${cur.currency})`);
 
+  const reg = m.currentTradingPeriod?.regular;
   return {
     providerSymbol: m.symbol ?? symbol,
     currency: cur.currency,
@@ -340,6 +400,10 @@ export function buildHistory(
     dividends,
     splits: splits.filter((s) => s.date >= from && s.date <= to),
     notes,
+    basis: unadjust ? 'as-traded' : 'split-adjusted',
+    ...(lastTradeDate ? { lastTradeDate } : {}),
+    ...(reg ? { session: { start: reg.start, end: reg.end } } : {}),
+    source: 'yahoo',
   };
 }
 
@@ -370,7 +434,7 @@ export function searchResultFromYahoo(q: YahooSearchQuote): SearchResult {
 
 // ---------------------------------------------------------------------------- FX
 
-/** Yahoo FX as universal fallback (`COP=X`, `EURUSD=X`, `BRLCOP=X`...). */
+/** Yahoo FX as universal fallback (`COP=X`, `EURUSD=X`, `BTC-USD`...). */
 export class YahooFxProvider implements FxProvider {
   readonly id: ProviderId = 'yahoo';
   readonly official = false;
@@ -378,7 +442,7 @@ export class YahooFxProvider implements FxProvider {
   constructor(private readonly yahoo: YahooProvider) {}
 
   supports(base: string, quote: string): boolean {
-    return /^[A-Z]{3}$/.test(base) && /^[A-Z]{3}$/.test(quote) && base !== quote;
+    return /^[A-Z]{3,5}$/.test(base) && /^[A-Z]{3,5}$/.test(quote) && base !== quote;
   }
 
   async daily(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
@@ -393,11 +457,16 @@ export class YahooFxProvider implements FxProvider {
   }
 
   private async direct(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
-    // Prefer the liquid direction (USD/XXX, EUR/USD, GBP/USD) and invert when needed.
+    // Prefer the liquid direction (USD/XXX, EUR/USD, GBP/USD, BTC-USD) and invert when needed.
     const majorsOverUsd = ['EUR', 'GBP', 'AUD', 'NZD'];
     let symbol = yahooFxSymbol(base, quote);
     let invert = false;
-    if (quote === 'USD' && !majorsOverUsd.includes(base)) {
+    if (isCryptoCurrency(base)) {
+      symbol = `${base}-${quote}`;
+    } else if (isCryptoCurrency(quote)) {
+      symbol = `${quote}-${base}`;
+      invert = true;
+    } else if (quote === 'USD' && !majorsOverUsd.includes(base)) {
       symbol = yahooFxSymbol('USD', base);
       invert = true;
     } else if (base === 'USD' && majorsOverUsd.includes(quote)) {
@@ -409,7 +478,7 @@ export class YahooFxProvider implements FxProvider {
       period2: toEpochSeconds(addDays(to, 2)),
       interval: '1d',
     });
-    const h = buildHistory(r, symbol, from, to, 'splits', [], 10);
+    const h = buildHistory(r, symbol, from, to, [], { decimals: 10, adjusted: true });
     return h.points.map((p) => ({ date: p.date, rate: roundSig(invert ? 1 / p.close : p.close, 7) }));
   }
 }

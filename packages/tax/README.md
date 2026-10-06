@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 54 pruebas con escenarios calculados a mano
+npx vitest run packages/tax      # 100 pruebas con escenarios calculados a mano (46 de regresión de la revisión)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -76,12 +76,12 @@ exterior, salvo con `foreignCashIsAbroad: false`.
 | FII | 20%, sin exención y con bolsa de pérdidas separada | Lei 8.668/1993 art. 18 |
 | Pérdidas | Bolsas separadas: comum, day trade y FII. Una pérdida comum puede compensar day trade, pero no al revés. Se arrastran sin límite de tiempo; `initialLosses` permite cargar saldos anteriores | IN RFB 1.585/2015 |
 | IRRF dedo-duro | 0,005% sobre las ventas swing; no se retiene si es ≤ R$ 1. Se usa `taxes` de las ventas si existe; si no, se estima. Lo no compensado se arrastra dentro del año y el saldo de diciembre queda para la DIRPF | Lei 11.033/2004 art. 2º §1º |
-| DARF | Código 6015, vence el último día hábil del mes siguiente (feriados bancarios nacionales, Carnaval, Viernes Santo y Corpus Christi). Un valor < R$ 10 se acumula para los meses siguientes | Lei 9.430/1996 art. 68 |
+| DARF | Código 6015, vence el último día hábil bancario del mes siguiente (feriados bancarios nacionales, Carnaval, Viernes Santo, Corpus Christi y **31/12 sin expediente bancario**). Un valor < R$ 10 se acumula. Datos para Sicalc, estado (pagada, pagada con atraso, pendiente, vencida), multa de 0,33%/día con tope de 20% e intereses Selic + 1% | Lei 9.430/1996 arts. 61 y 68 |
 | JCP | IRRF exclusivo del 15% hasta 2025 y del **17,5% desde el 01/01/2026**. Se detecta por la nota "JCP" o por una retención ≈15/17,5%, y se avisa si el IRRF no coincide con lo esperado | Lei 9.249/1995 art. 9º; LC 224/2025 |
 | Dividendos | Exentos (linha 09). **Desde 2026**: IRRF del 10% sobre el total si la misma empresa paga > R$ 50 mil en el mes. El IRPFM (> R$ 600 mil/año) solo se menciona, no se calcula. Los dividendos de BDR no son exentos y generan aviso | Lei 9.249/1995 art. 10; Lei 15.270/2025 |
 | Rendimientos de FII | Exentos (linha 26) si el fondo cotiza en bolsa, tiene ≥ 100 cuotistas y el inversor tiene < 10% de las cuotas | Lei 11.033/2004 art. 3º III (texto de la Lei 14.754/2023) |
 | Exterior (desde 2024) | 15% anual en la DAA. Costo a **PTAX de compra** de la fecha de compra; venta, dividendos e intereses a **PTAX de venta** de la fecha de cobro; impuesto extranjero a PTAX de compra. Las pérdidas compensan ganancias y rendimientos del año y de años siguientes. Crédito del impuesto extranjero ≤ 15% de cada renta y ≤ impuesto debido. El pago es hasta la entrega de la DIRPF (estimado: último día hábil de mayo). Antes de 2024 solo se avisa del otro régimen (GCAP/carnê-leão) | Lei 14.754/2023; IN RFB 2.180/2024 |
-| Bens e Direitos | 03-01 acciones (Brasil y exterior, con país), 07-03 FII, 07-09 ETF, 04-04 BDR, 07-99 fondos/ETF del exterior, 06-01 cuenta en el exterior. Valores a costo en BRL, nunca a mercado. El CNPJ queda vacío para el usuario | Programa DIRPF |
+| Bens e Direitos | 03-01 acciones (Brasil y exterior, con país), 07-03 FII, 07-09 ETF, 07-08 ETF RF, 04-04 BDR/opciones/derechos, 04-02/04-03 renta fija, 08-0x cripto, 07-99 fondos del exterior, 06-01 cuenta en el exterior (con país). Valores a costo en BRL, nunca a mercado. Para el exterior: resultado, rendimientos e impuesto pagado por bien. CNPJ desde una tabla interna (a verificar) o `cnpjByIssuer` | Programa DIRPF |
 
 `PtaxProvider` acepta la PTAX oficial de compra y de venta. Si no se pasa, se usa
 `market.fx(ccy,'BRL')` para ambas y se avisa con `PTAX_FALLBACK`.
@@ -115,10 +115,16 @@ MX, JP y CN al 10%. Marca `over_withheld` (por ejemplo, falta el W-8BEN), `under
 
 ## Pendientes / limitaciones
 
-- Colombia: no se calculan la tabla del Art. 241 (impuesto total de la cédula general), el componente
-  inflacionario, el descuento indirecto del Art. 254 ni los reajustes de los Arts. 70 y 73.
-- Brasil: falta el régimen del exterior anterior a 2024 (GCAP con exención de R$ 35 mil y
-  carnê-leão), así como opciones, futuros, aluguel, Fiagro, IRPFM y carnê-leão de dividendos de BDR.
+- Colombia: el impuesto del Art. 241 es una estimación incremental (requiere `otherCedulaGeneralIncomeCop`)
+  que no aplica los límites de los Arts. 336 y 259. El componente inflacionario solo se aplica si se
+  indica el porcentaje del decreto (`config.componenteInflacionario`). No se calculan el descuento
+  indirecto del Art. 254 ni los reajustes de los Arts. 70 y 73.
+- Brasil: falta el régimen del exterior anterior a 2024 (GCAP con exención de R$ 35 mil y carnê-leão).
+  Tampoco se calculan futuros/BM&F, aluguel (el pago al prestador), el ejercicio de opciones (ajuste
+  de la prima al costo del activo), el come-cotas de fondos abiertos, el IRPFM, el carnê-leão de
+  dividendos de BDR, ni las criptomonedas en exchanges del exterior (solo se avisa).
+- No se genera el código de barras del DARF: lo emite el Sicalc de la Receita con los datos exportados.
+- Exportación en CSV; no hay PDF ni XLSX (sin dependencias nuevas).
 - Los feriados locales no se consideran para el vencimiento del DARF.
 
 ---
@@ -148,3 +154,40 @@ O pacote `@pm/tax` gera relatórios **informativos (não é consultoria tributá
 Os parâmetros ficam em tabelas anuais com fonte e status de verificação. Itens pendentes de
 verificação: alíquotas de 2026, códigos da DIRPF de cada ano, compensação de perda comum contra
 day trade e a tabela de tratados dos EUA.
+
+---
+
+## Respuesta a la revisión ronda 1
+
+Revisión: `reviews/tax-r1.md`. Cada gap tiene pruebas de regresión en `src/review-r1.test.ts`, la
+mayoría con los escenarios exactos del revisor. Sus scripts `s1-colombia.ts` y `s2-brazil.ts` ya
+dan los valores esperados.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T1 | alta | **Art. 153 ET**: cada venta lleva `deductibleCostCop` y `nonDeductibleLossCop`. Solo se netean lotes de una misma venta; una pérdida neta no reduce otras ganancias, ni en ganancia ocasional ni en renta ordinaria. Se reporta "pérdida no deducible" en totales y CSV. S-CO1 → ganancia ocasional gravable 86.000.000 e impuesto 12.900.000; S-CO1b → renta 44.000.000 |
+| T2 | alta | `FX_CONVERSION` con origen BRL crea divisa con costo igual a lo efectivamente pagado (`amount + fees`, IN 2.180). Aparece el ítem 06-01 en Bens e Direitos con país. Una salida sin saldo registrado genera aviso `FOREIGN_CASH_NOT_RECORDED`. S-BR6 → US$ 5.400 con costo de R$ 28.080 |
+| T3 | media | El 31/12 no tiene expediente bancario: el DARF de noviembre vence el 30/12 (`brazilBankHolidays`) |
+| T4 | alta | La venta por encima de la posición abre una **posición corta**; el resultado se reconoce al recomprar. Una venta que nunca se recompra (historial incompleto) **no genera DARF** y produce `openShorts` y el error `SHORT_OR_MISSING_HISTORY`. En Colombia, lo sobrevendido queda `pendiente_costo`, sin impuesto; en el exterior no hay ganancia ficticia. S-BR4 → +R$ 5.000, impuesto R$ 750, sin posición fantasma |
+| T5 | media | El umbral de R$ 50 mil de la Lei 15.270 se agrupa por empresa (`issuerKey`: raíz B3 PETR3/PETR4, o `issuers`/CNPJ) |
+| T6 | media | Transición de utilidades hasta 2025 aprobadas hasta el 31/12/2025: opción `preLei15270Dividends` o nota ("ref. 2025", "lucros de 2024"). Sin retención esperada; los casos dudosos quedan como `info`, no `warning` |
+| T7 | media | Nueva categoría `ETF_RF` (lista de ETF de renta fija y detección por nombre): fuera de la apuração y sin DARF, con aviso de retención en la fuente y Bens e Direitos 07-08 |
+| T8 | media | Retención esperada sobre dividendos nacionales (15% sobre lo que exceda 1.090 UVT, acumulada por sociedad) con aviso `CO_DIVIDEND_WITHHOLDING_MISMATCH`. Descuento del Art. 254-1 (19%). Tabla del Art. 241 (`art241TaxCop`) e `impuestoEstimado` incremental con descuentos de los Arts. 254 y 254-1 y retenciones. La tarifa marginal también fija el tope del Art. 254 |
+| T9 | media | `TRANSFER_IN` conserva la fecha y el costo originales: opción `transferBasis`, nota estructurada `[costo: AAAA-MM-DD @ precio]` o texto libre ("bought 2019 at 50"; con solo el año se usa el 31-dic y se avisa). Sin datos, aviso `TRANSFER_COST_UNKNOWN`. Aplica en Colombia, la B3 y el exterior |
+| T10 | media | En Brasil, `fxRateToBase` de los depósitos en divisas es el costo efectivamente pagado (base BRL, `portfolioBaseCurrency`). S-BR7 → R$ 52.000 |
+| T11 | media | DARF con datos para el Sicalc (código, período, vencimiento, principal, multa, juros y total) e instrucciones, estado `paga`/`paga_em_atraso`/`pendente`/`vencida` y conciliación con pagos (`TAX` con "DARF/6015" en la nota, u opción `payments`). `darfLateCharges` calcula la multa (0,33%/día, tope 20%) y los intereses Selic + 1% (`selicMonthly`, serie BCB 4390). Exportación en `brazilDarfCsv`. El código de barras lo emite el Sicalc |
+| T12 | media | Opciones (`OPCAO`: 15%, sin exención, day trade y lanzamiento cubierto vía posición corta), derechos de suscripción (`DIREITO`), Fiagro como FII. Renta fija: `brazilRendaFixaReport` con tabla regresiva, IOF < 30 días, exentos LCI/LCA/CRI/CRA y chequeo de la retención. Cripto: `brazilCryptoReport` con exención de R$ 35 mil al mes, GCAP 15–22,5% y DARF 4600 |
+| T13 | media | Bens e Direitos: por cada bien del exterior, lucro/prejuízo, rendimentos e imposto pago no exterior; país de la cuenta en el exterior (`foreignCashCountry`, USD → US); CNPJ desde una tabla interna (a verificar) o `cnpjByIssuer`; nuevos códigos para renta fija, cripto, ETF RF, opciones y derechos |
+| T14 | media | `colombiaTaxPack`: renglones del Formulario 210 por concepto (las casillas son configurables: cambian cada año), Formulario 160 agregado por país o discriminado por activo por encima de 3.580 UVT, y 3 CSV. `brazilTaxPack`: apuração, DARF, proventos, exterior, Bens e Direitos, renta fija y cripto (7 CSV). El CSV de Colombia ahora incluye Art. 153, retención esperada, Art. 254-1, impuesto estimado, consignaciones y Formulario 160 |
+| T15 | media | `simulateBrazilSale` (impuesto si vendo hoy, margen restante de los R$ 20 mil, pérdidas), `brazilExemptionHeadroom`, `brazilUnrealizedReport` (no realizado, impuesto si vendo, candidatos a cosecha de pérdidas), `simulateColombiaSale` (aclara que en Colombia vender con pérdida no genera beneficio, Art. 153) y `colombiaLotMilestones` (fecha en que cada lote pasa a ganancia ocasional) |
+| T16 | baja | `obligacionDeclarar.byConsignaciones`: depósitos del año > 1.400 UVT (Art. 594-3) |
+| T17 | baja | El 3% del Art. 36-1 se mide por sociedad (BCOLOMBIA + PFBCOLOM, Grupo Aval, Sura, Argos, Cibest, Corficolombiana, Davivienda), con `outstandingShares` por emisor |
+| T18 | baja | Grupamento con fracción: la cantidad queda entera y la fracción, con su costo, se separa con el aviso `FRACAO_GRUPAMENTO`. La venta de la fracción (leilão) se acepta como venta tributable |
+| T19 | baja | `isUsSource`: emisor en EE.UU. y, si existe ISIN, que sea US (los ADR y los ETF UCITS de Irlanda o Luxemburgo no son fuente EE.UU.). `checkUsEstateTaxExposure`: aviso de impuesto de sucesiones por encima de US$ 60.000 en activos US-situs |
+| T20 | baja | Colombia: la venta se realiza en la fecha de liquidación (Art. 27; T+2 en BVC y Europa, T+1 en EE.UU. desde el 28-may-2024), opción `realization: 'trade'`. Componente inflacionario configurable. El GMF solo se estima sobre retiros en COP, con nota de exenciones |
+| T21 | baja | Configuración 2027–2028 con JCP marcado `needs-verification` (posible 20% desde 2028). El IRRF dedo-duro **estimado** ya no se abona por defecto (`creditEstimatedIrrf`); se muestra y se avisa con `IRRF_ESTIMATE_NOT_CREDITED` |
+
+Parámetros nuevos que requieren verificación: tabla interna de CNPJ, casillas del Formulario 210,
+JCP 2027/2028, exención de cripto (R$ 35 mil, IN 1.888), lista de ETF de renta fija, códigos 04-02,
+04-03, 07-08 y 08-0x de la DIRPF, y el tratamiento conservador de la venta en corto (sin exención de
+R$ 20 mil).
