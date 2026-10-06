@@ -99,21 +99,22 @@ export default function CurrenciesPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <Kpi loading={loading} label={t('fx.unrealized')} value={<Money value={unrealized} signed />} sub={<span className="text-xs text-muted">{t('fx.unrealizedSub')}</span>} />
-        <Kpi loading={loading} label={t('fx.fromPrice')} value={<Money value={priceGain} signed />} sub={<span className="text-xs text-muted"><Pct value={unrealized ? priceGain / Math.abs(unrealized) : undefined} decimals={0} /> {t('fx.ofUnrealized')}</span>} />
-        <Kpi loading={loading} label={t('fx.fromFx')} value={<Money value={fxGain} signed />} sub={<span className="text-xs text-muted"><Pct value={unrealized ? fxGain / Math.abs(unrealized) : undefined} decimals={0} /> {t('fx.ofUnrealized')}</span>} />
+        <Kpi loading={loading} label={t('fx.fromPrice')} value={<Money value={priceGain} signed />} sub={<span className="text-xs text-muted">{t('fx.fromPriceSub')}</span>} />
+        <Kpi loading={loading} label={t('fx.fromFx')} value={<Money value={fxGain} signed />} sub={<span className="text-xs text-muted">{t('fx.fromFxSub')}</span>} />
         <Kpi
           loading={loading}
           label={t('fx.cumulativeSplit')}
-          value={
-            <span className="flex items-baseline gap-2 text-[18px]">
-              <Pct value={cumLocal} signed colored />
-              <span className="text-muted text-sm">+</span>
-              <Pct value={cumFx} signed colored />
+          value={<Pct value={(1 + cumLocal) * (1 + cumFx) - 1} signed colored />}
+          sub={
+            <span className="text-xs text-muted num" data-testid="fx-composition">
+              (1 {formatPct(cumLocal, f.locale, { signed: true })}) × (1 {formatPct(cumFx, f.locale, { signed: true })}) − 1
             </span>
           }
-          sub={<span className="text-xs text-muted">{t('fx.cumulativeSplitSub')}</span>}
+          hint={t('fx.cumulativeSplitSub')}
         />
       </div>
+
+      <Waterfall />
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 mt-3">
         <Card title={t('fx.exposure')} subtitle={t('fx.exposureSub')}>
@@ -209,5 +210,50 @@ function SourcesLine({ rows }: { rows: { pair: string; source: string; updatedAt
         </span>
       ))}
     </div>
+  );
+}
+
+/** Money waterfall since inception: contributions → price effect → FX effect → income → end (W14). */
+function Waterfall() {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const { analysis: a } = useAnalysis();
+  const si = a?.summaries.SI;
+  if (!si || si.priceGainBase === undefined || si.fxGainBase === undefined) return null;
+  const other = si.gainBase - si.priceGainBase - si.fxGainBase - si.incomeBase;
+  const steps: { key: string; value: number; total?: boolean }[] = [
+    { key: 'start', value: si.startValueBase, total: true },
+    { key: 'flows', value: si.netFlowsBase },
+    { key: 'price', value: si.priceGainBase },
+    { key: 'fx', value: si.fxGainBase },
+    { key: 'income', value: si.incomeBase },
+    { key: 'other', value: other },
+    { key: 'end', value: si.endValueBase, total: true },
+  ];
+  const max = Math.max(...steps.map((s) => Math.abs(s.value)), 1);
+  let running = 0;
+  return (
+    <Card className="mt-3" title={t('fx.waterfall')} subtitle={t('fx.waterfallSub', { currency: f.currency })}>
+      <ul className="flex flex-col gap-1.5 text-[13px]" data-testid="fx-waterfall">
+        {steps.map((s) => {
+          const from = s.total ? 0 : running;
+          const to = s.total ? s.value : running + s.value;
+          if (!s.total) running = to;
+          else running = s.value;
+          const left = (Math.min(from, to) / max) * 100;
+          const width = Math.max((Math.abs(to - from) / max) * 100, 0.4);
+          const color = s.total ? 'var(--series-1)' : s.value >= 0 ? 'var(--pos)' : 'var(--neg)';
+          return (
+            <li key={s.key} className="grid grid-cols-[140px_1fr_150px] items-center gap-3">
+              <span className="text-ink-2 truncate">{t(`fx.step.${s.key}`)}</span>
+              <span className="relative h-5 rounded bg-surface-2 overflow-hidden" aria-hidden>
+                <span className="absolute inset-y-0 rounded print-heat" style={{ left: `${Math.max(0, left)}%`, width: `${Math.min(100, width)}%`, background: color }} />
+              </span>
+              <Money value={s.value} signed={!s.total} className={s.total ? 'font-semibold text-right' : 'text-right'} />
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

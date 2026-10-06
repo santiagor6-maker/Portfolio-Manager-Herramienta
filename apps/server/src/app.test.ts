@@ -343,3 +343,77 @@ describe('M16 FileStore is bounded and supports prefix invalidation', () => {
     }
   });
 });
+
+describe('client chunking over the server caps', () => {
+  function counted(opts: { failNthBatch?: number } = {}) {
+    const { app } = setup();
+    const stats = { quote: 0, batch: 0, inFlight: 0, peak: 0 };
+    const client = new MarketDataClient({
+      baseUrl: 'http://test',
+      chunkConcurrency: 2,
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path === '/api/quote') stats.quote++;
+        if (path === '/api/batch') stats.batch++;
+        stats.inFlight++;
+        stats.peak = Math.max(stats.peak, stats.inFlight);
+        try {
+          if (path === '/api/batch' && stats.batch === opts.failNthBatch) return new Response('{"error":{"code":"UPSTREAM_ERROR","message":"boom"}}', { status: 502 });
+          return await app.request(url, init);
+        } finally {
+          stats.inFlight--;
+        }
+      },
+    });
+    return { client, stats };
+  }
+
+  it('quotes: 130 ids (with duplicates) -> 3 requests of <=50, results aligned per input position', async () => {
+    const { client, stats } = counted();
+    const ids = [...Array.from({ length: 120 }, (_, i) => `NOPE${i}.SA`), 'AAPL', 'AAPL', ...Array.from({ length: 8 }, (_, i) => `ZZ${i}.SA`)];
+    const { quotes } = await client.quotes(ids);
+    expect(quotes).toHaveLength(130);
+    expect(stats.quote).toBe(3); // 128 unique ids -> 50 + 50 + 28
+    expect(stats.peak).toBeLessThanOrEqual(2);
+    expect(quotes[120]).toMatchObject({ ok: true, data: { instrumentId: 'XNAS:AAPL' } });
+    expect(quotes[121]).toEqual(quotes[120]);
+    expect(quotes[0]).toMatchObject({ ok: false });
+  });
+
+  it('batch: 150 histories + 2 fx + 1 index -> 2 requests, merged in order, a failed chunk fails only its items', async () => {
+    const { client, stats } = counted({ failNthBatch: 2 });
+    const histories = Array.from({ length: 150 }, (_, i) => ({ symbol: i % 2 ? 'NOPE.SA' : 'PETR4.SA', from: '2024-11-01', to: '2025-02-28', interval: '1mo' as const }));
+    const r = await client.batch({
+      histories,
+      fx: [{ base: 'USD', quote: 'COP', from: '2025-01-01', to: '2025-02-28', interval: '1mo' }, { base: 'USD', quote: 'BRL', from: '2025-01-02', to: '2025-01-31', interval: '1mo' }],
+      indices: [{ id: 'CDI', from: '2025-01-02', to: '2025-01-10' }],
+    });
+    expect(stats.batch).toBe(2);
+    expect(r.histories).toHaveLength(150);
+    expect(r.fx).toHaveLength(2);
+    expect(r.indices).toHaveLength(1);
+    expect(r.histories[0]).toMatchObject({ ok: true, data: { instrument: { id: 'BVMF:PETR4' } } });
+    expect(r.histories[1]).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+    // items 100..152 travelled in the 2nd chunk, which failed as a whole
+    expect(r.histories[100]).toMatchObject({ ok: false, error: { code: 'UPSTREAM_ERROR', message: 'boom' } });
+    expect(r.fx[0]).toMatchObject({ ok: false, error: { code: 'UPSTREAM_ERROR' } });
+    expect(r.indices[0]).toMatchObject({ ok: false });
+  });
+
+  it('monthEndData with 120 instruments is chunked transparently', async () => {
+    const { client, stats } = counted();
+    const ids = Array.from({ length: 120 }, (_, i) => (i % 3 === 0 ? 'XBOG:ECOPETROL' : 'BVMF:PETR4'));
+    const r = await client.monthEndData(ids, ['COP', 'BRL'], 'USD', '2025-01-01', '2025-02-28', undefined, ['CDI']);
+    expect(stats.batch).toBe(2);
+    expect(r.histories).toHaveLength(120);
+    expect(r.histories.every((h) => h.ok)).toBe(true);
+    expect(r.fx.map((f) => f.ok)).toEqual([true, true]);
+    expect(r.indices).toHaveLength(1);
+  });
+
+  it('small requests still use a single call', async () => {
+    const { client, stats } = counted();
+    await client.batch({ quotes: ['AAPL'] });
+    expect(stats.batch).toBe(1);
+  });
+});

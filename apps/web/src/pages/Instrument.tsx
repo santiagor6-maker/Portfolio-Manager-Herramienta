@@ -2,14 +2,18 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Bell, Plus } from 'lucide-react';
+import type { AccrualSpec } from '@pm/core';
+import { exchangeLabel } from '../lib/exchanges';
+import { indexName } from '../lib/labels';
+import { IrrCell } from './Positions';
 import { db } from '../db/schema';
 import { Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented } from '../components/ui';
 import { LineChart } from '../components/charts';
 import { useAnalysis, type ChartPeriod, periodStart } from '../hooks/useAnalysis';
 import { useInstrumentMap, useScopedTransactions } from '../hooks/useData';
 import { useFmt } from '../store/app';
-import { formatDate, formatMoney, formatPrice, formatQuantity } from '../lib/format';
+import { formatDate, formatMoney, formatPct, formatPrice, formatQuantity } from '../lib/format';
 import { countryName, flagEmoji } from '../lib/labels';
 import { TxTypeBadge } from './Transactions';
 
@@ -26,6 +30,7 @@ export default function InstrumentPage() {
   const manual = useLiveQuery(() => db.manualPrices.where('instrumentId').equals(instrumentId).sortBy('date'), [instrumentId]);
   const txs = (useScopedTransactions() ?? []).filter((x) => x.instrumentId === instrumentId);
   const holding = a?.valuation?.holdings.find((h) => h.instrumentId === instrumentId);
+  const perf = a?.positions.find((p) => p.instrumentId === instrumentId);
   const income = (a?.income ?? []).filter((e) => e.instrumentId === instrumentId);
   const realized = (a?.realized ?? []).filter((r) => r.instrumentId === instrumentId);
   const totalIncome = income.reduce((s, e) => s + e.netBase, 0);
@@ -72,7 +77,8 @@ export default function InstrumentPage() {
         }
         subtitle={
           <span className="flex flex-wrap gap-1.5 mt-1">
-            {inst && <span className="chip">{inst.exchange}</span>}
+            {inst && <span className="chip">{exchangeLabel(inst.exchange)}</span>}
+            {inst?.accrual && <span className="chip">{accrualText(inst.accrual, f.locale)}</span>}
             {inst && <span className="chip">{countryName(inst.country, f.locale)}</span>}
             {inst && <span className="chip">{t(`assetClass.${inst.assetClass}`)}</span>}
             {inst?.sector && <span className="chip">{inst.sector}</span>}
@@ -81,9 +87,14 @@ export default function InstrumentPage() {
           </span>
         }
         actions={
-          <Link className="btn btn-primary" to={`/movimientos?nuevo=1&instrumento=${encodeURIComponent(instrumentId)}`}>
-            <Plus size={15} /> {t('tx.add')}
-          </Link>
+          <>
+            <Link className="btn" to={`/alertas?instrumento=${encodeURIComponent(instrumentId)}`}>
+              <Bell size={15} /> {t('alerts.create')}
+            </Link>
+            <Link className="btn btn-primary" to={`/movimientos?nuevo=1&instrumento=${encodeURIComponent(instrumentId)}`}>
+              <Plus size={15} /> {t('tx.add')}
+            </Link>
+          </>
         }
       />
 
@@ -114,6 +125,15 @@ export default function InstrumentPage() {
           }
         />
       </div>
+
+      {perf && (
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3" data-testid="position-performance">
+          <Kpi label={t('perf.pos.total')} value={<Money value={perf.totalReturnBase} signed />} sub={<span className="text-xs text-muted">{t('perf.pos.simple')}: <Pct value={perf.simpleReturn} signed /></span>} hint={t('perf.pos.totalHint')} />
+          <Kpi label="TWR" value={<Pct value={perf.twr} signed colored />} sub={<span className="text-xs text-muted">{perf.twrAnnualized !== undefined ? `${formatPct(perf.twrAnnualized, f.locale, { signed: true })} ${t('perf.perYear')}` : t('perf.notAnnualized')}</span>} />
+          <Kpi label={t('perf.mwrShort')} value={<IrrCell perf={perf} />} sub={<span className="text-xs text-muted">{t('perf.mwrSub')}</span>} />
+          <Kpi label={t('perf.pos.fxPart')} value={<Money value={perf.fxGainBase} signed />} sub={<span className="text-xs text-muted">{t('perf.pos.invested')}: <Money value={perf.investedBase} /></span>} />
+        </div>
+      )}
 
       <Card
         className="mt-3"
@@ -206,4 +226,16 @@ export default function InstrumentPage() {
       </div>
     </div>
   );
+}
+
+/** "CDT 12 % E.A. · vence 05/03/2026" / "110 % do CDI" / "IPCA + 6 %". */
+export function accrualText(a: AccrualSpec, locale: string): string {
+  const pct = (v?: number) => formatPct(v, locale, { decimals: 2 });
+  let s = '';
+  if (a.kind === 'fixed') s = `${pct(a.annualRate)} E.A.`;
+  else {
+    const p = a.percentOfIndex !== undefined ? (a.percentOfIndex > 3 ? a.percentOfIndex / 100 : a.percentOfIndex) : undefined;
+    s = [p !== undefined && p !== 1 ? `${formatPct(p, locale, { decimals: 0 })} ${indexName(a.index)}` : indexName(a.index), a.spread ? `+ ${pct(a.spread)}` : ''].filter(Boolean).join(' ');
+  }
+  return a.maturity ? `${s} · ${formatDate(a.maturity, locale, 'short')}` : s;
 }

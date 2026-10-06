@@ -3,7 +3,7 @@ import { b3Root, basisTotalCost, resolveTransferBasis, snapRatio, type TransferB
 import { monthOf, thirdFriday } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
-import { classifyForBrazil, isB3Category, type BrCategory } from './classify';
+import { classifyForBrazil, FUTURES_POINT_VALUE, isB3Category, type BrCategory } from './classify';
 
 export interface BrTrade {
   date: ISODate;
@@ -306,7 +306,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
       const g = byAccount.get(acc) ?? { buy: emptySide(), sell: emptySide() };
       byAccount.set(acc, g);
       const side = t.type === 'BUY' ? g.buy : g.sell;
-      const gross = grossAmount(t);
+      const gross = category === 'FUTURO' && t.amount === undefined ? (t.quantity ?? 0) * (t.price ?? 0) * (FUTURES_POINT_VALUE[symbol.slice(0, 3)] ?? 1) : grossAmount(t);
       const fees = t.fees ?? 0;
       side.qty += t.quantity ?? 0;
       side.gross += gross;

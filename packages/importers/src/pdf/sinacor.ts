@@ -81,7 +81,7 @@ export function parseTradeLine(text: string, lineIndex: number): SinacorTrade | 
   const value = parseNumber(nums[3]!, 'comma');
   if (quantity === undefined || price === undefined || value === undefined) return undefined;
   // Specification: text between the market (and optional prazo) and the numbers, minus Obs markers.
-  const head = raw.slice(0, nums.index).trim();
+  const head = raw.slice(0, nums.index).replace(/\s+/g, ' ').trim();
   const upperHead = head.toUpperCase();
   let specStart = 0;
   const marketWords = market.split(' ').length;
@@ -108,6 +108,8 @@ const FEE_LABELS: [RegExp, string][] = [
   [/impostos|\biss\b/i, 'iss'],
   [/\boutros\b|\boutras\b/i, 'outros'],
 ];
+
+const BROKER_RE = /(CCTVM|CTVM|DTVM|CORRETORA|DISTRIBUIDORA|INVESTIMENTOS|BANCO DE INVESTIMENTO)/i;
 
 const MONEY = /(\d[\d.]*,\d{2})\s*([DC])?/;
 
@@ -144,7 +146,10 @@ export function parseSinacor(doc: PdfDocument): Note[] {
   for (let i = 0; i < lines.length; i++) {
     const l: PdfLine = lines[i]!;
     const text = l.text;
-    if (/(CCTVM|CTVM|DTVM|CORRETORA|DISTRIBUIDORA)/i.test(text) && !/nota/i.test(text) && text.length < 90) broker = text.replace(/\s{2,}.*/, '').trim();
+    if (BROKER_RE.test(text) && !/nota/i.test(text) && text.length < 90) {
+      broker = text.replace(/\s{2,}.*/, '').trim();
+      if (current && !current.broker) current.broker = broker;
+    }
     if (/nr\.?\s*nota/i.test(text) && /data\s*preg/i.test(text)) {
       // Values on the next line: Nr. nota · Folha · Data pregão
       const next = lines[i + 1]?.text ?? '';
@@ -156,7 +161,10 @@ export function parseSinacor(doc: PdfDocument): Note[] {
         notes.set(nr, current);
       }
       if (date) current.date = parseDate(date, 'DMY');
-      if (broker) current.broker = broker;
+      // The broker name is printed just below the header block on each page.
+      const below = lines.slice(i + 2, i + 10).find((x) => BROKER_RE.test(x.text) && !/nota/i.test(x.text));
+      if (below) current.broker = below.text.replace(/\s{2,}.*/, '').trim();
+      else if (broker && !current.broker) current.broker = broker;
       inTrades = false;
       i++;
       continue;

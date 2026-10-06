@@ -60,7 +60,7 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
   const ap = inp.apuracao;
   const months = ap?.months.filter((m) => m.month.startsWith(`${inp.year}-`)) ?? [];
   const bolsaGains = sum(
-    months.map((m) => Math.max(0, m.results.acoes + m.results.etf + m.results.bdr + m.results.opcoes + m.results.direitos + m.results.dayTrade + m.results.fii)),
+    months.map((m) => Math.max(0, m.results.acoes + m.results.etf + m.results.bdr + m.results.opcoes + m.results.futuros + m.results.direitos + m.results.dayTrade + m.results.fii)),
   );
   const components = [
     { label: 'Dividendos (ações)', value: prov?.totals.dividendos ?? 0 },

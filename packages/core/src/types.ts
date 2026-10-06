@@ -90,8 +90,8 @@ export interface Instrument {
   accrual?: AccrualSpec;
 }
 
-/** Day-count / compounding convention. BUS/252 = Brazilian business days (Mon-Fri). */
-export type DayCount = 'ACT/365' | 'ACT/360' | 'BUS/252' | '30/360';
+/** Day-count / compounding convention. BUS/252 = business days of the holiday calendar (ANBIMA for BRL); ACT/ACT = calendar years. */
+export type DayCount = 'ACT/365' | 'ACT/360' | 'BUS/252' | '30/360' | 'ACT/ACT';
 
 /** Rate and inflation indices. */
 export type IndexId = 'CDI' | 'SELIC' | 'IPCA' | 'IPC_CO' | 'IBR' | 'UVR' | 'CPI_US' | 'HICP_EA' | (string & {});

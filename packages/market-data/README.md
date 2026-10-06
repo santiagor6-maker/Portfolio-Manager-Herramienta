@@ -138,6 +138,13 @@ const api = new MarketDataClient({ baseUrl: 'http://localhost:8787' });
 const r = await api.monthEndData(['XBOG:ECOPETROL', 'BVMF:PETR4'], ['COP', 'BRL'], 'USD', '2024-01-01');
 ```
 
+El cliente divide de forma transparente las peticiones grandes para respetar los topes del servidor:
+- `quotes` en bloques de 50 ids únicos;
+- `batch` y `monthEndData()` en bloques de 100 ítems.
+
+Envía como máximo 3 bloques a la vez, une los resultados en el orden original y, si un bloque falla entero,
+solo se marcan como fallidos sus ítems.
+
 `symbol` acepta: id de instrumento (`MIC:SÍMBOLO`, p. ej. `XBOG:ECOPETROL`, `XNAS:AAPL`,
 `INDEX:^GSPC`), símbolo de Yahoo (`PETR4.SA`), ISIN del catálogo o id de benchmark (`COLCAP`).
 Mapeo de sufijos: `.CL` XBOG/COP, `.SA` BVMF/BRL, `.MC` XMAD, `.DE` XETR, `.PA` XPAR, `.AS` XAMS,

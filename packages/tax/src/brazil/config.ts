@@ -186,4 +186,5 @@ export const DIRPF_INCOME_LINES = {
   RENDIMENTO_FII: { ficha: 'Rendimentos Isentos e Não Tributáveis', linha: '26', meta: NV('Mercado indica linha 26; conferir no programa do ano') },
   ISENCAO_20K: { ficha: 'Rendimentos Isentos e Não Tributáveis', linha: '20', meta: NV('Ganhos líquidos em ações com alienações ≤ R$ 20 mil/mês') },
   JCP: { ficha: 'Rendimentos Sujeitos à Tributação Exclusiva/Definitiva', linha: '10', meta: V('DIRPF: Juros sobre capital próprio') },
+  ALUGUEL: { ficha: 'Rendimentos Sujeitos à Tributação Exclusiva/Definitiva', linha: '06', meta: NV('Remuneração do doador no aluguel de ações (renda fixa, tabela regressiva)') },
 } as const;

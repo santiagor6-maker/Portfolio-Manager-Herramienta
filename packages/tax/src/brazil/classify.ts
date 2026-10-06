@@ -8,8 +8,10 @@ import type { Instrument } from '@pm/core';
  *   fund/custodian on redemption or sale — no monthly apuração, no DARF.
  * - BDR: B3-listed BDRs (15%, no exemption).
  * - OPCAO: options on B3 (common operations 15% / day trade 20%, no exemption).
+ * - FUTURO: B3 futures (mini-índice WIN, mini-dólar WDO, IND, DOL, commodities): 15% / 20% day trade.
  * - DIREITO: subscription rights/receipts (15%, no exemption — conservative reading).
  * - FII: real-estate funds and Fiagro (20%, no exemption, separate loss pool).
+ * - FUNDO: domestic open-ended funds (come-cotas in May/November, IR withheld by the administrator).
  * - RENDA_FIXA: domestic fixed income (CDB, LCI/LCA, Tesouro, debêntures): taxed at source.
  * - CRYPTO: crypto-assets (GCAP, R$ 35k/month exemption when custodied in Brazil).
  * - FOREIGN: securities held abroad (Lei 14.754/2023 annual regime).
@@ -21,15 +23,23 @@ export type BrCategory =
   | 'ETF_RF'
   | 'BDR'
   | 'OPCAO'
+  | 'FUTURO'
   | 'DIREITO'
   | 'FII'
   | 'RENDA_FIXA'
+  | 'FUNDO'
   | 'CRYPTO'
   | 'FOREIGN'
   | 'OTHER';
 
 const BDR_SUFFIX = /(3[2345]|39)$/;
 /** B3 option tickers: 4-letter root + series letter (A-L calls, M-X puts) + strike code. */
+/** B3 futures: root + maturity month code (F G H J K M N Q U V X Z) + 2-digit year. */
+export const FUTURES_RE = /^(WIN|WDO|IND|DOL|BGI|CCM|ICF|DI1|SJC|BIT|ETR|SOL)[FGHJKMNQUVXZ]\d{2}$/;
+
+/** Point value (R$ per point per contract) of common B3 futures. Override via instrument.priceMultiplier < 1 is not used. */
+export const FUTURES_POINT_VALUE: Record<string, number> = { WIN: 0.2, IND: 1, WDO: 10, DOL: 50, BGI: 330, CCM: 450, ICF: 100 };
+
 export const OPTION_RE = /^[A-Z]{4}[A-X]\d{1,4}[A-Z]?$/;
 /** Subscription rights (1, 2) and receipts (9, 10) of B3 shares. */
 const RIGHTS_RE = /^[A-Z]{4}(1|2|9|10)$/;
@@ -72,6 +82,7 @@ export function classifyForBrazil(
   const sym = inst.symbol.toUpperCase();
   if (inst.assetClass === 'crypto') return cryptoCustodyOf(inst, cryptoCustody) === 'exterior' ? 'FOREIGN' : 'CRYPTO';
   if (inst.exchange === 'BVMF') {
+    if (FUTURES_RE.test(sym)) return 'FUTURO';
     // Options first: a share ticker never has a letter in the 5th position (T25).
     if (OPTION_RE.test(sym)) return 'OPCAO';
     if (inst.assetClass === 'reit') return 'FII';
@@ -85,7 +96,9 @@ export function classifyForBrazil(
     return 'OTHER';
   }
   if (inst.country === 'BR' && inst.currency === 'BRL') {
-    return inst.assetClass === 'fixed_income' || inst.assetClass === 'bond' ? 'RENDA_FIXA' : 'OTHER';
+    if (inst.assetClass === 'fixed_income' || inst.assetClass === 'bond') return 'RENDA_FIXA';
+    if (inst.assetClass === 'fund') return 'FUNDO';
+    return 'OTHER';
   }
   if (['equity', 'etf', 'reit', 'fund', 'bond', 'fixed_income', 'crypto'].includes(inst.assetClass)) return 'FOREIGN';
   return 'OTHER';
@@ -93,7 +106,7 @@ export function classifyForBrazil(
 
 /** Categories that go through the B3 ledger (preço médio, day trade, short positions). */
 export const isB3Category = (c: BrCategory): boolean =>
-  c === 'ACAO' || c === 'ETF' || c === 'ETF_RF' || c === 'BDR' || c === 'FII' || c === 'OPCAO' || c === 'DIREITO';
+  c === 'ACAO' || c === 'ETF' || c === 'ETF_RF' || c === 'BDR' || c === 'FII' || c === 'OPCAO' || c === 'FUTURO' || c === 'DIREITO';
 
 /** Categories in the monthly apuração (DARF 6015). ETF_RF is taxed at source. */
 export const isApuracaoCategory = (c: BrCategory): boolean => isB3Category(c) && c !== 'ETF_RF';

@@ -122,6 +122,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     const c = curMap.get(id);
     const p = prevMap.get(id);
     const ref = (c ?? p) as BrPosition;
+    if (ref.category === 'FUTURO') continue; // futures are not assets (only daily adjustments)
     const code = codeFor(ref.category);
     const inst = instruments.get(id);
     const cn = ref.category === 'ACAO' || ref.category === 'DIREITO' ? cnpjOf(id, ref.symbol) : { cnpj: opts.cnpjByIssuer?.[id] ?? '' };

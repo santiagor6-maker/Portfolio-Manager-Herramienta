@@ -1,7 +1,8 @@
 import type { CurrencyCode, ISODate } from '@pm/core';
 import { basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
-import { lastBrazilBusinessDayOfMonth, yearOf } from '../common/dates';
+import { lastBrazilBusinessDayOfMonth, nextMonth, yearOf } from '../common/dates';
+import { gcapTax } from './crypto';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
@@ -103,6 +104,15 @@ export interface BrForeignReport {
   country: 'BR';
   year: number;
   regime: 'lei-14754' | 'pre-2024';
+  /**
+   * Before 2024 (T12): sales of foreign assets were taxed monthly via GCAP (exempt when the month's
+   * sales of foreign assets <= R$ 35k; 15%-22.5%; DARF 4600; no loss offset) and dividends via carnê-leão.
+   */
+  gcapPre2024?: {
+    months: { month: string; salesBrl: number; exempt: boolean; gainBrl: number; tax: number; darfDueDate?: ISODate }[];
+    totalTax: number;
+    dividendsCarneLeaoBrl: number;
+  };
   disclaimer: LocalizedText;
   sales: BrForeignSaleRow[];
   income: BrForeignIncomeRow[];
@@ -394,7 +404,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
       level: 'warning',
       code: 'PRE_LEI_14754',
       message:
-        'Antes de 2024 os ganhos no exterior seguiam o GCAP mensal (isenção de vendas até R$ 35 mil/mês) e dividendos o carnê-leão; este relatório não calcula esse regime.',
+        'Antes de 2024 os ganhos no exterior seguiam o GCAP mensal (isenção de vendas até R$ 35 mil/mês, DARF 4600) e dividendos o carnê-leão: ver gcapPre2024 (estimativa; regras de conversão cambial do período anterior simplificadas).',
     });
   }
   const a = byYear.get(year) ?? { sales: [], income: [] };
@@ -409,6 +419,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     sales: a.sales,
     income: a.income,
     totals: totals ?? computeYear(a, carry, cfgYear),
+    gcapPre2024: regime === 'pre-2024' ? pre2024(a) : undefined,
     positions: snap.positions,
     positionsPrevYear: prev.positions,
     cash: snap.cash,
@@ -493,4 +504,17 @@ function computeYear(a: YearAgg, carryIn: number, cfg: BrazilTaxYearConfig): BrF
     foreignTaxCreditBrl: credit,
     taxDueBrl: taxGross - credit,
   };
+}
+
+function pre2024(a: YearAgg): NonNullable<BrForeignReport['gcapPre2024']> {
+  const byMonth = new Map<string, BrForeignSaleRow[]>();
+  for (const s of a.sales) byMonth.set(s.date.slice(0, 7), [...(byMonth.get(s.date.slice(0, 7)) ?? []), s]);
+  const months = [...byMonth.entries()].sort().map(([month, list]) => {
+    const salesBrl = sum(list.map((x) => x.proceedsBrl));
+    const exempt = salesBrl <= 35_000;
+    const gainBrl = sum(list.map((x) => Math.max(0, x.gainBrl)));
+    const tax = exempt ? 0 : sum(list.map((x) => gcapTax(Math.max(0, x.gainBrl))));
+    return { month, salesBrl, exempt, gainBrl, tax, darfDueDate: tax > 0 ? lastBrazilBusinessDayOfMonth(nextMonth(month)) : undefined };
+  });
+  return { months, totalTax: sum(months.map((m) => m.tax)), dividendsCarneLeaoBrl: sum(a.income.map((i) => i.grossBrl)) };
 }

@@ -46,6 +46,41 @@ export interface MarketDataClientOptions {
   timeoutMs?: number;
   /** Optional API token (server started with API_TOKEN). Sent as `Authorization: Bearer`. */
   apiToken?: string;
+  /** Max items per batch request (server cap: 100). */
+  batchChunkSize?: number;
+  /** Max ids per /api/quote request (server cap: 50). */
+  quoteChunkSize?: number;
+  /** Chunk requests in flight at once (default 3). */
+  chunkConcurrency?: number;
+}
+
+/** Run `fn` over `items` with at most `limit` promises in flight; results keep input order. */
+export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!, i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Turn a failed chunk request into one failed Settled per item of that chunk. */
+function failAll<T>(n: number, e: unknown): Settled<T>[] {
+  const error =
+    e instanceof MarketDataApiError
+      ? { code: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) }
+      : { code: 'NETWORK', message: e instanceof Error ? e.message : String(e) };
+  return Array.from({ length: n }, () => ({ ok: false as const, error }));
 }
 
 type Query = Record<string, string | number | undefined | null>;
@@ -55,9 +90,15 @@ export class MarketDataClient {
   private readonly fetchImpl: (input: string, init?: RequestInit) => Promise<Response>;
   private readonly timeoutMs: number;
   private readonly apiToken?: string;
+  private readonly batchChunkSize: number;
+  private readonly quoteChunkSize: number;
+  private readonly chunkConcurrency: number;
 
   constructor(opts: MarketDataClientOptions = {}) {
     this.apiToken = opts.apiToken;
+    this.batchChunkSize = Math.max(1, Math.min(100, opts.batchChunkSize ?? 100));
+    this.quoteChunkSize = Math.max(1, Math.min(50, opts.quoteChunkSize ?? 50));
+    this.chunkConcurrency = Math.max(1, opts.chunkConcurrency ?? 3);
     this.baseUrl = (opts.baseUrl ?? '').replace(/\/+$/, '');
     this.fetchImpl = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.timeoutMs = opts.timeoutMs ?? 30_000;
@@ -117,9 +158,25 @@ export class MarketDataClient {
   }
 
   /** Quotes for instrument ids or provider symbols; failures are reported per item. */
-  quotes(ids: string[], signal?: AbortSignal): Promise<{ quotes: Settled<Quote>[] }> {
-    return this.request('/api/quote', { query: { ids: ids.join(',') }, signal });
+  /**
+   * Quotes for instrument ids or provider symbols; failures are reported per item. Any number of
+   * ids: requests are split into chunks of `quoteChunkSize` (server cap 50) run with limited
+   * concurrency; a failed chunk marks each of its ids as failed, the rest still succeed.
+   */
+  async quotes(ids: string[], signal?: AbortSignal): Promise<{ quotes: Settled<Quote>[] }> {
+    // The server de-duplicates ids, so send unique ids and map results back to every position.
+    const unique = [...new Set(ids.map((i) => i.trim()))];
+    const parts = await mapLimit(chunk(unique, this.quoteChunkSize), this.chunkConcurrency, async (part) => {
+      try {
+        return (await this.request<{ quotes: Settled<Quote>[] }>('/api/quote', { query: { ids: part.join(',') }, signal })).quotes;
+      } catch (e) {
+        return failAll<Quote>(part.length, e);
+      }
+    });
+    const byId = new Map(unique.map((id, i) => [id, parts.flat()[i]!]));
+    return { quotes: ids.map((id) => byId.get(id.trim())!) };
   }
+
 
   history(req: HistoryRequest, signal?: AbortSignal): Promise<HistoryResponse> {
     return this.request('/api/history', {
@@ -150,9 +207,46 @@ export class MarketDataClient {
   }
 
   /** Many histories + FX pairs + quotes in one round trip (ideal for the monthly table). */
-  batch(req: BatchRequest, signal?: AbortSignal): Promise<BatchResponse> {
-    return this.request('/api/batch', { body: req, signal });
+  /**
+   * Many histories + FX pairs + quotes + indices in one logical call (ideal for the monthly
+   * table). Requests above the server cap are split transparently into chunks of
+   * `batchChunkSize` items (server cap 100), sent with limited concurrency and merged back in the
+   * original order; a chunk that fails as a whole marks its items as failed.
+   */
+  async batch(req: BatchRequest, signal?: AbortSignal): Promise<BatchResponse> {
+    const started = Date.now();
+    type Item = { kind: 'histories' | 'fx' | 'quotes' | 'indices'; value: unknown };
+    const items: Item[] = [
+      ...(req.histories ?? []).map((value) => ({ kind: 'histories' as const, value })),
+      ...(req.fx ?? []).map((value) => ({ kind: 'fx' as const, value })),
+      ...(req.quotes ?? []).map((value) => ({ kind: 'quotes' as const, value })),
+      ...(req.indices ?? []).map((value) => ({ kind: 'indices' as const, value })),
+    ];
+    if (items.length <= this.batchChunkSize) return this.request('/api/batch', { body: req, signal });
+    const parts = await mapLimit(chunk(items, this.batchChunkSize), this.chunkConcurrency, async (part) => {
+      const body: Record<Item['kind'], unknown[]> = { histories: [], fx: [], quotes: [], indices: [] };
+      for (const it of part) body[it.kind].push(it.value);
+      try {
+        return await this.request<BatchResponse>('/api/batch', { body, signal });
+      } catch (e) {
+        return {
+          histories: failAll(body.histories.length, e),
+          fx: failAll(body.fx.length, e),
+          quotes: failAll(body.quotes.length, e),
+          indices: failAll(body.indices.length, e),
+          tookMs: 0,
+        } as BatchResponse;
+      }
+    });
+    return {
+      histories: parts.flatMap((p) => p.histories ?? []),
+      fx: parts.flatMap((p) => p.fx ?? []),
+      quotes: parts.flatMap((p) => p.quotes ?? []),
+      indices: parts.flatMap((p) => p.indices ?? []),
+      tookMs: Date.now() - started,
+    };
   }
+
 
   /**
    * Convenience for the monthly table: month-end closes for instruments and month-end FX for

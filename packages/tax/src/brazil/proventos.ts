@@ -4,10 +4,11 @@ import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sum } from '../common/util';
 import { issuerKey } from '../common/basis';
+import { rendaFixaIrRate } from './rendaFixa';
 import { classifyForBrazil, type BrCategory } from './classify';
 import { brazilConfig, DIRPF_INCOME_LINES, type BrazilTaxYearConfig } from './config';
 
-export type BrProventoType = 'DIVIDENDO' | 'JCP' | 'RENDIMENTO_FII' | 'OUTRO';
+export type BrProventoType = 'DIVIDENDO' | 'JCP' | 'RENDIMENTO_FII' | 'ALUGUEL' | 'OUTRO';
 
 export interface BrProventoRow {
   transactionId: string;
@@ -32,7 +33,7 @@ export interface BrProventosReport {
   year: number;
   disclaimer: LocalizedText;
   rows: BrProventoRow[];
-  totals: { dividendos: number; jcpGross: number; jcpIrrf: number; rendimentosFii: number; dividendIrrf: number };
+  totals: { dividendos: number; jcpGross: number; jcpIrrf: number; rendimentosFii: number; dividendIrrf: number; aluguelGross: number; aluguelIrrf: number };
   notes: string[];
   issues: TaxIssue[];
 }
@@ -83,8 +84,9 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
   const rows: BrProventoRow[] = [];
+  const ALUGUEL_RE = /aluguel|empr[eé]stimo\s+de\s+a[cç][oõ]es|\bBTC\b/i;
   const txs = input.transactions.filter(
-    (t) => t.type === 'DIVIDEND' && t.date.startsWith(`${opts.year}-`),
+    (t) => (t.type === 'DIVIDEND' || (t.type === 'INTEREST' && ALUGUEL_RE.test(t.note ?? ''))) && t.date.startsWith(`${opts.year}-`),
   );
   for (const tx of txs) {
     const inst = tx.instrumentId ? instruments.get(tx.instrumentId) : undefined;
@@ -94,7 +96,8 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
     const irrf = tx.taxes ?? 0;
     let type = opts.classify?.(tx);
     if (!type) {
-      if (category === 'FII') type = 'RENDIMENTO_FII';
+      if (ALUGUEL_RE.test(tx.note ?? '')) type = 'ALUGUEL';
+      else if (category === 'FII') type = 'RENDIMENTO_FII';
       else if (JCP_RE.test(`${tx.note ?? ''} ${tx.source ?? ''}`)) type = 'JCP';
       else if (gross > 0 && irrf > 0 && [0.15, 0.175, cfg.jcpRate].some((r) => Math.abs(irrf / gross - r) < 0.005)) type = 'JCP';
       else if (category === 'ACAO') type = 'DIVIDENDO';
@@ -111,7 +114,9 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       irrf,
       net: gross - irrf,
       expectedIrrf:
-        type === 'JCP'
+        type === 'ALUGUEL'
+          ? gross * rendaFixaIrRate(Number(/(\d+)\s*dias/i.exec(tx.note ?? '')?.[1] ?? 0))
+          : type === 'JCP'
           ? gross * (jcpCreditYear(tx, opts.jcpCreditDates) !== undefined && jcpCreditYear(tx, opts.jcpCreditDates)! < opts.year
               ? brazilConfig(jcpCreditYear(tx, opts.jcpCreditDates)!).jcpRate
               : cfg.jcpRate)
@@ -183,6 +188,15 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       continue;
     }
     if (r.expectedIrrf > 0 && Math.abs(r.irrf - r.expectedIrrf) > Math.max(0.05, r.expectedIrrf * 0.01)) {
+      if (r.type === 'ALUGUEL') {
+        issues.push({
+          level: 'info',
+          code: 'ALUGUEL_IRRF_DIFFERS',
+          transactionId: r.transactionId,
+          message: `Aluguel de ações (${r.symbol ?? ''}): IR retido ${r.irrf.toFixed(2)} vs. estimado ${r.expectedIrrf.toFixed(2)} (tabela regressiva pelo prazo do contrato; informe "N dias" na nota).`,
+        });
+        continue;
+      }
       issues.push({
         level: 'warning',
         code: 'IRRF_MISMATCH',
@@ -205,6 +219,8 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       jcpGross: sum(t('JCP').map((r) => r.gross)),
       jcpIrrf: sum(t('JCP').map((r) => r.irrf)),
       rendimentosFii: sum(t('RENDIMENTO_FII').map((r) => r.gross)),
+      aluguelGross: sum(t('ALUGUEL').map((r) => r.gross)),
+      aluguelIrrf: sum(t('ALUGUEL').map((r) => r.irrf)),
     },
     notes: [
       `JCP: tributação exclusiva na fonte de ${(cfg.jcpRate * 100).toFixed(1)}% (Lei 9.249/1995 art. 9º; LC 224/2025 a partir de 2026). Declarar o valor líquido em Tributação Exclusiva.`,

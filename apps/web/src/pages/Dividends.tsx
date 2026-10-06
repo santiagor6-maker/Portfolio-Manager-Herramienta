@@ -6,8 +6,8 @@ import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Skeleton } from '../comp
 import { GroupedBars } from '../components/charts';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
-import { formatDate, formatMoney, monthName } from '../lib/format';
-import { addDays } from '../lib/ids';
+import { formatDate, formatMoney, formatMonth, formatPct, monthName } from '../lib/format';
+import { addDays, addMonths } from '../lib/ids';
 import { countryName, flagEmoji } from '../lib/labels';
 
 /** Gross and withholding in base currency, derived from the event's net/base ratio. */
@@ -38,6 +38,10 @@ export default function DividendsPage() {
   const valueBase = (a?.valuation?.holdings ?? []).reduce((s, h) => s + (h.marketValueBase ?? 0), 0);
   const prevYear = String(Number(selYear) - 1);
   const prevNet = events.filter((e) => e.date.startsWith(prevYear)).reduce((s, e) => s + e.netBase, 0);
+  // Like-for-like (W8): for the running year compare against the same period of last year.
+  const isCurrentYear = selYear === asOf.slice(0, 4);
+  const cutoff = `${prevYear}${asOf.slice(4)}`;
+  const prevSamePeriod = isCurrentYear ? events.filter((e) => e.date.startsWith(prevYear) && e.date <= cutoff).reduce((s, e) => s + e.netBase, 0) : prevNet;
 
   // Monthly bars for the last 4 years.
   const chartYears = years.slice(0, 4).reverse();
@@ -115,9 +119,14 @@ export default function DividendsPage() {
           label={t('div.yearNet', { year: selYear })}
           value={<Money value={yearNet} />}
           sub={
-            prevNet ? (
-              <span className="text-xs text-muted">
-                {t('div.vsPrev', { year: prevYear })} <Pct value={yearNet / prevNet - 1} signed colored />
+            prevSamePeriod ? (
+              <span className="text-xs text-muted" data-testid="div-yoy">
+                {isCurrentYear ? t('div.vsPrevSamePeriod', { year: prevYear }) : t('div.vsPrev', { year: prevYear })} <Pct value={yearNet / prevSamePeriod - 1} signed colored />
+                {isCurrentYear && prevNet ? (
+                  <span className="block">
+                    {t('div.prevFullYear', { year: prevYear })}: {formatMoney(prevNet, f.currency, f.locale, { privacy: f.privacy })}
+                  </span>
+                ) : null}
               </span>
             ) : undefined
           }
@@ -144,6 +153,8 @@ export default function DividendsPage() {
           }
         />
       </div>
+
+      <UpcomingCalendar />
 
       <Card className="mt-3" title={t('div.byMonth')} subtitle={t('div.byMonthSub')}>
         {loading ? <Skeleton className="h-64" /> : <GroupedBars categories={chart.categories} series={chart.series} valueFormat={moneyFmt} ariaLabel={t('div.byMonth')} height={260} />}
@@ -258,5 +269,57 @@ export default function DividendsPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+/** Next 12 months: provider-announced dividends + projection from last year's payments (W12). */
+function UpcomingCalendar() {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const { analysis: a } = useAnalysis();
+  const label = useInstrumentLabel();
+  const list = a?.upcomingDividends ?? [];
+  const months = useMemo(() => {
+    if (!a) return [];
+    const start = a.asOf.slice(0, 7);
+    return Array.from({ length: 12 }, (_, i) => addMonths(start, i));
+  }, [a]);
+  const moneyFmt = useCallback(
+    (v: number, axis?: boolean) => (f.privacy ? '•••' : formatMoney(v, f.currency, f.locale, { compact: axis })),
+    [f.currency, f.locale, f.privacy],
+  );
+  const series = useMemo(
+    () => [
+      { name: t('div.announced'), colorIndex: 0, data: months.map((m) => list.filter((d) => d.source === 'provider' && d.payDate.startsWith(m)).reduce((s, d) => s + d.netBase, 0)) },
+      { name: t('div.estimated'), colorIndex: 2, data: months.map((m) => list.filter((d) => d.source === 'history' && d.payDate.startsWith(m)).reduce((s, d) => s + d.netBase, 0)) },
+    ],
+    [months, list, t],
+  );
+  if (!list.length) return null;
+  const total = list.reduce((s, d) => s + d.netBase, 0);
+  return (
+    <Card className="mt-3" title={t('div.calendar')} subtitle={t('div.calendarSub', { total: formatMoney(total, f.currency, f.locale, { privacy: f.privacy }) })}>
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+        <div className="xl:col-span-3">
+          <GroupedBars categories={months.map((m) => formatMonth(m, f.locale))} series={series} valueFormat={moneyFmt} ariaLabel={t('div.calendar')} height={230} stacked />
+        </div>
+        <ul className="xl:col-span-2 text-[13px] flex flex-col gap-1 max-h-[260px] overflow-auto" data-testid="div-calendar">
+          {list.slice(0, 30).map((d, i) => (
+            <li key={i} className="flex items-center gap-2 border-b border-line/60 py-1">
+              <span className="w-20 font-semibold truncate">{label(d.instrumentId).symbol}</span>
+              <span className="text-xs text-muted flex-1">
+                {d.source === 'history' ? '≈ ' : ''}
+                {formatDate(d.payDate, f.locale)}
+                {d.source === 'provider' && <span className="chip !h-4 ml-1.5 !text-[10px]">{t('div.announced')}</span>}
+              </span>
+              <span className="text-[11px] text-muted" title={t('div.withholdingEst')}>
+                −{formatPct(d.withholdingRate, f.locale, { decimals: 0 })}
+              </span>
+              <Money value={d.netBase} className="text-ink-2" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
   );
 }

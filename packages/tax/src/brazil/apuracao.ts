@@ -89,6 +89,7 @@ export interface BrMonthRow {
     etf: number;
     bdr: number;
     opcoes: number;
+    futuros: number;
     direitos: number;
     dayTrade: number;
     fii: number;
@@ -228,12 +229,13 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     const etf = sum(sw('ETF').map((t) => t.result));
     const bdr = sum(sw('BDR').map((t) => t.result));
     const opcoes = sum(sw('OPCAO').map((t) => t.result));
+    const futuros = sum(sw('FUTURO').map((t) => t.result));
     const direitos = sum(sw('DIREITO').map((t) => t.result));
     const dayTrade = sum(mt.filter((t) => t.kind === 'daytrade' && t.category !== 'FII').map((t) => t.result));
     const fii = sum(mt.filter((t) => t.category === 'FII').map((t) => t.result));
     const exemptGain = exempt && acoesReg > 0 ? acoesReg : 0;
 
-    const comumResult = (exempt ? Math.min(0, acoesReg) : acoesReg) + acoesShortCover + etf + bdr + opcoes + direitos;
+    const comumResult = (exempt ? Math.min(0, acoesReg) : acoesReg) + acoesShortCover + etf + bdr + opcoes + futuros + direitos;
     const comum = applyPool(comumResult, lossComum, cfg.swingRate);
     const dt = applyPool(dayTrade, lossDt, cfg.dayTradeRate);
     if (cfg.commonLossOffsetsDayTrade && dt.base > 0 && comum.lossCarryOut > 0) {
@@ -300,7 +302,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       salesAcoesSwing,
       exempt,
       exemptGain,
-      results: { acoes: acoesReg + acoesShortCover, acoesShortCover, etf, bdr, opcoes, direitos, dayTrade, fii },
+      results: { acoes: acoesReg + acoesShortCover, acoesShortCover, etf, bdr, opcoes, futuros, direitos, dayTrade, fii },
       comum,
       dayTrade: dt,
       fii: fiiPool,
@@ -405,6 +407,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       'Prejuízos de day trade compensam só day trade; prejuízos de operações comuns podem compensar também day trade; FII tem compensação separada.',
       'IRRF (0,005% swing / 1% day trade) informado no campo taxes das vendas; quando ausente, é estimado e mostrado, mas só abatido com creditEstimatedIrrf.',
       'ETF de renda fixa (Lei 13.043/2014): IR retido na fonte, fora da apuração mensal.',
+      'Futuros (WIN, WDO, IND, DOL...): resultado por compra/venda (valor = quantidade x pontos x valor do ponto); ajustes diários de posições mantidas de um dia para outro não são modelados — registre o resultado de cada encerramento.',
       'Vencimento do DARF: último dia útil bancário do mês seguinte (31/12 sem expediente bancário; feriados locais não considerados).',
     ],
     issues,

@@ -380,6 +380,8 @@ export default function ImportPage() {
                     <th className="r">{t('tx.quantity')}</th>
                     <th className="r">{t('tx.price')}</th>
                     <th className="r">{t('tx.amount')}</th>
+                    <th className="r">{t('tx.fees')}</th>
+                    <th className="r">{t('tx.taxesShort')}</th>
                     <th>{t('imp.issues')}</th>
                   </tr>
                 </thead>
@@ -398,6 +400,8 @@ export default function ImportPage() {
                         <td className="r num">{tx?.quantity !== undefined ? formatNumber(tx.quantity, f.locale, 4) : ''}</td>
                         <td className="r num">{tx?.price !== undefined ? formatNumber(tx.price, f.locale, 4) : ''}</td>
                         <td className="r num">{tx?.amount !== undefined ? formatMoney(tx.amount, tx.currency, f.locale) : ''}</td>
+                        <td className="r num text-muted">{tx?.fees ? formatMoney(tx.fees, tx.currency, f.locale) : ''}</td>
+                        <td className="r num text-muted">{tx?.taxes ? formatMoney(tx.taxes, tx.currency, f.locale) : ''}</td>
                         <td className="text-xs whitespace-normal min-w-[200px]">{r.issues.map((x) => x.message).join(' · ')}</td>
                       </tr>
                     );

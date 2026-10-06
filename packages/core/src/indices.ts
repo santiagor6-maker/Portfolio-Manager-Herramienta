@@ -12,10 +12,18 @@
  *
  * "% of index" (110 % do CDI) scales each periodic rate (exact for daily/annual rates) or the
  * total variation for level series. Extrapolation beyond the last point is only done when asked
- * (accrual of fixed income); benchmarks and inflation never extrapolate beyond a small tolerance.
+ * (accrual of fixed income, real returns "to date"): level series continue with the growth of
+ * their last interval (e.g. last month's IPCA), rate series with their last rate; at most
+ * MAX_PROJECTION_DAYS. Callers flag projected values as estimated (`lastDay`).
+ * BUS/252 counts business days with the series' holiday calendar (ANBIMA for CDI/SELIC/BRL).
+ * "% of index" on annual rates scales the DAILY rate (market convention): (1 + p * d)^n with
+ * d = (1 + r)^(1/252) - 1 for BUS/252.
  */
+
+export const MAX_PROJECTION_DAYS = 62;
 import type { DayCount, IndexSeries } from './types';
-import { businessDaysBetween, days360, isoToDay, lastIndexAtOrBefore, monthEnd } from './dates';
+import { days360, isoToDay, lastIndexAtOrBefore, monthEnd } from './dates';
+import { type CalendarId, businessDaysIn } from './calendars';
 
 export interface IndexData {
   id: string;
@@ -32,30 +40,51 @@ function rateOf(v: number, unit: IndexSeries['unit']): number {
   return unit === 'decimal' ? v : v / 100;
 }
 
-function growth(rate: number, from: number, to: number, dc: DayCount): number {
-  if (to <= from) return 1;
+/** Periods and per-period rate for a day count (used to scale "% of index"). */
+function periods(rate: number, from: number, to: number, dc: DayCount, cal: CalendarId): { n: number; per: number } {
   switch (dc) {
     case 'BUS/252':
-      return Math.pow(1 + rate, businessDaysBetween(from, to) / 252);
+      return { n: businessDaysIn(from, to, cal), per: Math.pow(1 + rate, 1 / 252) - 1 };
     case 'ACT/360':
-      return Math.pow(1 + rate / 360, to - from);
+      return { n: to - from, per: rate / 360 };
     case '30/360':
-      return Math.pow(1 + rate, days360(from, to) / 360);
+      return { n: days360(from, to), per: Math.pow(1 + rate, 1 / 360) - 1 };
+    case 'ACT/ACT':
     case 'ACT/365':
     default:
-      return Math.pow(1 + rate, (to - from) / 365);
+      return { n: to - from, per: Math.pow(1 + rate, 1 / 365) - 1 };
   }
+}
+
+/** Growth of an annual rate between two days; `percent` scales the per-period (daily) rate. */
+function growth(rate: number, from: number, to: number, dc: DayCount, cal: CalendarId = 'WEEKDAYS', percent = 1): number {
+  if (to <= from) return 1;
+  if (dc === 'ACT/ACT' && percent === 1) {
+    // calendar years: exact for whole years regardless of leap days
+    const A = new Date(from * 86_400_000);
+    let y = 0;
+    while (Math.round(Date.UTC(A.getUTCFullYear() + y + 1, A.getUTCMonth(), A.getUTCDate()) / 86_400_000) <= to) y++;
+    const s = Math.round(Date.UTC(A.getUTCFullYear() + y, A.getUTCMonth(), A.getUTCDate()) / 86_400_000);
+    const e = Math.round(Date.UTC(A.getUTCFullYear() + y + 1, A.getUTCMonth(), A.getUTCDate()) / 86_400_000);
+    return Math.pow(1 + rate, y + (to - s) / (e - s));
+  }
+  const { n, per } = periods(rate, from, to, dc, cal);
+  return Math.pow(1 + percent * per, n);
 }
 
 /** Level series with geometric interpolation. */
 function levelData(id: string, kind: IndexSeries['kind'], days: number[], levels: number[], tolerance: number): IndexData {
   const first = days[0] ?? 0;
   const last = days[days.length - 1] ?? 0;
+  // daily growth of the last interval, for projections
+  const n = days.length;
+  const trend = n >= 2 ? Math.pow((levels[n - 1] as number) / (levels[n - 2] as number), 1 / ((days[n - 1] as number) - (days[n - 2] as number))) : 1;
   const at = (d: number, extrapolate: boolean): number | undefined => {
     if (days.length === 0 || d < first) return undefined;
     if (d >= last) {
-      if (!extrapolate && d > last + tolerance) return undefined;
-      return levels[levels.length - 1];
+      if (d <= last + tolerance) return levels[levels.length - 1];
+      if (!extrapolate || d > last + MAX_PROJECTION_DAYS) return undefined;
+      return (levels[levels.length - 1] as number) * Math.pow(trend, d - last);
     }
     const i = lastIndexAtOrBefore(days, d);
     const d0 = days[i] as number;
@@ -88,7 +117,7 @@ function levelData(id: string, kind: IndexSeries['kind'], days: number[], levels
 }
 
 /** Daily periodic rates (CDI / Selic). */
-function dailyRateData(id: string, days: number[], rates: number[]): IndexData {
+function dailyRateData(id: string, days: number[], rates: number[], cal: CalendarId): IndexData {
   const first = days[0] ?? 0;
   const last = days[days.length - 1] ?? 0;
   const cache = new Map<number, Float64Array>();
@@ -111,7 +140,8 @@ function dailyRateData(id: string, days: number[], rates: number[]): IndexData {
     const cum = cumFor(p);
     if (d > last + 1) {
       if (!extrapolate && d > last + 5) return undefined;
-      const extra = businessDaysBetween(last, d - 1);
+      if (d > last + MAX_PROJECTION_DAYS) return undefined;
+      const extra = businessDaysIn(last, d - 1, cal);
       return (cum[cum.length - 1] as number) * Math.pow(1 + p * (rates[rates.length - 1] as number), extra);
     }
     const i = lastIndexAtOrBefore(days, d - 1);
@@ -134,7 +164,7 @@ function dailyRateData(id: string, days: number[], rates: number[]): IndexData {
 }
 
 /** Annualized rates valid from their date (IBR, DTF, CDI annualized). */
-function annualRateData(id: string, days: number[], rates: number[], dc: DayCount): IndexData {
+function annualRateData(id: string, days: number[], rates: number[], dc: DayCount, cal: CalendarId): IndexData {
   const first = days[0] ?? 0;
   const last = days[days.length - 1] ?? 0;
   const cache = new Map<number, Float64Array>();
@@ -144,7 +174,7 @@ function annualRateData(id: string, days: number[], rates: number[], dc: DayCoun
       l = new Float64Array(rates.length);
       let acc = 1;
       for (let i = 0; i < rates.length; i++) {
-        if (i > 0) acc *= growth(p * (rates[i - 1] as number), days[i - 1] as number, days[i] as number, dc);
+        if (i > 0) acc *= growth(rates[i - 1] as number, days[i - 1] as number, days[i] as number, dc, cal, p);
         l[i] = acc;
       }
       cache.set(p, l);
@@ -154,9 +184,10 @@ function annualRateData(id: string, days: number[], rates: number[], dc: DayCoun
   const C = (d: number, p: number, extrapolate: boolean): number | undefined => {
     if (days.length === 0 || d < first) return undefined;
     if (!extrapolate && d > last + 31) return undefined;
+    if (d > last + 31 + MAX_PROJECTION_DAYS) return undefined;
     const lv = levelsFor(p);
     const i = lastIndexAtOrBefore(days, d);
-    return (lv[i] as number) * growth(p * (rates[i] as number), days[i] as number, d, dc);
+    return (lv[i] as number) * growth(rates[i] as number, days[i] as number, d, dc, cal, p);
   };
   return {
     id,
@@ -211,14 +242,15 @@ export function buildIndex(s: IndexSeries): IndexData | undefined {
     }
     return levelData(s.id, 'periodRate', days, levels, 0);
   }
+  const cal: CalendarId = s.id === 'CDI' || s.id === 'SELIC' || s.currency === 'BRL' ? 'BR' : s.currency === 'COP' ? 'CO' : 'WEEKDAYS';
   if (s.kind === 'periodRate') {
-    return dailyRateData(s.id, uniq.map((p) => p.day), uniq.map((p) => rateOf(p.value, s.unit)));
+    return dailyRateData(s.id, uniq.map((p) => p.day), uniq.map((p) => rateOf(p.value, s.unit)), cal);
   }
   const dc: DayCount = s.dayCount ?? (s.id === 'CDI' || s.id === 'SELIC' ? 'BUS/252' : 'ACT/365');
-  return annualRateData(s.id, uniq.map((p) => p.day), uniq.map((p) => rateOf(p.value, s.unit)), dc);
+  return annualRateData(s.id, uniq.map((p) => p.day), uniq.map((p) => rateOf(p.value, s.unit)), dc, cal);
 }
 
-/** Growth of a fixed annual rate between two days with a day count. */
-export function fixedGrowth(rate: number, a: number, b: number, dc: DayCount): number {
-  return growth(rate, a, b, dc);
+/** Growth of a fixed annual rate between two days with a day count and holiday calendar. */
+export function fixedGrowth(rate: number, a: number, b: number, dc: DayCount, cal: CalendarId = 'WEEKDAYS'): number {
+  return growth(rate, a, b, dc, cal);
 }
