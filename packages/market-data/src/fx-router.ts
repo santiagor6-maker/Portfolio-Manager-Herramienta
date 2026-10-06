@@ -17,7 +17,7 @@ import { addDays, eachDay, todayISO } from './dates';
 import { MarketDataError, errorMessage } from './errors';
 import type { FxProvider } from './providers/types';
 import { combine, sliceRange } from './series';
-import type { FxSourceMode } from './types';
+import type { FxSide, FxSourceMode } from './types';
 
 export interface FxResult {
   points: FxPoint[];
@@ -71,15 +71,15 @@ export class FxRouter {
     return routes;
   }
 
-  async daily(base: CurrencyCode, quote: CurrencyCode, from: ISODate, to: ISODate, mode: FxSourceMode = 'auto'): Promise<FxResult> {
+  async daily(base: CurrencyCode, quote: CurrencyCode, from: ISODate, to: ISODate, mode: FxSourceMode = 'auto', side: FxSide = 'sell'): Promise<FxResult> {
     base = base.toUpperCase();
     quote = quote.toUpperCase();
     if (base === quote) {
       return { points: eachDay(from, to).map((date) => ({ date, rate: 1 })), source: 'identity', fallbacks: [] };
     }
-    const load = () => this.resolve(base, quote, from, to, mode);
+    const load = () => this.resolve(base, quote, from, to, mode, side);
     if (!this.opts.cache) return load();
-    const key = `fx:daily:${mode}:${base}${quote}:${from}:${to}`;
+    const key = `fx:daily:${mode}:${side}:${base}${quote}:${from}:${to}`;
     const today = this.today();
     const r = await this.opts.cache.getOrLoad<FxResult>(
       key,
@@ -91,8 +91,13 @@ export class FxRouter {
     return r.value;
   }
 
-  private async resolve(base: string, quote: string, from: ISODate, to: ISODate, mode: FxSourceMode): Promise<FxResult> {
-    const routes = this.routes(base, quote, mode);
+  private async resolve(base: string, quote: string, from: ISODate, to: ISODate, mode: FxSourceMode, side: FxSide): Promise<FxResult> {
+    let routes = this.routes(base, quote, mode);
+    if (side === 'buy') {
+      // Only the BCB publishes a buy (compra) side; never answer a buy request with a mid rate.
+      routes = routes.filter((r) => r.kind === 'direct' && String(r.provider.id).startsWith('bcb'));
+      if (!routes.length) throw new MarketDataError('UNSUPPORTED', `side=buy is only available for PTAX pairs (X/BRL); ${base}/${quote} has no buy rate`);
+    }
     if (!routes.length) {
       throw new MarketDataError(
         'UNSUPPORTED',
@@ -107,11 +112,11 @@ export class FxRouter {
       try {
         if (route.kind === 'direct') {
           // Trim defensively: some APIs return whole periods around the requested window.
-          const points = sliceRange(await route.provider.daily(base, quote, from, to), from, to);
+          const points = sliceRange(await route.provider.daily(base, quote, from, to, { side }), from, to);
           if (!points.length) throw new MarketDataError('NOT_FOUND', 'empty series');
           return { points, source: String(route.provider.id), fallbacks };
         }
-        const r = await this.cross(base, quote, route.via, from, to);
+        const r = await this.cross(base, quote, route.via, from, to, side);
         return { ...r, fallbacks: [...fallbacks, ...r.fallbacks] };
       } catch (e) {
         fallbacks.push({ source: label, error: errorMessage(e) });
@@ -122,11 +127,11 @@ export class FxRouter {
   }
 
   /** base/quote = base/via x via/quote, official legs only, union of dates with fill-forward. */
-  private async cross(base: string, quote: string, via: string, from: ISODate, to: ISODate): Promise<Omit<FxResult, 'fallbacks'> & { fallbacks: FxResult['fallbacks'] }> {
+  private async cross(base: string, quote: string, via: string, from: ISODate, to: ISODate, side: FxSide): Promise<Omit<FxResult, 'fallbacks'> & { fallbacks: FxResult['fallbacks'] }> {
     const padded = addDays(from, -10);
     const [a, b] = await Promise.all([
-      this.daily(base, via, padded, to, 'official'),
-      this.daily(via, quote, padded, to, 'official'),
+      this.daily(base, via, padded, to, 'official', side),
+      this.daily(via, quote, padded, to, 'official', side),
     ]);
     return {
       points: combine(a.points, b.points, from, to),

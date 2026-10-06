@@ -23,7 +23,7 @@ export type NumberFormat = 'dot' | 'comma';
 /** Field order of numeric dates: YMD = 2024-01-31, DMY = 31/01/2024, MDY = 01/31/2024. */
 export type DateFormat = 'YMD' | 'DMY' | 'MDY';
 
-export type FileKind = 'csv' | 'xlsx' | 'html' | 'json' | 'xls' | 'unknown';
+export type FileKind = 'csv' | 'xlsx' | 'html' | 'json' | 'xls' | 'pdf' | 'unknown';
 
 export type Confidence = 'high' | 'medium' | 'low';
 
@@ -77,6 +77,10 @@ export interface InstrumentHint {
   country?: string;
   /** Explicit instrument id (canonical template / backups). */
   id?: string;
+  /** Extra fields merged into a newly created instrument (e.g. CDT `accrual`, `pricing`). */
+  extra?: Partial<Instrument>;
+  /** Exact instrument to create (PDF certificates): bypasses market inference. */
+  create?: Instrument;
 }
 
 /** Transaction under construction (before instrument resolution, hashing and id assignment). */
@@ -103,6 +107,8 @@ export interface DraftTransaction {
    * instead of a ratio. The pipeline infers `ratio` from the running position.
    */
   deltaShares?: number;
+  /** Excluded from cross-source duplicate checks (e.g. synthetic rows). */
+  noDuplicateCheck?: boolean;
 }
 
 export interface ParsedRow {
@@ -113,17 +119,30 @@ export interface ParsedRow {
   issues: ImportIssue[];
   /** Row intentionally ignored (totals, headers, unsupported but harmless movements). */
   skipped?: boolean;
+  /** Additional transactions produced by the same source row (e.g. an FX trade's commission in another currency). */
+  extra?: DraftTransaction[];
 }
 
-export type RowStatus = 'ok' | 'duplicate' | 'error' | 'skipped';
+/**
+ * - ok: will be imported.
+ * - duplicate: same importHash as an existing transaction (already imported).
+ * - possible_duplicate: looks like an existing/in-file transaction from another source; excluded until the
+ *   user accepts it (`acceptDuplicates`).
+ * - pending: blocked until the user confirms the file's date/number format (`needsConfirmation`).
+ */
+export type RowStatus = 'ok' | 'duplicate' | 'possible_duplicate' | 'pending' | 'error' | 'skipped';
 
 export interface ImportRow {
   line: number;
   sheet?: string;
   status: RowStatus;
   transaction?: Transaction;
+  /** Additional transactions produced by this row (same status). */
+  extraTransactions?: Transaction[];
   issues: ImportIssue[];
   raw?: string[];
+  /** For possible duplicates: what it collides with. */
+  duplicateOf?: { transactionId?: string; source?: string; date: ISODate; line?: number; inFile: boolean };
 }
 
 export interface ImportStats {
@@ -140,6 +159,9 @@ export interface ImportStats {
   currencies: CurrencyCode[];
   newInstruments: number;
   matchedInstruments: number;
+  possibleDuplicates: number;
+  /** Rows waiting for a format confirmation. */
+  pending: number;
 }
 
 export interface DetectionInfo {
@@ -170,6 +192,71 @@ export interface ImportResult {
   needsMapping?: boolean;
   /** Headers + suggestion so the UI can show the mapping editor. */
   mappingSuggestion?: MappingSuggestion;
+  /**
+   * The file's date order or decimal separator could not be determined. Nothing is imported
+   * (`transactions` is empty, rows are `pending`) until the UI re-runs with `options.dateFormat` /
+   * `options.numberFormat` set to the user's choice (or `allowAmbiguous: true`).
+   */
+  needsConfirmation?: ConfirmationRequest[];
+  /** Shortcut: candidates when the date order needs confirmation (suggested first). */
+  dateFormatCandidates?: DateFormat[];
+  /** Shortcut: candidates when the decimal separator needs confirmation (suggested first). */
+  numberFormatCandidates?: NumberFormat[];
+  /** Positions / cash reported by the broker (IBKR Open Positions & Cash Report, B3 Posição) vs. computed. */
+  reconciliation?: Reconciliation;
+  /** Corporate events that need the user's input (incorporação, cisão...). */
+  corporateActions?: CorporateActionSuggestion[];
+  /** Suggested updates to existing instruments (e.g. a guessed US exchange now known). */
+  instrumentUpdates?: { id: string; changes: Partial<Instrument>; reason: string }[];
+}
+
+export interface ConfirmationRequest {
+  kind: 'dateFormat' | 'numberFormat';
+  /** Candidates, the suggested one first. */
+  candidates: (DateFormat | NumberFormat)[];
+  suggested: DateFormat | NumberFormat;
+  /** Why it is suggested (hints used) — Spanish text for the UI. */
+  reason: string;
+  /** A few affected cells with each reading, for the dialog. */
+  samples: { line: number; value: string; readings: Record<string, string> }[];
+  /** Lines of rows whose values change with the choice. */
+  affectedLines: number[];
+}
+
+export interface ReportedPosition {
+  instrumentId?: string;
+  symbol: string;
+  quantity: number;
+  currency?: CurrencyCode;
+  costBasis?: number;
+  marketValue?: number;
+  price?: number;
+}
+
+export interface PositionDifference {
+  instrumentId: string;
+  symbol: string;
+  reported: number;
+  computed: number;
+  difference: number;
+}
+
+export interface Reconciliation {
+  asOf?: ISODate;
+  source: string;
+  positions: ReportedPosition[];
+  cash: { currency: CurrencyCode; amount: number }[];
+  /** Computed (existing + imported) vs. reported; only rows that differ. */
+  positionDifferences: PositionDifference[];
+  cashDifferences: { currency: CurrencyCode; reported: number; computed: number; difference: number }[];
+}
+
+export interface CorporateActionSuggestion {
+  line: number;
+  date: ISODate;
+  kind: 'merger' | 'spinoff' | 'conversion' | 'symbol_change' | 'other';
+  description: string;
+  legs: { symbol?: string; name?: string; quantity?: number; direction: 'in' | 'out' }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +285,8 @@ export type MappingField =
   | 'instrumentId'
   | 'toCurrency'
   | 'toAmount'
-  | 'fxRateToBase';
+  | 'fxRateToBase'
+  | 'settleDate';
 
 export const MULTI_COLUMN_FIELDS: readonly MappingField[] = ['fees', 'taxes'];
 
@@ -270,6 +358,34 @@ export interface ImportOptions {
   defaultUsExchange?: ExchangeCode;
   /** Build transaction ids. Default: `imp-${importHash}`. */
   idFactory?: (importHash: string, index: number) => string;
+  /**
+   * Accept the suggested reading when dates/numbers are ambiguous instead of blocking with
+   * `needsConfirmation` (rows still carry warnings). Default false.
+   */
+  allowAmbiguous?: boolean;
+  /**
+   * Possible duplicates are excluded by default. 'in-file' accepts repeated rows within the file,
+   * 'all' accepts every possible duplicate, or pass the line numbers the user accepted.
+   */
+  acceptDuplicates?: 'none' | 'in-file' | 'all' | number[];
+  /** Instrument catalog (e.g. `CATALOG.instruments` from @pm/market-data) for ISIN/symbol → exchange. */
+  catalog?: Instrument[];
+  /** User answers: ticker or spec → instrument id or MIC (e.g. `{ 'PETROBRAS PN N2': 'BVMF:PETR4', SAN: 'XMAD' }`). */
+  securityMap?: Record<string, string>;
+  /** Optional price-plausibility hook: reference price for a symbol at a date (used to disambiguate numbers). */
+  referencePrice?: (hint: InstrumentHint, date: ISODate) => number | undefined;
+  /** Nota de corretagem spreadsheet: how to read fee columns. Default 'auto'. */
+  notaFeesMode?: 'auto' | 'per-row' | 'per-note';
+  /** B3 Movimentação: settlements of trades already imported from Negociação/notas. Default 'auto' (skip matched). */
+  b3SettlementMode?: 'auto' | 'include' | 'skip';
+  /** Position statements (IBKR Open Positions, B3 Posição): reconcile only (default) or import as opening TRANSFER_IN. */
+  positionsMode?: 'reconcile' | 'opening';
+  /** Date for opening positions / reconciliation when the file has none. */
+  asOfDate?: ISODate;
+  /** Broker profile (defaults for generic files): see `listBrokerProfiles()`. */
+  brokerProfile?: string;
+  /** pdf.js module to use (defaults to a dynamic import of `pdfjs-dist/legacy/build/pdf.mjs`). */
+  pdfjs?: unknown;
 }
 
 export interface PresetInfo {

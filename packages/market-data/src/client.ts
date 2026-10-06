@@ -16,6 +16,9 @@ import type {
   HealthResponse,
   HistoryRequest,
   HistoryResponse,
+  IndexInfo,
+  IndexRequest,
+  IndexResponse,
   Quote,
   SearchResult,
   Settled,
@@ -41,6 +44,8 @@ export interface MarketDataClientOptions {
   fetch?: (input: string, init?: RequestInit) => Promise<Response>;
   /** Abort requests after this many ms (default 30 s). */
   timeoutMs?: number;
+  /** Optional API token (server started with API_TOKEN). Sent as `Authorization: Bearer`. */
+  apiToken?: string;
 }
 
 type Query = Record<string, string | number | undefined | null>;
@@ -49,8 +54,10 @@ export class MarketDataClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: (input: string, init?: RequestInit) => Promise<Response>;
   private readonly timeoutMs: number;
+  private readonly apiToken?: string;
 
   constructor(opts: MarketDataClientOptions = {}) {
+    this.apiToken = opts.apiToken;
     this.baseUrl = (opts.baseUrl ?? '').replace(/\/+$/, '');
     this.fetchImpl = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.timeoutMs = opts.timeoutMs ?? 30_000;
@@ -71,7 +78,11 @@ export class MarketDataClient {
     try {
       const res = await this.fetchImpl(this.url(path, init.query), {
         method: init.body === undefined ? 'GET' : 'POST',
-        headers: init.body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(this.apiToken ? { Authorization: `Bearer ${this.apiToken}` } : {}),
+        },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
         signal: controller.signal,
       });
@@ -119,9 +130,19 @@ export class MarketDataClient {
 
   fx(req: FxRequest, signal?: AbortSignal): Promise<FxResponse> {
     return this.request('/api/fx', {
-      query: { base: req.base, quote: req.quote, from: req.from, to: req.to, interval: req.interval, source: req.source },
+      query: { base: req.base, quote: req.quote, from: req.from, to: req.to, interval: req.interval, source: req.source, side: req.side },
       signal,
     });
+  }
+
+  /** Rate / inflation index (CDI, SELIC, IPCA, IPC_CO, IBR, UVR, DTF, CPI_US...) in core's IndexSeries shape. */
+  index(req: IndexRequest, signal?: AbortSignal): Promise<IndexResponse> {
+    return this.request('/api/index', { query: { id: req.id, from: req.from, to: req.to }, signal });
+  }
+
+  /** Available index ids with descriptions. */
+  indexList(signal?: AbortSignal): Promise<{ indices: IndexInfo[] }> {
+    return this.request('/api/index', { signal });
   }
 
   catalog(signal?: AbortSignal): Promise<Catalog> {
@@ -144,6 +165,7 @@ export class MarketDataClient {
     from: ISODate,
     to?: ISODate,
     signal?: AbortSignal,
+    indexIds: string[] = [],
   ): Promise<BatchResponse> {
     const fx = [...new Set(currencies.filter((c) => c !== baseCurrency))].map((c) => ({
       base: c,
@@ -153,6 +175,13 @@ export class MarketDataClient {
       interval: '1mo' as const,
       source: 'auto' as const,
     }));
-    return this.batch({ histories: instrumentIds.map((symbol) => ({ symbol, from, to, interval: '1mo' as const })), fx }, signal);
+    return this.batch(
+      {
+        histories: instrumentIds.map((symbol) => ({ symbol, from, to, interval: '1mo' as const })),
+        fx,
+        indices: indexIds.map((id) => ({ id, from, to })),
+      },
+      signal,
+    );
   }
 }

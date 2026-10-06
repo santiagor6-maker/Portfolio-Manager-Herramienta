@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import type { Instrument, PriceSeries } from '@pm/core';
+import type { CorporateAction, IndexSeries, Instrument, PriceSeries } from '@pm/core';
 import { db, type ManualPrice, type StoredInstrument, type StoredPortfolio, type StoredTransaction } from '../db/schema';
 import { useApp } from '../store/app';
 import { runAnalysis, latestRequestId } from '../services/engineClient';
 import type { Dataset } from '../services/analysis';
+import type { AppSettings } from '../db/repo';
 import { BENCHMARKS } from '../lib/benchmarks';
 import { todayIso } from '../lib/ids';
 
@@ -61,6 +62,56 @@ export function groupManualPrices(rows: ManualPrice[]): PriceSeries[] {
   return [...by.values()];
 }
 
+export interface RawData {
+  portfolios: StoredPortfolio[];
+  transactions: StoredTransaction[];
+  instruments: StoredInstrument[];
+  prices: { instrumentId: string; currency: string; points: { date: string; close: number }[]; source: string }[];
+  fx: { base: string; quote: string; points: { date: string; rate: number }[]; source: string }[];
+  manual: ManualPrice[];
+  indexSeries: IndexSeries[];
+  corporateActions: CorporateAction[];
+  dismissed: string[];
+}
+
+/** Turns raw IndexedDB rows + settings into the engine dataset (shared by worker and one-off calls). */
+export function toDataset(raw: RawData, settings: AppSettings, asOf = todayIso()): Dataset {
+  const known = new Set(raw.instruments.map((i) => i.id));
+  return {
+    portfolios: raw.portfolios,
+    transactions: raw.transactions,
+    instruments: [...raw.instruments, ...BENCHMARKS.filter((b) => !known.has(b.id))],
+    prices: raw.prices.map(({ instrumentId, currency, points, source }) => ({ instrumentId, currency, points, source })),
+    fx: raw.fx.map(({ base, quote, points, source }) => ({ base, quote, points, source })),
+    manualPrices: groupManualPrices(raw.manual),
+    indexSeries: raw.indexSeries.map(({ id, kind, period, unit, dayCount, currency, points, source }) => ({ id, kind, period, unit, dayCount, currency, points, source })),
+    corporateActions: raw.corporateActions.map(({ id: _id, updatedAt: _u, ...a }: CorporateAction & { id?: string; updatedAt?: number }) => a),
+    dismissedSuggestions: raw.dismissed,
+    selectedPortfolioId:
+      settings.selectedPortfolioId === 'all' || raw.portfolios.some((p) => p.id === settings.selectedPortfolioId) ? settings.selectedPortfolioId : 'all',
+    reportingCurrency: settings.reportingCurrency,
+    asOf,
+    benchmarks: settings.benchmarks,
+    riskFreeRate: settings.riskFreeRate,
+    defaultCostMethod: settings.defaultCostMethod,
+  };
+}
+
+export async function readRawData(): Promise<RawData> {
+  const [portfolios, transactions, instruments, prices, fx, manual, indexSeries, corporateActions, dismissed] = await Promise.all([
+    db.portfolios.toArray(),
+    db.transactions.toArray(),
+    db.instruments.toArray(),
+    db.priceSeries.toArray(),
+    db.fxSeries.toArray(),
+    db.manualPrices.toArray(),
+    db.indexSeries.toArray(),
+    db.corporateActions.toArray(),
+    db.meta.get('dismissedSuggestions'),
+  ]);
+  return { portfolios, transactions, instruments, prices, fx, manual, indexSeries, corporateActions, dismissed: (dismissed?.value as string[]) ?? [] };
+}
+
 /**
  * Watches IndexedDB + settings and recomputes the analysis in the engine worker.
  * Mounted once at the app root.
@@ -77,31 +128,22 @@ export function useAnalysisDriver(): void {
   const prices = useLiveQuery(() => db.priceSeries.toArray(), []);
   const fx = useLiveQuery(() => db.fxSeries.toArray(), []);
   const manual = useLiveQuery(() => db.manualPrices.toArray(), []);
+  const indexSeries = useLiveQuery(() => db.indexSeries.toArray(), []);
+  const corporateActions = useLiveQuery(() => db.corporateActions.toArray(), []);
+  const dismissed = useLiveQuery(async () => ((await db.meta.get('dismissedSuggestions'))?.value as string[]) ?? [], []);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   const { selectedPortfolioId, reportingCurrency, benchmarks, riskFreeRate, defaultCostMethod } = settings;
 
   useEffect(() => {
-    if (!ready || !portfolios || !transactions || !instruments || !prices || !fx || !manual) return;
+    if (!ready || !portfolios || !transactions || !instruments || !prices || !fx || !manual || !indexSeries || !corporateActions || !dismissed) return;
     clearTimeout(timer.current);
     setComputing(true);
     timer.current = setTimeout(() => {
-      const known = new Set(instruments.map((i) => i.id));
-      const dataset: Dataset = {
-        portfolios,
-        transactions,
-        instruments: [...instruments, ...BENCHMARKS.filter((b) => !known.has(b.id))],
-        prices: prices.map(({ instrumentId, currency, points, source }) => ({ instrumentId, currency, points, source })),
-        fx: fx.map(({ base, quote, points, source }) => ({ base, quote, points, source })),
-        manualPrices: groupManualPrices(manual),
-        selectedPortfolioId:
-          selectedPortfolioId === 'all' || portfolios.some((p) => p.id === selectedPortfolioId) ? selectedPortfolioId : 'all',
-        reportingCurrency,
-        asOf: todayIso(),
-        benchmarks,
-        riskFreeRate,
-        defaultCostMethod,
-      };
+      const dataset = toDataset(
+        { portfolios, transactions, instruments, prices, fx, manual, indexSeries, corporateActions, dismissed },
+        useApp.getState().settings,
+      );
       void runAnalysis(dataset).then(({ id, analysis }) => {
         if (id === latestRequestId()) setAnalysis(analysis);
       });
@@ -115,6 +157,9 @@ export function useAnalysisDriver(): void {
     prices,
     fx,
     manual,
+    indexSeries,
+    corporateActions,
+    dismissed,
     selectedPortfolioId,
     reportingCurrency,
     benchmarks,

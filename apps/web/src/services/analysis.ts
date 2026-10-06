@@ -10,16 +10,20 @@ import * as core from '@pm/core';
 import type {
   AllocationDimension,
   AllocationSlice,
+  CorporateAction,
   CurrencyCode,
   EngineInput,
   FxSeries,
   IncomeEvent,
+  IndexId,
+  IndexSeries,
   Instrument,
   ISODate,
   MarketData,
   MonthlyRow,
   PerformanceSummary,
   Portfolio,
+  PositionPerformance,
   PriceSeries,
   RealizedGain,
   RiskMetrics,
@@ -28,14 +32,19 @@ import type {
   ValidationIssue,
 } from '@pm/core';
 import { addDays } from '../lib/ids';
+import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
 
 export interface Dataset {
-  portfolios: Portfolio[];
+  portfolios: (Portfolio & { isDemo?: boolean })[];
   transactions: Transaction[];
   instruments: Instrument[];
   prices: PriceSeries[];
   fx: FxSeries[];
   manualPrices: PriceSeries[];
+  indexSeries?: IndexSeries[];
+  corporateActions?: CorporateAction[];
+  /** Suggestion keys (`${portfolioId}|${txId}`) the user dismissed. */
+  dismissedSuggestions?: string[];
   /** Portfolio id or 'all'. */
   selectedPortfolioId: string;
   reportingCurrency: CurrencyCode;
@@ -52,16 +61,38 @@ export interface SeriesPoint {
   valueBase: number;
   netInvestedBase: number;
   cumulativeTwr: number;
+  /** Net invested carried forward with inflation (what contributions must be worth to keep purchasing power). */
+  investedRealBase?: number;
 }
 
 export interface Mover {
   instrumentId: string;
   /** Date of the latest price; the change is versus the previous available close. */
   date: ISODate;
+  prevDate: ISODate;
   changePct: number;
   changeBase: number;
   price: number;
   prevPrice: number;
+}
+
+export interface UpcomingDividend {
+  instrumentId: string;
+  exDate?: ISODate;
+  payDate: ISODate;
+  amountPerShare?: number;
+  currency: CurrencyCode;
+  quantity: number;
+  grossBase: number;
+  netBase: number;
+  withholdingRate: number;
+  /** 'provider' = announced by the data provider; 'history' = projected from last year's payments. */
+  source: 'provider' | 'history';
+}
+
+export interface Suggestion {
+  key: string;
+  transaction: Transaction;
 }
 
 export interface Analysis {
@@ -83,6 +114,18 @@ export interface Analysis {
   income: IncomeEvent[];
   realized: RealizedGain[];
   movers: Mover[];
+  /** Per-position performance since inception and year to date. */
+  positions: PositionPerformance[];
+  positionsYtd: PositionPerformance[];
+  /** Inflation index used for real returns (IPC_CO for COP, IPCA for BRL...), when loaded. */
+  inflationIndex?: IndexId;
+  /** Rate indices compared against (CDI, IBR...), when loaded. */
+  rateIndices: IndexId[];
+  upcomingDividends: UpcomingDividend[];
+  /** Corporate-action transactions suggested from provider data (not yet recorded). */
+  suggestions: Suggestion[];
+  reviewActions: CorporateAction[];
+  pendingCloses: PendingClose[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
   issues: { errors: ValidationIssue[]; warnings: ValidationIssue[] };
@@ -92,6 +135,13 @@ export interface Analysis {
 }
 
 const ALLOCATION_DIMS: AllocationDimension[] = ['country', 'currency', 'assetClass', 'sector', 'account', 'instrument'];
+
+/** Default inflation index per reporting currency (matches the engine's own defaults). */
+export const INFLATION_BY_CURRENCY: Record<string, IndexId> = { COP: 'IPC_CO', BRL: 'IPCA', USD: 'CPI_US', EUR: 'HICP_EA' };
+export const RATE_INDICES: IndexId[] = ['CDI', 'IBR', 'SELIC'];
+
+/** Typical dividend withholding by country of the payer (non-resident, no treaty relief). */
+const DEFAULT_WITHHOLDING: Record<string, number> = { US: 0.3, ES: 0.19, NL: 0.15, DE: 0.26375, FR: 0.25, CO: 0.1, BR: 0, GB: 0, IE: 0, CH: 0.35, MX: 0.1, CL: 0.35, PE: 0.05 };
 
 export function previousBusinessDay(date: ISODate): ISODate {
   let d = addDays(date, -1);
@@ -103,8 +153,19 @@ export function previousBusinessDay(date: ISODate): ISODate {
   return d;
 }
 
+function engineOptions(ds: Dataset): EngineInput['options'] {
+  const loaded = new Set((ds.indexSeries ?? []).map((s) => s.id));
+  const inflation = INFLATION_BY_CURRENCY[ds.reportingCurrency];
+  return {
+    asOf: ds.asOf,
+    inflationIndex: inflation && loaded.has(inflation) ? inflation : null,
+    indices: RATE_INDICES.filter((i) => loaded.has(i)),
+  };
+}
+
 /** Builds the engine input for the selected portfolio or the consolidated view. */
 export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput | undefined {
+  const options = engineOptions(ds);
   if (ds.selectedPortfolioId === 'all') {
     const consolidated: Portfolio = {
       id: 'all',
@@ -114,14 +175,7 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
       createdAt: ds.portfolios.map((p) => p.createdAt).sort()[0] ?? ds.asOf,
       benchmarks: ds.benchmarks,
     };
-    return {
-      portfolio: consolidated,
-      transactions: ds.transactions,
-      instruments: ds.instruments,
-      market,
-      baseCurrency: ds.reportingCurrency,
-      options: { asOf: ds.asOf },
-    };
+    return { portfolio: consolidated, transactions: ds.transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options };
   }
   const portfolio = ds.portfolios.find((p) => p.id === ds.selectedPortfolioId);
   if (!portfolio) return undefined;
@@ -131,8 +185,18 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
     instruments: ds.instruments,
     market,
     baseCurrency: ds.reportingCurrency,
-    options: { asOf: ds.asOf },
+    options,
   };
+}
+
+export function createMarket(ds: Pick<Dataset, 'prices' | 'fx' | 'manualPrices' | 'indexSeries' | 'corporateActions'>): MarketData {
+  return core.createMarketData({
+    prices: ds.prices,
+    fx: ds.fx,
+    manualPrices: ds.manualPrices,
+    indexSeries: ds.indexSeries ?? [],
+    corporateActions: (ds.corporateActions ?? []).filter((a) => a.type === 'DIVIDEND'),
+  });
 }
 
 export function computeAnalysis(ds: Dataset): Analysis {
@@ -161,18 +225,26 @@ export function computeAnalysis(ds: Dataset): Analysis {
     income: [],
     realized: [],
     movers: [],
+    positions: [],
+    positionsYtd: [],
+    rateIndices: [],
+    upcomingDividends: [],
+    suggestions: [],
+    reviewActions: [],
+    pendingCloses: [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
   };
 
-  const market = attempt('createMarketData', () =>
-    core.createMarketData({ prices: ds.prices, fx: ds.fx, manualPrices: ds.manualPrices }),
-  );
+  const market = attempt('createMarketData', () => createMarket(ds));
   if (!market) return finish(out, t0);
 
   const input = buildEngineInput(ds, market);
   if (!input) return finish(out, t0);
+  const opts = input.options!;
+  out.inflationIndex = opts.inflationIndex ?? undefined;
+  out.rateIndices = opts.indices ?? [];
 
   const txs = input.transactions;
   out.hasTransactions = txs.length > 0;
@@ -180,12 +252,14 @@ export function computeAnalysis(ds: Dataset): Analysis {
   const firstDate = txs.reduce((min, t) => (t.date < min ? t.date : min), txs[0]!.date);
   out.firstDate = firstDate;
 
-  const issues = attempt('validateTransactions', () => core.validateTransactions(txs, ds.instruments));
+  // The core memoizes one engine per input object: every call below shares the ledger pass.
+  const E = input;
+
+  const issues = attempt('validateTransactions', () => core.validateTransactions(txs, ds.instruments, { today: ds.asOf }));
   if (issues) out.issues = issues;
 
-  out.valuation = attempt('valuePortfolio', () => core.valuePortfolio(input, ds.asOf));
+  out.valuation = attempt('valuePortfolio', () => core.valuePortfolio(E, ds.asOf));
 
-  const prev = previousBusinessDay(ds.asOf);
   const periods: [SummaryKey, core.PeriodKey][] = [
     ['MTD', 'MTD'],
     ['YTD', 'YTD'],
@@ -194,38 +268,29 @@ export function computeAnalysis(ds: Dataset): Analysis {
     ['SI', 'SI'],
   ];
   for (const [key, period] of periods) {
-    const s = attempt(`performanceSummary.${key}`, () => core.performanceSummary(input, period, ds.asOf));
+    const s = attempt(`performanceSummary.${key}`, () => core.performanceSummary(E, period, ds.asOf));
     if (s) out.summaries[key] = s;
-  }
-  if (prev >= firstDate) {
-    const s = attempt('performanceSummary.DAY', () =>
-      core.performanceSummary(input, 'CUSTOM', ds.asOf, { from: prev, to: ds.asOf }),
-    );
-    if (s) out.summaries.DAY = s;
   }
 
   const spanDays = (Date.parse(ds.asOf) - Date.parse(firstDate)) / 86_400_000;
-  out.series =
-    attempt('valueSeries', () =>
-      core.valueSeries(input, { from: firstDate, to: ds.asOf, step: spanDays > 730 ? 'week' : 'day' }),
-    ) ?? [];
+  out.series = attempt('valueSeries', () => core.valueSeries(E, { from: firstDate, to: ds.asOf, step: spanDays > 730 ? 'week' : 'day' })) ?? [];
   const dailyFrom = addDays(ds.asOf, -400) > firstDate ? addDays(ds.asOf, -400) : firstDate;
   out.dailySeries =
-    spanDays > 730
-      ? (attempt('valueSeries.daily', () => core.valueSeries(input, { from: dailyFrom, to: ds.asOf, step: 'day' })) ?? [])
-      : out.series;
+    spanDays > 730 ? (attempt('valueSeries.daily', () => core.valueSeries(E, { from: dailyFrom, to: ds.asOf, step: 'day' })) ?? []) : out.series;
+  if (out.inflationIndex && market.indexLevel) {
+    out.series = withRealInvested(out.series, market, out.inflationIndex);
+    out.dailySeries = withRealInvested(out.dailySeries, market, out.inflationIndex);
+  }
 
   const benchmarks = ds.benchmarks.filter((b) => ds.prices.some((p) => p.instrumentId === b));
-  out.monthly =
-    attempt('monthlyPerformance', () =>
-      core.monthlyPerformance(input, { to: ds.asOf.slice(0, 7), benchmarks }),
-    ) ?? [];
+  out.monthly = attempt('monthlyPerformance', () => core.monthlyPerformance(E, { to: ds.asOf.slice(0, 7), benchmarks, asOf: ds.asOf })) ?? [];
 
   if (out.monthly.length) {
     out.risk = attempt('riskMetrics', () =>
       core.riskMetrics(out.monthly, {
         riskFreeAnnual: ds.riskFreeRate,
         benchmarkMonthly: benchmarks[0] ? out.monthly.map((m) => m.benchmarkReturns?.[benchmarks[0]!] ?? 0) : undefined,
+        benchmarkId: benchmarks[0],
       }),
     );
     for (const b of benchmarks) {
@@ -253,10 +318,107 @@ export function computeAnalysis(ds: Dataset): Analysis {
     );
   }
 
-  out.income = attempt('incomeEvents', () => core.incomeEvents(input)) ?? [];
-  out.realized = attempt('realizedGains', () => core.realizedGains(input)) ?? [];
+  out.positions = attempt('positionPerformance', () => core.positionPerformance(E, 'SI', ds.asOf)) ?? [];
+  out.positionsYtd = attempt('positionPerformance.YTD', () => core.positionPerformance(E, 'YTD', ds.asOf)) ?? [];
+  out.income = attempt('incomeEvents', () => core.incomeEvents(E)) ?? [];
+  out.realized = attempt('realizedGains', () => core.realizedGains(E)) ?? [];
+
+  if (out.valuation) out.upcomingDividends = upcomingDividends(ds, out.valuation, out.income, market);
+  const sug = attempt('applyCorporateActions', () => suggestions(ds, txs));
+  if (sug) {
+    out.suggestions = sug.suggestions;
+    out.reviewActions = sug.review;
+  }
+  out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
 
   return finish(out, t0);
+}
+
+/** Adds the inflation-adjusted invested line: previous value grown by inflation + new net flows. */
+function withRealInvested(series: SeriesPoint[], market: MarketData, index: IndexId): SeriesPoint[] {
+  let real: number | undefined;
+  let prev: SeriesPoint | undefined;
+  return series.map((p) => {
+    if (!prev || real === undefined) real = p.netInvestedBase;
+    else {
+      const l0 = market.indexLevel?.(index, prev.date);
+      const l1 = market.indexLevel?.(index, p.date);
+      const g = l0 && l1 ? l1 / l0 : 1;
+      real = real * g + (p.netInvestedBase - prev.netInvestedBase);
+    }
+    prev = p;
+    return { ...p, investedRealBase: real };
+  });
+}
+
+function suggestions(ds: Dataset, txs: Transaction[]): { suggestions: Suggestion[]; review: CorporateAction[] } {
+  const actions = ds.corporateActions ?? [];
+  if (!actions.length) return { suggestions: [], review: [] };
+  const dismissed = new Set(ds.dismissedSuggestions ?? []);
+  const pids = [...new Set(txs.map((t) => t.portfolioId))].filter((pid) => !ds.portfolios.find((p) => p.id === pid)?.isDemo);
+  const outS: Suggestion[] = [];
+  const review = new Map<string, CorporateAction>();
+  for (const pid of pids) {
+    const r = core.applyCorporateActions(
+      txs.filter((t) => t.portfolioId === pid),
+      actions,
+      ds.instruments,
+      { portfolioId: pid },
+    );
+    for (const t of r.suggested) {
+      if (t.date > ds.asOf) continue;
+      const key = `${pid}|${t.id}`;
+      if (!dismissed.has(key)) outS.push({ key, transaction: t });
+    }
+    for (const a of r.review) review.set(`${a.instrumentId}|${a.type}|${a.date}`, a);
+  }
+  return { suggestions: outS.sort((a, b) => (a.transaction.date < b.transaction.date ? 1 : -1)), review: [...review.values()] };
+}
+
+function upcomingDividends(ds: Dataset, v: Valuation, income: IncomeEvent[], market: MarketData): UpcomingDividend[] {
+  const held = new Map(v.holdings.filter((h) => h.quantity > 0).map((h) => [h.instrumentId, h]));
+  const inst = new Map(ds.instruments.map((i) => [i.id, i]));
+  const horizon = addDays(ds.asOf, 365);
+  // Effective withholding observed in the user's own history per instrument.
+  const observed = new Map<string, { g: number; t: number }>();
+  for (const e of income) {
+    if (!e.instrumentId || e.type !== 'DIVIDEND' || !e.gross) continue;
+    const o = observed.get(e.instrumentId) ?? { g: 0, t: 0 };
+    o.g += e.gross;
+    o.t += e.taxes;
+    observed.set(e.instrumentId, o);
+  }
+  const rate = (id: string) => {
+    const o = observed.get(id);
+    if (o && o.g > 0) return o.t / o.g;
+    return DEFAULT_WITHHOLDING[inst.get(id)?.country ?? ''] ?? 0;
+  };
+  const out: UpcomingDividend[] = [];
+  const announced = new Set<string>();
+  for (const a of ds.corporateActions ?? []) {
+    if (a.type !== 'DIVIDEND' || !a.amountPerShare) continue;
+    const h = held.get(a.instrumentId);
+    if (!h) continue;
+    const pay = a.payDate ?? a.date;
+    if (pay <= ds.asOf || pay > horizon) continue;
+    const ccy = a.currency ?? inst.get(a.instrumentId)?.currency ?? h.currency;
+    const fx = market.fx(ccy, ds.reportingCurrency, ds.asOf) ?? 0;
+    const w = a.subtype === 'JCP' ? 0.15 : rate(a.instrumentId);
+    const gross = a.amountPerShare * h.quantity * fx;
+    out.push({ instrumentId: a.instrumentId, exDate: a.exDate ?? a.date, payDate: pay, amountPerShare: a.amountPerShare, currency: ccy, quantity: h.quantity, grossBase: gross, netBase: gross * (1 - w), withholdingRate: w, source: 'provider' });
+    announced.add(`${a.instrumentId}|${pay.slice(0, 7)}`);
+  }
+  // Projection: last year's payments of instruments still held, one year later.
+  const from = addDays(ds.asOf, -365);
+  for (const e of income) {
+    if (e.type !== 'DIVIDEND' || !e.instrumentId || e.date <= from || e.date > ds.asOf) continue;
+    const h = held.get(e.instrumentId);
+    if (!h) continue;
+    const pay = addDays(e.date, 365);
+    if (announced.has(`${e.instrumentId}|${pay.slice(0, 7)}`)) continue;
+    out.push({ instrumentId: e.instrumentId, payDate: pay, currency: e.currency, quantity: h.quantity, grossBase: e.net ? (e.netBase * e.gross) / e.net : e.netBase, netBase: e.netBase, withholdingRate: e.gross ? e.taxes / e.gross : 0, source: 'history' });
+  }
+  return out.sort((a, b) => (a.payDate < b.payDate ? -1 : 1));
 }
 
 function computeMovers(v: Valuation, ds: Dataset, market: MarketData): Mover[] {
@@ -278,6 +440,7 @@ function computeMovers(v: Valuation, ds: Dataset, market: MarketData): Mover[] {
     movers.push({
       instrumentId: h.instrumentId,
       date: last[0],
+      prevDate: prev[0],
       price: last[1],
       prevPrice: prev[1],
       changePct: last[1] / prev[1] - 1,

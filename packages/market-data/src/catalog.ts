@@ -6,19 +6,12 @@
  */
 import type { Instrument } from '@pm/core';
 import catalogJson from './catalog/instruments.json';
+import { normalizeText } from './text';
 import type { Benchmark, Catalog, SearchResult } from './types';
 
 export const CATALOG: Catalog = catalogJson as Catalog;
 
-/** Lowercase, strip accents and punctuation. */
-export function normalizeText(s: string): string {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9^]+/g, ' ')
-    .trim();
-}
+export { normalizeText };
 
 export class InstrumentCatalog {
   private readonly byId = new Map<string, Instrument>();
@@ -79,7 +72,8 @@ export class InstrumentCatalog {
       else if (symbol.startsWith(q)) score = 80 - Math.min(20, symbol.length - q.length);
       else if (inst.isin === isinQ) score = 90;
       else if (name.split(' ').some((w) => w.startsWith(q))) score = 60;
-      else if (q.length >= 3 && name.includes(q)) score = 40;
+      // Substring matches only for longer queries ('isa' must not match 'Visa').
+      else if (q.length >= 5 && name.includes(q)) score = 40;
       else if (q.includes(' ') && q.split(' ').every((part) => name.includes(part))) score = 35;
       if (score > 0) scored.push({ inst, score });
     }

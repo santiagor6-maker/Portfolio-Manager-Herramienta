@@ -20,7 +20,7 @@ export const DEMO_FIC: Instrument = {
   pricing: 'manual',
 };
 
-type DemoLike = Pick<DemoData, 'portfolio' | 'instruments' | 'transactions' | 'prices' | 'fx'>;
+type DemoLike = Pick<DemoData, 'portfolio' | 'instruments' | 'transactions' | 'prices' | 'fx'> & Partial<Pick<DemoData, 'marketInput'>>;
 
 export function normaliseDemo(d: DemoLike): SeedData {
   const lastDate = d.prices.reduce((m, s) => {
@@ -69,6 +69,7 @@ export function normaliseDemo(d: DemoLike): SeedData {
     prices: d.prices,
     fx: d.fx,
     manualPrices,
+    indexSeries: d.marketInput?.indexSeries ?? [],
   };
 }
 

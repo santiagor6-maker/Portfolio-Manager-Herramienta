@@ -4,11 +4,14 @@
  * ranges, deterministic pseudo-random noise); they are not historical market data.
  *
  * Colombian investor (base COP) with accounts at a Colombian broker (BVC), a US broker
- * (USD/EUR) and a Brazilian broker (B3). Month-end series 2023-01 .. 2026-09.
+ * (USD/EUR) and a Brazilian broker (B3). Month-end series 2023-01 .. 2026-09, two CDTs valued by
+ * accrual (redeemed automatically at maturity), synthetic IPC (inflation) and IBR series.
+ * Bancolombia appears as Grupo Cibest (PFCIBEST), its listing after the holding reorganization.
  */
 import type {
   CurrencyCode,
   FxSeries,
+  IndexSeries,
   Instrument,
   ISODate,
   MarketData,
@@ -110,7 +113,7 @@ function path(seedKey: string, keys: Record<YearMonth, number>, sigma: number, d
 
 const INSTRUMENTS: Instrument[] = [
   { id: 'XBOG:ECOPETROL', symbol: 'ECOPETROL', name: 'Ecopetrol S.A.', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity', sector: 'Energía', industry: 'Petróleo y gas integrado', isin: 'COC04PA00016', providerSymbols: { yahoo: 'ECOPETROL.CL' } },
-  { id: 'XBOG:PFBCOLOM', symbol: 'PFBCOLOM', name: 'Bancolombia S.A. Preferencial', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity', sector: 'Financiero', industry: 'Bancos', isin: 'COB07PA00078', providerSymbols: { yahoo: 'PFBCOLOM.CL' } },
+  { id: 'XBOG:PFCIBEST', symbol: 'PFCIBEST', name: 'Grupo Cibest S.A. Preferencial (antes Bancolombia PFBCOLOM)', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity', sector: 'Financiero', industry: 'Bancos', providerSymbols: { yahoo: 'PFCIBEST.CL' } },
   { id: 'XBOG:ISA', symbol: 'ISA', name: 'Interconexión Eléctrica S.A. E.S.P.', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity', sector: 'Servicios públicos', industry: 'Transmisión de energía', isin: 'COE15PA00026', providerSymbols: { yahoo: 'ISA.CL' } },
   { id: 'BVMF:PETR4', symbol: 'PETR4', name: 'Petrobras PN', exchange: 'BVMF', currency: 'BRL', country: 'BR', assetClass: 'equity', sector: 'Energía', industry: 'Petróleo y gas integrado', isin: 'BRPETRACNPR6', providerSymbols: { yahoo: 'PETR4.SA' } },
   { id: 'BVMF:ITUB4', symbol: 'ITUB4', name: 'Itaú Unibanco PN', exchange: 'BVMF', currency: 'BRL', country: 'BR', assetClass: 'equity', sector: 'Financiero', industry: 'Bancos', isin: 'BRITUBACNPR1', providerSymbols: { yahoo: 'ITUB4.SA' } },
@@ -120,13 +123,37 @@ const INSTRUMENTS: Instrument[] = [
   { id: 'ARCX:VOO', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', exchange: 'ARCX', currency: 'USD', country: 'US', assetClass: 'etf', sector: 'Diversificado', isin: 'US9229083632', providerSymbols: { yahoo: 'VOO' } },
   { id: 'XAMS:ASML', symbol: 'ASML', name: 'ASML Holding N.V.', exchange: 'XAMS', currency: 'EUR', country: 'NL', assetClass: 'equity', sector: 'Tecnología', industry: 'Semiconductores', isin: 'NL0010273215', providerSymbols: { yahoo: 'ASML.AS' } },
   { id: 'XMAD:IBE', symbol: 'IBE', name: 'Iberdrola S.A.', exchange: 'XMAD', currency: 'EUR', country: 'ES', assetClass: 'equity', sector: 'Servicios públicos', industry: 'Electricidad', isin: 'ES0144580Y14', providerSymbols: { yahoo: 'IBE.MC' } },
+  {
+    id: 'MANUAL:CDT-2024',
+    symbol: 'CDT 12,0 % E.A.',
+    name: 'CDT Banco de ejemplo 12,0 % E.A. a 360 días',
+    exchange: 'MANUAL',
+    currency: 'COP',
+    country: 'CO',
+    assetClass: 'fixed_income',
+    sector: 'Renta fija',
+    pricing: 'manual',
+    accrual: { kind: 'fixed', annualRate: 0.12, dayCount: 'ACT/365', issueDate: '2024-02-15', maturity: '2025-02-09' },
+  },
+  {
+    id: 'MANUAL:CDT-2025',
+    symbol: 'CDT 10,5 % E.A.',
+    name: 'CDT Banco de ejemplo 10,5 % E.A. a 360 días',
+    exchange: 'MANUAL',
+    currency: 'COP',
+    country: 'CO',
+    assetClass: 'fixed_income',
+    sector: 'Renta fija',
+    pricing: 'manual',
+    accrual: { kind: 'fixed', annualRate: 0.105, dayCount: 'ACT/365', issueDate: '2025-03-10', maturity: '2026-03-05' },
+  },
   { id: 'XBOG:ICOLCAP', symbol: 'ICOLCAP', name: 'iShares MSCI COLCAP (referencia)', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'etf', sector: 'Diversificado', providerSymbols: { yahoo: 'ICOLCAP.CL' } },
 ];
 
 /** Keyframes in pre-split terms (WEGE3 series is halved from the split date on). */
 const PRICE_KEYS: Record<string, { keys: Record<YearMonth, number>; sigma: number; decimals: number }> = {
   'XBOG:ECOPETROL': { keys: { '2023-01': 2450, '2023-06': 2300, '2023-12': 2600, '2024-06': 2400, '2024-12': 1900, '2025-06': 1850, '2025-12': 2000, '2026-09': 2150 }, sigma: 0.035, decimals: 0 },
-  'XBOG:PFBCOLOM': { keys: { '2023-01': 30500, '2023-06': 27000, '2023-12': 31000, '2024-06': 34500, '2024-12': 36500, '2025-06': 40000, '2025-12': 45000, '2026-09': 48000 }, sigma: 0.03, decimals: 0 },
+  'XBOG:PFCIBEST': { keys: { '2023-01': 30500, '2023-06': 27000, '2023-12': 31000, '2024-06': 34500, '2024-12': 36500, '2025-06': 40000, '2025-12': 45000, '2026-09': 48000 }, sigma: 0.03, decimals: 0 },
   'XBOG:ISA': { keys: { '2023-01': 16500, '2023-06': 15800, '2023-12': 15200, '2024-06': 17000, '2024-12': 16200, '2025-06': 17500, '2025-12': 18500, '2026-09': 19200 }, sigma: 0.025, decimals: 0 },
   'XBOG:ICOLCAP': { keys: { '2023-01': 11000, '2023-06': 10600, '2023-12': 11500, '2024-06': 12800, '2024-12': 13000, '2025-06': 15000, '2025-12': 16500, '2026-09': 17000 }, sigma: 0.02, decimals: 0 },
   'BVMF:PETR4': { keys: { '2023-01': 24, '2023-06': 28, '2023-12': 37, '2024-06': 37, '2024-12': 37.5, '2025-06': 31, '2025-12': 32, '2026-09': 34 }, sigma: 0.04, decimals: 2 },
@@ -173,7 +200,25 @@ export function createDemoData(): DemoData {
     const values = path(`${c.base}/${c.quote}`, c.keys, c.sigma, c.decimals, c.clamp);
     return { base: c.base, quote: c.quote, source: c.source, points: ends.map((date, i) => ({ date, rate: values[i]! })) };
   });
-  const marketInput: MarketDataInput = { prices, fx };
+  // Synthetic Colombian CPI (monthly variation, %) and IBR overnight (annual nominal %, ACT/360).
+  const ipcMonthly = (ym: YearMonth): number => {
+    const k = monthIndex(ym);
+    const annual = Math.max(0.045, 0.13 - 0.0035 * k); // ~13 % in early 2023 down to ~5 %
+    return Math.round((Math.pow(1 + annual, 1 / 12) - 1) * 100 * 10000) / 10000;
+  };
+  const indexSeries: IndexSeries[] = [
+    { id: 'IPC_CO', kind: 'periodRate', period: 'month', unit: 'percent', currency: 'COP', source: 'demo', points: MONTHS.map((ym) => ({ date: `${ym}-01`, value: ipcMonthly(ym) })) },
+    {
+      id: 'IBR',
+      kind: 'annualRate',
+      dayCount: 'ACT/360',
+      unit: 'percent',
+      currency: 'COP',
+      source: 'demo',
+      points: MONTHS.map((ym) => ({ date: `${ym}-01`, value: Math.round(Math.max(8.9, 12.9 - 0.11 * monthIndex(ym)) * 100) / 100 })),
+    },
+  ];
+  const marketInput: MarketDataInput = { prices, fx, indexSeries };
   const market = createMarketDataImpl(marketInput);
 
   /** Trade price: linear interpolation between month-end closes (unadjusted). */
@@ -243,7 +288,7 @@ export function createDemoData(): DemoData {
 
   // Trades
   buy('2023-02-06', 'XBOG:ECOPETROL', 3000);
-  buy('2023-02-06', 'XBOG:PFBCOLOM', 200);
+  buy('2023-02-06', 'XBOG:PFCIBEST', 200);
   buy('2023-02-06', 'XBOG:ISA', 300);
   buy('2023-02-08', 'XNAS:AAPL', 20);
   buy('2023-02-08', 'XNAS:MSFT', 10);
@@ -254,12 +299,14 @@ export function createDemoData(): DemoData {
   buy('2023-05-10', 'BVMF:ITUB4', 300);
   buy('2023-05-10', 'BVMF:WEGE3', 250);
   buy('2023-07-12', 'XBOG:ECOPETROL', 1000);
-  buy('2023-07-12', 'XBOG:PFBCOLOM', 100);
+  buy('2023-07-12', 'XBOG:PFCIBEST', 100);
   buy('2023-09-20', 'ARCX:VOO', 5);
   buy('2023-09-20', 'XNAS:MSFT', 2);
   buy('2023-10-12', 'XBOG:ISA', 200);
   buy('2023-10-12', 'XBOG:ECOPETROL', 1000);
-  buy('2024-01-17', 'XBOG:PFBCOLOM', 150);
+  buy('2024-01-17', 'XBOG:PFCIBEST', 150);
+  deposit('2024-02-14', 10_000_000, 'COP', ACCT_CO, 'Aporte para CDT');
+  drafts.push({ date: '2024-02-15', type: 'BUY', instrumentId: 'MANUAL:CDT-2024', quantity: 1, price: 10_000_000, amount: 10_000_000, currency: 'COP', account: ACCT_CO, note: 'Constitución CDT (vence 2025-02-09, redención automática)' });
   buy('2024-02-14', 'BVMF:PETR4', 200);
   buy('2024-02-14', 'BVMF:ITUB4', 100);
   buy('2024-03-20', 'XNAS:AAPL', 8);
@@ -272,19 +319,20 @@ export function createDemoData(): DemoData {
   sell('2024-08-20', 'BVMF:PETR4', 300);
   buy('2024-09-18', 'XNAS:MSFT', 3);
   buy('2024-09-18', 'ARCX:VOO', 3);
-  buy('2024-10-15', 'XBOG:PFBCOLOM', 120);
+  buy('2024-10-15', 'XBOG:PFCIBEST', 120);
   buy('2024-11-12', 'BVMF:WEGE3', 200);
   buy('2025-01-20', 'XBOG:ECOPETROL', 2500);
   buy('2025-02-12', 'BVMF:ITUB4', 200);
   buy('2025-03-18', 'XNAS:AAPL', 10);
+  drafts.push({ date: '2025-03-10', type: 'BUY', instrumentId: 'MANUAL:CDT-2025', quantity: 1, price: 12_000_000, amount: 12_000_000, currency: 'COP', account: ACCT_CO, note: 'Constitución CDT (vence 2026-03-05, redención automática)' });
   buy('2025-04-14', 'XBOG:ISA', 300);
   sell('2025-06-10', 'XBOG:ECOPETROL', 3000);
-  buy('2025-07-15', 'XBOG:PFBCOLOM', 100);
+  buy('2025-07-15', 'XBOG:PFCIBEST', 100);
   buy('2025-09-16', 'ARCX:VOO', 4);
   buy('2025-09-16', 'XNAS:MSFT', 1);
   buy('2025-10-14', 'XBOG:ISA', 200);
   drafts.push({ date: '2025-12-15', type: 'WITHDRAWAL', amount: 5_000_000, currency: 'COP', account: ACCT_CO, note: 'Retiro para gastos de fin de año' });
-  buy('2026-02-10', 'XBOG:PFBCOLOM', 50);
+  buy('2026-02-10', 'XBOG:PFCIBEST', 50);
   buy('2026-03-17', 'XAMS:ASML', 1);
   buy('2026-04-14', 'XBOG:ECOPETROL', 2000);
   buy('2026-07-14', 'XBOG:ISA', 150);
@@ -298,7 +346,7 @@ export function createDemoData(): DemoData {
   // Dividends (amount per share by year, withholding rate) on the given months, day 15/20.
   const DIVS: { id: string; months: number[]; day: number; dps: Record<number, number>; wht: number; note: string }[] = [
     { id: 'XBOG:ECOPETROL', months: [4], day: 20, dps: { 2023: 590, 2024: 312, 2025: 214, 2026: 150 }, wht: 0.1, note: 'Dividendo ordinario' },
-    { id: 'XBOG:PFBCOLOM', months: [1, 4, 7, 10], day: 15, dps: { 2023: 891, 2024: 936, 2025: 1012, 2026: 1040 }, wht: 0.1, note: 'Dividendo trimestral' },
+    { id: 'XBOG:PFCIBEST', months: [1, 4, 7, 10], day: 15, dps: { 2023: 891, 2024: 936, 2025: 1012, 2026: 1040 }, wht: 0.1, note: 'Dividendo trimestral' },
     { id: 'XBOG:ISA', months: [7, 12], day: 15, dps: { 2023: 1000, 2024: 1080, 2025: 1150, 2026: 1200 }, wht: 0.1, note: 'Dividendo semestral' },
     { id: 'BVMF:PETR4', months: [2, 5, 8, 11], day: 20, dps: { 2023: 1.5, 2024: 1.0, 2025: 0.7, 2026: 0.6 }, wht: 0, note: 'Dividendos' },
     { id: 'BVMF:ITUB4', months: [3, 6, 9, 12], day: 15, dps: { 2023: 0.35, 2024: 0.38, 2025: 0.4, 2026: 0.42 }, wht: 0.15, note: 'JCP (IR 15%)' },

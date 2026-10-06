@@ -2,12 +2,16 @@
  * Shared machinery for presets: parse context (per-file number/date formats, issue factory),
  * header lookup by aliases, and the preset definition interface.
  */
-import { dateFormatLabel, detectDateFormat, parseDate } from '../dates';
+import { dateFormatLabel, dateReadings, detectDateFormat, hasAmPm, isAmbiguousDate, parseDate } from '../dates';
 import { makeIssue } from '../i18n';
-import { detectNumberFormat, parseNumber } from '../numbers';
+import { detectNumberFormat, isAmbiguousNumber, parseNumber } from '../numbers';
 import type {
   Cell,
+  ConfirmationRequest,
+  CorporateActionSuggestion,
   DateFormat,
+  InstrumentHint,
+  ReportedPosition,
   ImportIssue,
   ImportOptions,
   Locale,
@@ -30,6 +34,13 @@ export class ParseContext {
   numberFormat: NumberFormat;
   dateFormat: DateFormat;
   readonly fileIssues: ImportIssue[] = [];
+  /** Delimiter of the CSV source (hint for the decimal separator). */
+  delimiter?: string;
+  /** Pending format confirmations (block the import until answered). */
+  readonly confirmations: ConfirmationRequest[] = [];
+  /** Broker-reported positions/cash (reconciliation). */
+  reported?: { source: string; asOf?: string; positions: (ReportedPosition & { hint?: InstrumentHint })[]; cash: { currency: string; amount: number }[] };
+  readonly corporateActions: CorporateActionSuggestion[] = [];
 
   constructor(
     readonly table: RawTable,
@@ -65,6 +76,163 @@ export class ParseContext {
       this.fileIssues.push(this.issue('AMBIGUOUS_DATE_FORMAT', 'warning', { format: dateFormatLabel(det.format) }));
     }
     return det.format;
+  }
+
+  /**
+   * Evidence-based date-order detection over columns `cols` of rows `from..end`.
+   * Order of evidence: forced option → fixed preset format → unambiguous samples (day > 12) →
+   * AM/PM times → trade/settlement ordering → chronological monotony. If still ambiguous the
+   * import is blocked with a `dateFormat` confirmation request (unless `allowAmbiguous`).
+   */
+  detectDates(cols: (number | undefined)[], from: number, hint: DateFormat, opts: { fixed?: boolean; settleCol?: number; headerRow?: number } = {}): DateFormat {
+    if (this.options.dateFormat) return (this.dateFormat = this.options.dateFormat);
+    if (opts.fixed) return (this.dateFormat = hint);
+    const cs = cols.filter((c): c is number => c !== undefined);
+    const cells: { v: Cell; line: number; r: number }[] = [];
+    for (let r = from; r < this.table.rows.length; r++) {
+      for (const c of cs) cells.push({ v: this.table.rows[r]![c] ?? null, line: this.table.lines[r] ?? r + 1, r });
+    }
+    const det = detectDateFormat(cells.map((x) => x.v), hint);
+    if (det.inconsistent) {
+      this.dateFormat = det.format;
+      this.fileIssues.push(this.issue('AMBIGUOUS_DATE_FORMAT', 'warning', { format: dateFormatLabel(det.format) }));
+      return det.format;
+    }
+    if (det.confident || det.ambiguous === 0) return (this.dateFormat = det.format === 'YMD' && det.ambiguous ? hint : det.format);
+    // All a/b dates are ambiguous: look for more evidence.
+    let dmy = 0;
+    let mdy = 0;
+    if (cells.some((x) => hasAmPm(x.v))) mdy += 10;
+    if (opts.settleCol !== undefined && cs[0] !== undefined) {
+      for (let r = from; r < this.table.rows.length; r++) {
+        const t = dateReadings(this.table.rows[r]![cs[0]] ?? null);
+        const st = dateReadings(this.table.rows[r]![opts.settleCol] ?? null);
+        const ok = (a?: string, b?: string) => !!a && !!b && Date.parse(b) >= Date.parse(a) && Date.parse(b) - Date.parse(a) <= 10 * 86400000;
+        const d = ok(t.DMY, st.DMY);
+        const m = ok(t.MDY, st.MDY);
+        if (d && !m) dmy += 3;
+        if (m && !d) mdy += 3;
+      }
+    }
+    if (cs[0] !== undefined) {
+      const seq = (f: DateFormat) => cells.filter((x) => x.v !== null && cellToString(x.v) !== '').map((x) => parseDate(x.v, f)).filter((d): d is string => !!d);
+      const inversions = (xs: string[]) => {
+        let asc = 0;
+        let desc = 0;
+        for (let i = 1; i < xs.length; i++) {
+          if (xs[i]! < xs[i - 1]!) asc++;
+          if (xs[i]! > xs[i - 1]!) desc++;
+        }
+        return Math.min(asc, desc);
+      };
+      const iD = inversions(seq('DMY'));
+      const iM = inversions(seq('MDY'));
+      if (iD === 0 && iM > 0) dmy += 2;
+      if (iM === 0 && iD > 0) mdy += 2;
+    }
+    if (dmy !== mdy) {
+      this.dateFormat = dmy > mdy ? 'DMY' : 'MDY';
+      this.fileIssues.push(this.issue('DATE_FORMAT_INFERRED', 'info', { format: dateFormatLabel(this.dateFormat) }));
+      return this.dateFormat;
+    }
+    const lang = opts.headerRow !== undefined ? headerLanguage(this.table.rows[opts.headerRow] ?? []) : undefined;
+    const usd = this.table.rows.slice(from, from + 50).some((r) => r.some((c) => /^(USD|US\$)$/i.test(cellToString(c))));
+    const suggested: DateFormat = lang === 'en' && usd ? 'MDY' : lang === 'en' ? 'MDY' : hint === 'YMD' ? 'DMY' : hint;
+    this.dateFormat = suggested;
+    const affected = cells.filter((x) => isAmbiguousDate(x.v));
+    if (this.options.allowAmbiguous) {
+      this.fileIssues.push(this.issue('AMBIGUOUS_DATE_FORMAT', 'warning', { format: dateFormatLabel(suggested) }));
+      return suggested;
+    }
+    const other: DateFormat = suggested === 'DMY' ? 'MDY' : 'DMY';
+    this.confirmations.push({
+      kind: 'dateFormat',
+      candidates: [suggested, other],
+      suggested,
+      reason: lang === 'en' ? 'Encabezados en inglés: se sugiere MM/DD/AAAA.' : 'Encabezados en español/portugués: se sugiere DD/MM/AAAA.',
+      samples: affected.slice(0, 5).map((x) => ({
+        line: x.line,
+        value: cellToString(x.v),
+        readings: { DMY: parseDate(x.v, 'DMY') ?? '', MDY: parseDate(x.v, 'MDY') ?? '' },
+      })),
+      affectedLines: [...new Set(affected.map((x) => x.line))],
+    });
+    this.fileIssues.push(this.issue('CONFIRM_DATE_FORMAT', 'warning', { format: dateFormatLabel(suggested) }));
+    return suggested;
+  }
+
+  /**
+   * Evidence-based decimal-separator detection. Evidence: unambiguous samples ("1.234,56", "12,5"),
+   * row cross-checks quantity × price ≈ amount under each reading, optional reference prices,
+   * ';' delimiter. Language/currency only pick the suggestion; if values like "1.000" stay
+   * ambiguous the import is blocked with a `numberFormat` confirmation (unless `allowAmbiguous`).
+   */
+  detectNumbers(
+    cols: (number | undefined)[],
+    from: number,
+    hint: NumberFormat,
+    opts: { fixed?: boolean; triple?: { q?: number; p?: number; a?: number }; headerRow?: number } = {},
+  ): NumberFormat {
+    if (this.options.numberFormat) return (this.numberFormat = this.options.numberFormat);
+    if (opts.fixed) return (this.numberFormat = hint);
+    const cs = cols.filter((c): c is number => c !== undefined);
+    const cells: { v: Cell; line: number }[] = [];
+    for (let r = from; r < this.table.rows.length; r++) {
+      for (const c of cs) cells.push({ v: this.table.rows[r]![c] ?? null, line: this.table.lines[r] ?? r + 1 });
+    }
+    const det = detectNumberFormat(cells.map((x) => x.v), hint);
+    let dot = det.votes.dot;
+    let comma = det.votes.comma;
+    const t = opts.triple;
+    if (t && t.q !== undefined && t.p !== undefined && t.a !== undefined) {
+      for (let r = from; r < this.table.rows.length; r++) {
+        const row = this.table.rows[r]!;
+        const [q, p, a] = [row[t.q] ?? null, row[t.p] ?? null, row[t.a] ?? null];
+        if (![q, p, a].some((x) => isAmbiguousNumber(x))) continue;
+        const fits = (f: NumberFormat) => {
+          const [nq, np, na] = [parseNumber(q, f), parseNumber(p, f), parseNumber(a, f)];
+          if (nq === undefined || np === undefined || na === undefined || [nq, np, na].some(Number.isNaN)) return false;
+          const exp = Math.abs(nq * np);
+          return Math.abs(exp - Math.abs(na)) <= Math.max(0.011, 0.03 * Math.abs(na));
+        };
+        const fd = fits('dot');
+        const fc = fits('comma');
+        if (fd && !fc) dot += 5;
+        if (fc && !fd) comma += 5;
+      }
+    }
+    if (comma !== dot) {
+      this.numberFormat = comma > dot ? 'comma' : 'dot';
+      return this.numberFormat;
+    }
+    const affected = cells.filter((x) => isAmbiguousNumber(x.v));
+    if (!affected.length) return (this.numberFormat = hint);
+    if (this.delimiter === ';') {
+      this.fileIssues.push(this.issue('NUMBER_FORMAT_INFERRED', 'info', { separator: ',' }));
+      return (this.numberFormat = 'comma');
+    }
+    const lang = opts.headerRow !== undefined ? headerLanguage(this.table.rows[opts.headerRow] ?? []) : undefined;
+    const ccy = this.table.rows.slice(from, from + 50).flat().map((c) => cellToString(c).toUpperCase());
+    const suggested: NumberFormat = ccy.includes('BRL') || ccy.includes('EUR') ? 'comma' : ccy.includes('USD') ? 'dot' : lang === 'en' ? 'dot' : lang ? 'comma' : hint;
+    this.numberFormat = suggested;
+    if (this.options.allowAmbiguous) {
+      this.fileIssues.push(this.issue('AMBIGUOUS_NUMBER_FORMAT', 'warning', { separator: suggested === 'comma' ? ',' : '.' }));
+      return suggested;
+    }
+    this.confirmations.push({
+      kind: 'numberFormat',
+      candidates: [suggested, suggested === 'comma' ? 'dot' : 'comma'],
+      suggested,
+      reason: suggested === 'comma' ? 'Se sugiere coma decimal (1.234,56).' : 'Se sugiere punto decimal (1,234.56).',
+      samples: affected.slice(0, 5).map((x) => ({
+        line: x.line,
+        value: cellToString(x.v),
+        readings: { comma: String(parseNumber(x.v, 'comma')), dot: String(parseNumber(x.v, 'dot')) },
+      })),
+      affectedLines: [...new Set(affected.map((x) => x.line))],
+    });
+    this.fileIssues.push(this.issue('CONFIRM_NUMBER_FORMAT', 'warning', { separator: suggested === 'comma' ? ',' : '.' }));
+    return suggested;
   }
 
   /** Parse a number; on garbage adds an INVALID_NUMBER error to the row and returns undefined. */
@@ -164,3 +332,18 @@ export function sum(...ns: (number | undefined)[]): number | undefined {
 }
 
 export const TOTAL_ROW_RE = /^(total|totais|totales|subtotal|sub total|saldo|grand total|transactions total)\b/i;
+
+const EN_WORDS = /^(date|trade date|action|symbol|quantity|qty|price|amount|currency|description|fees|commission|side|type|shares|total)$/;
+const ESPT_WORDS = /^(fecha|data|cantidad|quantidade|precio|preco|valor|moneda|moeda|operacion|operacao|especie|ativo|comision|corretagem|tipo|monto|descripcion|titulos|simbolo|nemotecnico)$/;
+
+/** Language of a header row: 'en' or 'es' (es/pt) or undefined. */
+export function headerLanguage(row: Cell[]): 'en' | 'es' | undefined {
+  let en = 0;
+  let es = 0;
+  for (const c of row) {
+    const h = normalizeText(cellToString(c));
+    if (EN_WORDS.test(h)) en++;
+    if (ESPT_WORDS.test(h)) es++;
+  }
+  return en > es ? 'en' : es > en ? 'es' : undefined;
+}

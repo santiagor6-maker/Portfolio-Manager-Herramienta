@@ -185,7 +185,7 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
     if (years >= 1 - 1e-12 && twr > -1) p.twrAnnualized = Math.pow(1 + twr, 1 / years) - 1;
     if (x.rate !== undefined) {
       p.irr = x.rate;
-      p.irrPeriod = Math.pow(1 + x.rate, years) - 1;
+      p.irrPeriod = Math.pow(1 + x.rate, yearFraction(isoToDay(cf[0]!.date), toDay)) - 1;
     }
     const denom = startV + invested;
     if (denom > eps) p.simpleReturn = totalReturn / denom;

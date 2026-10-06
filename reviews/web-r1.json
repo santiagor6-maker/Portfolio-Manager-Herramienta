@@ -1,0 +1,448 @@
+{
+  "part": "web",
+  "round": 1,
+  "score": 6.0,
+  "competitorName": "Sharesight",
+  "competitorScore": 8.0,
+  "approved": false,
+  "gaps": [
+    {
+      "id": "W1",
+      "severity": "alta",
+      "text": "Pulsar Enter en el buscador antes de que lleguen los resultados (o hacer clic en «Crear activo manual», visible mientras carga) crea un activo manual falso en la moneda de reporte, sin precio automático (MSFT, AAPL o ECOPETROL quedan como activos manuales en COP)."
+    },
+    {
+      "id": "W2",
+      "severity": "alta",
+      "text": "No hay reporte PDF ni imprimible, y la impresión de Seguimiento mensual sale rota: la cabecera tapa los KPIs, el mapa de calor pierde los colores y la tabla queda cortada a 6 de 13 columnas."
+    },
+    {
+      "id": "W3",
+      "severity": "alta",
+      "text": "La vista estrella no se ve completa: a 1440 px las columnas de efecto precio, efecto divisa e índice quedan ocultas tras un scroll horizontal dentro de una caja de 640 px, y en el teléfono la tabla mensual solo muestra 2 columnas, sin vista en tarjetas."
+    },
+    {
+      "id": "W4",
+      "severity": "alta",
+      "text": "No hay rentabilidad real frente a IPC/IPCA ni referencias de tasa (CDI, IBR, UVR); para el público de Colombia y Brasil es la comparación principal, y Kinvo y Gorila la muestran."
+    },
+    {
+      "id": "W5",
+      "severity": "media",
+      "text": "El cierre de mes no detecta meses atrasados sin precio de los activos manuales: julio y agosto quedan al costo, toda la ganancia cae en septiembre y el Resumen dice «Todo en orden»."
+    },
+    {
+      "id": "W6",
+      "severity": "media",
+      "text": "El formulario no propone el precio de cierre ni avisa cuando el precio (9 % por debajo del cierre real) o la tasa de cambio (4.000 frente a una TRM de ≈3.700) se desvían del mercado, y no tiene «agregar y nuevo» ni atajos."
+    },
+    {
+      "id": "W7",
+      "severity": "media",
+      "text": "El menú móvil no atrapa el foco, no se cierra con Escape ni mueve el foco al abrirse, y al cambiar de ruta el foco salta a #main, de modo que la cabecera solo se alcanza después de recorrer todo el contenido."
+    },
+    {
+      "id": "W8",
+      "severity": "media",
+      "text": "Dividendos compara el neto del año en curso (enero–septiembre) con el año anterior completo y muestra un engañoso «vs 2025 −27,25 %»."
+    },
+    {
+      "id": "W9",
+      "severity": "media",
+      "text": "La TWR anualizada aparece con dos valores distintos en la misma página (+13,72 % y +13,13 %), y la TIR de 5 días se anualiza a +148 % sin aviso."
+    },
+    {
+      "id": "W10",
+      "severity": "media",
+      "text": "No hay enlace de solo lectura ni sincronización entre dispositivos; los datos solo viven en un navegador."
+    },
+    {
+      "id": "W11",
+      "severity": "media",
+      "text": "Faltan alertas, watchlist, metas, rebalanceo con pesos objetivo y simulación what-if."
+    },
+    {
+      "id": "W12",
+      "severity": "media",
+      "text": "El calendario de dividendos es solo una estimación a partir del historial propio, así que un usuario nuevo no ve los próximos pagos de AAPL aunque el servidor ya entrega los eventos."
+    },
+    {
+      "id": "W13",
+      "severity": "media",
+      "text": "El primer uso es mínimo (no pregunta moneda, residencia ni corredor) y los datos de ejemplo se mezclan con precios en vivo («hoy +1,60 %», «ITUB4 +10,37 %»); además, «hoy» se usa para cambios de varios días."
+    },
+    {
+      "id": "W14",
+      "severity": "baja",
+      "text": "Las tarjetas de Divisas suman con «+» una descomposición multiplicativa (+105 % + −22 % frente a una TWR de 60 %) y muestran porcentajes confusos de 166 % y −66 %."
+    },
+    {
+      "id": "W15",
+      "severity": "baja",
+      "text": "La importación no completa los nombres desde el catálogo («ISA ISA»), y ni la vista previa ni Movimientos muestran retenciones o comisiones."
+    },
+    {
+      "id": "W16",
+      "severity": "baja",
+      "text": "El buscador muestra códigos MIC (XBOG, BVMF, XNAS) en vez de los nombres BVC, B3 y NASDAQ."
+    },
+    {
+      "id": "W17",
+      "severity": "baja",
+      "text": "«Borrar todos los datos» vuelve a cargar el portafolio de ejemplo, y la frescura de datos muestra el servidor «En espera» con punto gris justo después de una actualización correcta."
+    },
+    {
+      "id": "W18",
+      "severity": "baja",
+      "text": "En el teléfono, la cabecera trunca el selector de portafolio y oculta el estado de actualización, y en pt el menú lateral se parte en dos líneas."
+    },
+    {
+      "id": "W19",
+      "severity": "baja",
+      "text": "Los gráficos solo tienen un aria-label genérico, sin tabla de datos ni resumen textual para lectores de pantalla."
+    },
+    {
+      "id": "W20",
+      "severity": "baja",
+      "text": "El bundle principal pesa 993 kB (ECharts completo), la primera carga tarda ≈4,4 s y no hay PWA ni service worker, pese a que la app se presenta como local-first y sin conexión."
+    }
+  ],
+  "matrix": [
+    {
+      "feature": "Tabla mensual (valor, aportes, ganancia, TWR, acumulada)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Mapa de calor mensual con índice",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Efecto precio vs efecto divisa",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "no",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Cambio instantáneo de moneda de reporte",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "no",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Onboarding guiado",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Conexión automática con corredores/B3",
+      "ours": "no",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Importación CSV con detección y duplicados",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Precio sugerido y validación al registrar",
+      "ours": "no",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Reporte PDF / impresión",
+      "ours": "no",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Enlace compartible de solo lectura",
+      "ours": "no",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "partial",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Sincronización multi-dispositivo",
+      "ours": "no",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Alertas y notificaciones",
+      "ours": "no",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Metas",
+      "ours": "no",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "no",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Watchlist",
+      "ours": "no",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "no",
+        "Gorila": "no",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Calendario de dividendos anunciados",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Rebalanceo con pesos objetivo",
+      "ours": "no",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Simulación what-if / proyección",
+      "ours": "no",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "no",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Benchmarks (índices y retorno total)",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Rentabilidad real vs inflación y CDI",
+      "ours": "no",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Vista consolidada multi-portafolio",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Experiencia móvil",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Accesibilidad (teclado, lector de pantalla)",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Modo privado",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes"
+      }
+    },
+    {
+      "feature": "Frescura de datos y metodología visibles",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Funciona sin conexión / datos locales",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "no",
+        "Kinvo": "no"
+      }
+    },
+    {
+      "feature": "Impuestos Colombia y Brasil",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Idiomas es/pt/en",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    },
+    {
+      "feature": "Rendimiento con miles de movimientos",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "partial",
+        "Kinvo": "partial"
+      }
+    }
+  ]
+}

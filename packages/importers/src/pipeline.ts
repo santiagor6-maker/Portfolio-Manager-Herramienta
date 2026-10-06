@@ -1,15 +1,20 @@
 /**
  * Import pipeline: read file → pick table + preset (header signatures) → parse rows → resolve
- * instruments → infer split ratios → validate → hash → de-duplicate → result with per-row preview.
+ * instruments → validate → hash → exact & semantic de-duplication → infer split ratios →
+ * format confirmations → result with per-row preview and broker reconciliation.
  */
 import type { Instrument, Transaction, TransactionType } from '@pm/core';
+import { businessDaysBetween, calendarFor, dayNumber, type CalendarId } from './calendars';
 import { makeIssue } from './i18n';
 import { InstrumentResolver } from './instruments';
 import { suggestMapping } from './mapping';
 import { exchangeCurrency } from './markets';
+import { extractPdf, pdfToTable } from './pdf/extract';
+import { PDF_PARSERS } from './pdf/parsers';
 import { ParseContext, type PresetDefinition } from './presets/common';
-import { PRESETS, getPreset } from './presets/registry';
+import { extractoColombianoPreset } from './presets/extracto-co';
 import { genericPreset, parseWithMapping } from './presets/generic';
+import { getPreset, PRESETS } from './presets/registry';
 import { readTables, type ReadResult } from './read';
 import type {
   DetectionInfo,
@@ -24,6 +29,7 @@ import type {
   MappingSuggestion,
   ParsedRow,
   RawTable,
+  Reconciliation,
 } from './types';
 import { hashString, isCurrencyCode, round } from './util';
 
@@ -88,7 +94,7 @@ export async function inspectFile(input: ImportInput, options: Pick<ImportOption
 function emptyStats(): ImportStats {
   return {
     totalRows: 0, imported: 0, duplicates: 0, skipped: 0, errors: 0, warnings: 0, byType: {}, currencies: [],
-    newInstruments: 0, matchedInstruments: 0,
+    newInstruments: 0, matchedInstruments: 0, possibleDuplicates: 0, pending: 0,
   };
 }
 
@@ -99,7 +105,47 @@ function failure(detection: DetectionInfo, issue: ImportIssue, extra: Partial<Im
   };
 }
 
-/** Import a file (CSV/XLSX/HTML table) into transactions + suggested instruments. */
+async function importPdf(read: ReadResult, options: ImportOptions, detection: DetectionInfo, locale: Locale): Promise<ImportResult> {
+  let doc;
+  try {
+    doc = await extractPdf(read.bytes!, options.pdfjs);
+  } catch (e) {
+    return failure(detection, makeIssue(locale, 'PDF_READ_ERROR', 'error', { detail: e instanceof Error ? e.message : String(e) }));
+  }
+  const table = pdfToTable(doc);
+  const forced = options.presetId ? PDF_PARSERS.find((p) => p.id === options.presetId) : undefined;
+  const scored = PDF_PARSERS.map((p) => ({ p, s: p.detect(doc) })).sort((a, b) => b.s - a.s)[0];
+  const parser = forced ?? (scored && scored.s >= DETECT_THRESHOLD ? scored.p : undefined);
+  const ctx = new ParseContext(table, options, parser?.id ?? 'pdf-table');
+  if (parser) {
+    detection.presetId = parser.id;
+    detection.presetLabel = parser.label;
+    detection.presetConfidence = parser.confidence;
+    detection.score = forced ? 1 : scored!.s;
+    const rows = parser.parse(doc, ctx);
+    detection.numberFormat = ctx.numberFormat;
+    detection.dateFormat = ctx.dateFormat;
+    return finalizeRows(rows, ctx, `import:${parser.id}`, detection);
+  }
+  // Tabular statement: rebuild the table from the text columns and use the Colombian / generic mapper.
+  const s = suggestMapping(table);
+  if (extractoColombianoPreset.detect(table) > 0 || !s.missing.length) {
+    const preset = extractoColombianoPreset.detect(table) > 0 ? extractoColombianoPreset : genericPreset;
+    detection.presetId = `pdf-${preset.id}`;
+    detection.presetLabel = `PDF (tabla) — ${preset.label}`;
+    detection.presetConfidence = 'low';
+    const rows = preset === genericPreset ? parseWithMapping(table, ctx, { ...s.mapping }) : preset.parse(table, ctx);
+    ctx.fileIssues.push(ctx.issue('GENERIC_AUTO_MAPPING', 'warning'));
+    detection.numberFormat = ctx.numberFormat;
+    detection.dateFormat = ctx.dateFormat;
+    const res = finalizeRows(rows, ctx, `import:pdf-${preset.id}`, detection);
+    res.mappingSuggestion = s;
+    return res;
+  }
+  return failure(detection, makeIssue(locale, 'FILE_PDF_UNSUPPORTED', 'error'));
+}
+
+/** Import a file (CSV/XLSX/XLS/HTML/PDF) into transactions + suggested instruments. */
 export async function importFile(input: ImportInput, options: ImportOptions): Promise<ImportResult> {
   const locale: Locale = options.locale ?? 'es';
   const read = await readTables(input.data, input.fileName, options.encoding);
@@ -111,6 +157,7 @@ export async function importFile(input: ImportInput, options: ImportOptions): Pr
   if (read.error) {
     return failure(detection, makeIssue(locale, read.error.code, 'error', read.error.detail ? { detail: read.error.detail } : undefined));
   }
+  if (read.kind === 'pdf') return importPdf(read, options, detection, locale);
   if (read.kind === 'json') {
     const isBackup = /"format"\s*:\s*"portafolio-pro-backup"/.test(read.text ?? '');
     return failure(detection, makeIssue(locale, isBackup ? 'FILE_IS_BACKUP' : 'FILE_UNSUPPORTED', 'error'));
@@ -171,6 +218,7 @@ export async function importFile(input: ImportInput, options: ImportOptions): Pr
   detection.sheet = table.name;
 
   const ctx = new ParseContext(table, options, preset.id);
+  if (read.delimiter) ctx.delimiter = read.delimiter;
   if (read.encoding === 'windows-1252') ctx.fileIssues.push(ctx.issue('ENCODING_LATIN1', 'info'));
   if (autoGeneric) ctx.fileIssues.push(ctx.issue('GENERIC_AUTO_MAPPING', 'warning'));
   const parsed = preset === genericPreset ? parseWithMapping(table, ctx, options.mapping!) : preset.parse(table, ctx);
@@ -201,6 +249,11 @@ interface Work {
   draft: DraftTransaction;
   instrumentId?: string;
   order: number;
+  extra: boolean;
+  invalid?: boolean;
+  tx?: Transaction;
+  status?: 'ok' | 'duplicate' | 'possible_duplicate';
+  duplicateOf?: ImportRow['duplicateOf'];
 }
 
 /** Infer SPLIT / STOCK_DIVIDEND ratios from the running position (existing + imported transactions). */
@@ -238,6 +291,7 @@ function inferRatios(work: Work[], existing: Transaction[], ctx: ParseContext): 
           pos.set(id, p + d.deltaShares!);
         } else {
           e.w.row.issues.push(ctx.issue('SPLIT_RATIO_UNKNOWN', 'error', { symbol: sym }, e.w.row.line));
+          e.w.invalid = true;
         }
       }
       continue;
@@ -281,6 +335,11 @@ function validateDraft(w: Work, ctx: ParseContext): boolean {
       break;
     case 'DIVIDEND':
     case 'INTEREST':
+      // Negative = reversal of a previous payment (kept signed on purpose).
+      if (d.amount === undefined && d.quantity !== undefined && d.price !== undefined) d.amount = round(d.quantity * d.price, 8);
+      if (d.amount === undefined) return err('MISSING_FIELD', { field: 'amount' });
+      if (d.amount === 0) return err('NON_POSITIVE', { field: 'amount' });
+      break;
     case 'RETURN_OF_CAPITAL':
     case 'DEPOSIT':
     case 'WITHDRAWAL':
@@ -294,10 +353,9 @@ function validateDraft(w: Work, ctx: ParseContext): boolean {
       if (d.amount === undefined) return err('MISSING_FIELD', { field: 'amount' });
       break;
     case 'SPLIT':
-      if (!d.ratio) return row.issues.some((i) => i.code === 'SPLIT_RATIO_UNKNOWN') ? false : err('MISSING_FIELD', { field: 'ratio' });
-      break;
+      break; // ratio checked after inference
     case 'STOCK_DIVIDEND':
-      if (!d.ratio && !d.quantity) return err('MISSING_FIELD', { field: 'quantity' });
+      if (!d.ratio && !d.quantity && d.deltaShares === undefined) return err('MISSING_FIELD', { field: 'quantity' });
       break;
     case 'FX_CONVERSION':
       if (d.amount === undefined) return err('MISSING_FIELD', { field: 'amount' });
@@ -314,49 +372,154 @@ function num(n: number | undefined, decimals: number): string {
   return n === undefined ? '' : String(round(n, decimals));
 }
 
-/** Resolve, validate, hash, de-duplicate and assemble the result. Exported for presets' unit tests. */
+// --- semantic duplicate index (I7 / I14) ------------------------------------
+
+interface DupEntry {
+  day: number;
+  tx: Transaction;
+  inFile: boolean;
+  line?: number;
+  brokerRef?: string;
+}
+
+const near = (a: number | undefined, b: number | undefined, rel: number, absTol: number) =>
+  a === undefined || b === undefined ? a === b : Math.abs(a - b) <= Math.max(absTol, rel * Math.max(Math.abs(a), Math.abs(b)));
+
+function sameEconomics(a: Transaction, b: Transaction): boolean {
+  switch (a.type) {
+    case 'BUY':
+    case 'SELL':
+    case 'TRANSFER_IN':
+    case 'TRANSFER_OUT':
+      return near(a.quantity, b.quantity, 1e-6, 1e-9) && (a.price === undefined || b.price === undefined || near(a.price, b.price, 0.005, 1e-9));
+    case 'SPLIT':
+      return near(a.ratio, b.ratio, 1e-6, 1e-9);
+    case 'STOCK_DIVIDEND':
+      return near(a.quantity, b.quantity, 1e-6, 1e-9);
+    case 'FX_CONVERSION':
+      return a.toCurrency === b.toCurrency && near(a.amount, b.amount, 0.005, 0.01) && near(a.toAmount, b.toAmount, 0.005, 0.01);
+    default:
+      return near(a.amount, b.amount, 0.005, 0.01);
+  }
+}
+
+class DupIndex {
+  private readonly map = new Map<string, Map<number, DupEntry[]>>();
+  static key(t: Transaction): string {
+    return `${t.type}|${t.instrumentId ?? ''}|${t.currency}`;
+  }
+  add(e: DupEntry): void {
+    const k = DupIndex.key(e.tx);
+    let byDay = this.map.get(k);
+    if (!byDay) this.map.set(k, (byDay = new Map()));
+    const list = byDay.get(e.day);
+    if (list) list.push(e);
+    else byDay.set(e.day, [e]);
+  }
+  find(tx: Transaction, day: number, cal: CalendarId, maxBusinessDays: number, accept: (e: DupEntry) => boolean): DupEntry | undefined {
+    const byDay = this.map.get(DupIndex.key(tx));
+    if (!byDay) return undefined;
+    const span = maxBusinessDays === 0 ? 0 : maxBusinessDays + 4; // calendar-day window covering weekends/holidays
+    for (let d = day - span; d <= day + span; d++) {
+      const list = byDay.get(d);
+      if (!list) continue;
+      if (d !== day && Math.abs(businessDaysBetween(d, day, cal)) > maxBusinessDays) continue;
+      for (const e of list) if (accept(e) && sameEconomics(e.tx, tx)) return e;
+    }
+    return undefined;
+  }
+}
+
+function accepted(opts: ImportOptions, line: number, inFile: boolean): boolean {
+  const a = opts.acceptDuplicates;
+  if (!a || a === 'none') return false;
+  if (a === 'all') return true;
+  if (a === 'in-file') return inFile;
+  return a.includes(line);
+}
+
+/** Positions (quantity) and cash per currency implied by transactions up to a date. */
+export function computeBalances(transactions: Transaction[], asOf?: string): { positions: Map<string, number>; cash: Map<string, number> } {
+  const positions = new Map<string, number>();
+  const cash = new Map<string, number>();
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  const sorted = [...transactions].filter((t) => !asOf || t.date <= asOf).sort((a, b) => a.date.localeCompare(b.date));
+  for (const t of sorted) {
+    const amt = t.amount ?? (t.quantity ?? 0) * (t.price ?? 0);
+    const fees = t.fees ?? 0;
+    const taxes = t.taxes ?? 0;
+    if (t.instrumentId) {
+      const p = positions.get(t.instrumentId) ?? 0;
+      if (t.type === 'SPLIT' && t.ratio) positions.set(t.instrumentId, p * t.ratio);
+      else if (t.type === 'STOCK_DIVIDEND') positions.set(t.instrumentId, p + (t.quantity ?? p * (t.ratio ?? 0)));
+      else if (POSITION_DELTA[t.type] && t.quantity) positions.set(t.instrumentId, p + POSITION_DELTA[t.type]! * t.quantity);
+    }
+    switch (t.type) {
+      case 'BUY': add(cash, t.currency, -(amt + fees + taxes)); break;
+      case 'SELL': add(cash, t.currency, amt - fees - taxes); break;
+      case 'DIVIDEND': case 'INTEREST': case 'RETURN_OF_CAPITAL': add(cash, t.currency, amt - taxes - fees); break;
+      case 'DEPOSIT': add(cash, t.currency, amt - fees); break;
+      case 'WITHDRAWAL': add(cash, t.currency, -amt - fees); break;
+      case 'FEE': case 'TAX': add(cash, t.currency, -amt); break;
+      case 'FX_CONVERSION':
+        add(cash, t.currency, -amt - fees);
+        if (t.toCurrency) add(cash, t.toCurrency, t.toAmount ?? 0);
+        break;
+      default: break;
+    }
+  }
+  return { positions, cash };
+}
+
+/** Resolve, validate, hash, de-duplicate and assemble the result. */
 export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: string, detection: DetectionInfo): ImportResult {
   const opts = ctx.options;
-  const resolver = new InstrumentResolver(opts.existingInstruments ?? [], { defaultUsExchange: opts.defaultUsExchange });
+  const existingTx = opts.existingTransactions ?? [];
+  const resolver = new InstrumentResolver(opts.existingInstruments ?? [], {
+    defaultUsExchange: opts.defaultUsExchange, catalog: opts.catalog, securityMap: opts.securityMap,
+  });
   const instrumentsById = new Map<string, Instrument>((opts.existingInstruments ?? []).map((i) => [i.id, i]));
+  const instrumentUpdates: NonNullable<ImportResult['instrumentUpdates']> = [];
   const work: Work[] = [];
-  parsed.forEach((row, order) => {
-    if (!row.draft || row.skipped || row.issues.some((i) => i.severity === 'error')) return;
-    const w: Work = { row, draft: row.draft, order };
-    if (row.draft.instrument) {
-      const res = resolver.resolve(row.draft.instrument);
-      if (res) {
-        w.instrumentId = res.instrument.id;
-        instrumentsById.set(res.instrument.id, res.instrument);
-        for (const n of res.notes) {
-          const sev = n.code === 'EXCHANGE_GUESSED' ? 'info' : 'warning';
-          row.issues.push(ctx.issue(n.code, sev, n.params, row.line));
+  let order = 0;
+  for (const row of parsed) {
+    if (row.skipped || row.issues.some((i) => i.severity === 'error')) continue;
+    const drafts = [row.draft, ...(row.extra ?? [])].filter((d): d is DraftTransaction => !!d);
+    drafts.forEach((draft, k) => {
+      const w: Work = { row, draft, order: order++, extra: k > 0 };
+      if (draft.instrument) {
+        const res = resolver.resolve(draft.instrument);
+        if (res && 'error' in res) {
+          row.issues.push(ctx.issue(res.error.code, 'error', res.error.params, row.line));
+          w.invalid = true;
+        } else if (res) {
+          w.instrumentId = res.instrument.id;
+          instrumentsById.set(res.instrument.id, res.instrument);
+          for (const n of res.notes) row.issues.push(ctx.issue(n.code, n.code === 'SYMBOL_FROM_ISIN' ? 'warning' : 'info', n.params, row.line));
+          if (res.update && !instrumentUpdates.some((u) => u.id === res.update!.id)) instrumentUpdates.push(res.update);
+          const inst = res.instrument;
+          if (!draft.currency) draft.currency = inst.currency;
+          // Trade currency must match the instrument's (except deliberate foreign listings such as MGC).
+          if (!res.foreignListing && draft.currency !== inst.currency && ['BUY', 'SELL', 'TRANSFER_IN', 'TRANSFER_OUT'].includes(draft.type)) {
+            row.issues.push(ctx.issue('CURRENCY_MISMATCH', 'warning', { currency: draft.currency, instrumentCurrency: inst.currency }, row.line));
+          }
         }
       }
-    }
-    // Rows without currency take the instrument's (or the default) currency.
-    if (!row.draft.currency) {
-      const inst = w.instrumentId ? instrumentsById.get(w.instrumentId) : undefined;
-      row.draft.currency = inst?.currency ?? opts.defaultCurrency ?? exchangeCurrency(row.draft.instrument?.exchange) ?? '';
-    }
-    work.push(w);
-  });
+      if (!draft.currency) draft.currency = opts.defaultCurrency ?? exchangeCurrency(draft.instrument?.exchange) ?? '';
+      if (!w.invalid && !validateDraft(w, ctx)) w.invalid = true;
+      work.push(w);
+    });
+  }
 
-  inferRatios(work, opts.existingTransactions ?? [], ctx);
-
-  const existingHashes = new Set((opts.existingTransactions ?? []).map((t) => t.importHash).filter((h): h is string => !!h));
+  // Hashes + exact duplicates.
+  const existingHashes = new Set(existingTx.map((t) => t.importHash).filter((h): h is string => !!h));
   const occurrences = new Map<string, number>();
-  const outRows: ImportRow[] = [];
-  const transactions: Transaction[] = [];
-  const valid = new Map<ParsedRow, Transaction>();
-  const duplicates = new Set<ParsedRow>();
   let txIndex = 0;
-
   for (const w of work) {
-    if (!validateDraft(w, ctx)) continue;
+    if (w.invalid) continue;
     const d = w.draft;
     const keyBase = d.brokerRef
-      ? [source, 'ref', d.brokerRef, d.type, d.date, w.instrumentId ?? ''].join('|')
+      ? [source, 'ref', d.brokerRef, d.type, d.date, w.instrumentId ?? '', w.extra ? 'x' : ''].join('|')
       : [
           source, d.date, d.type, w.instrumentId ?? '', num(d.quantity, 6), num(d.price, 6), num(d.amount, 4),
           d.currency, d.toCurrency ?? '', num(d.toAmount, 4), num(d.ratio, 8),
@@ -386,56 +549,96 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     if (d.note) tx.note = d.note;
     tx.source = source;
     tx.importHash = importHash;
-    valid.set(w.row, tx);
+    w.tx = tx;
     if (existingHashes.has(importHash)) {
-      duplicates.add(w.row);
+      w.status = 'duplicate';
       w.row.issues.push(ctx.issue('DUPLICATE', 'info', undefined, w.row.line));
     }
   }
 
-  // Possible duplicates: same instrument/type/quantity within ±3 days from a different source.
-  const existing = (opts.existingTransactions ?? []).filter((t) => t.instrumentId && (t.type === 'BUY' || t.type === 'SELL' || t.type === 'DIVIDEND'));
-  if (existing.length) {
-    const byInst = new Map<string, Transaction[]>();
-    for (const t of existing) byInst.set(t.instrumentId!, [...(byInst.get(t.instrumentId!) ?? []), t]);
-    for (const [row, tx] of valid) {
-      if (duplicates.has(row) || !tx.instrumentId) continue;
-      const cands = byInst.get(tx.instrumentId) ?? [];
-      const hit = cands.find((e) => {
-        if (e.type !== tx.type || e.importHash === tx.importHash) return false;
-        const days = Math.abs(Date.parse(e.date) - Date.parse(tx.date)) / 86400000;
-        if (tx.type === 'DIVIDEND') return days <= 3 && Math.abs((e.amount ?? 0) - (tx.amount ?? 0)) <= 0.01 * Math.max(1, tx.amount ?? 0);
-        return days <= 3 && Math.abs((e.quantity ?? 0) - (tx.quantity ?? 0)) < 1e-9 && (e.source !== tx.source || days === 0);
-      });
-      if (hit) row.issues.push(ctx.issue('POSSIBLE_DUPLICATE', 'warning', { date: hit.date, source: hit.source ?? 'manual' }, row.line));
+  // Semantic duplicates against existing transactions (other sources: ±3 business days; same source:
+  // same day) and within the file (identical rows without distinct broker references).
+  const index = new DupIndex();
+  for (const t of existingTx) if (/^\d{4}-\d{2}-\d{2}$/.test(t.date)) index.add({ day: dayNumber(t.date), tx: t, inFile: false });
+  for (const w of work) {
+    if (!w.tx || w.status === 'duplicate' || w.draft.noDuplicateCheck) continue;
+    const tx = w.tx;
+    const day = dayNumber(tx.date);
+    const cal = calendarFor(tx.instrumentId, tx.currency);
+    const ref = w.draft.brokerRef;
+    const hit =
+      index.find(tx, day, cal, 3, (e) => !e.inFile && e.tx.source !== tx.source) ??
+      index.find(tx, day, cal, 0, (e) => !e.inFile && e.tx.source === tx.source && !ref) ??
+      index.find(tx, day, cal, 0, (e) => e.inFile && !(ref && e.brokerRef && ref !== e.brokerRef) && !(ref && e.brokerRef === ref && false));
+    if (hit) {
+      const inFile = hit.inFile;
+      w.duplicateOf = { date: hit.tx.date, inFile, ...(hit.tx.source ? { source: hit.tx.source } : {}), ...(hit.line !== undefined ? { line: hit.line } : {}), ...(!inFile ? { transactionId: hit.tx.id } : {}) };
+      const ok = accepted(opts, w.row.line, inFile);
+      w.row.issues.push(
+        inFile
+          ? ctx.issue('POSSIBLE_DUPLICATE_IN_FILE', ok ? 'info' : 'warning', { line: hit.line ?? 0 }, w.row.line)
+          : ctx.issue('POSSIBLE_DUPLICATE', ok ? 'info' : 'warning', { date: hit.tx.date, source: hit.tx.source ?? 'manual' }, w.row.line),
+      );
+      if (!ok) w.status = 'possible_duplicate';
     }
+    const entry: DupEntry = { day, tx, inFile: true, line: w.row.line };
+    if (ref) entry.brokerRef = ref;
+    index.add(entry);
   }
 
+  // Ratio inference excludes rows that are (possibly) already in the portfolio.
+  inferRatios(work.filter((w) => !w.invalid && !w.status), existingTx, ctx);
+  for (const w of work) {
+    if (w.invalid || !w.tx) continue;
+    if (w.draft.type === 'SPLIT' && !w.draft.ratio) {
+      if (!w.row.issues.some((i) => i.code === 'SPLIT_RATIO_UNKNOWN')) w.row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'ratio' }, w.row.line));
+      w.invalid = true;
+      continue;
+    }
+    if (w.draft.ratio !== undefined) w.tx.ratio = w.draft.ratio;
+    if (w.draft.quantity !== undefined) w.tx.quantity = w.draft.quantity;
+    if (!w.status) w.status = 'ok';
+  }
+
+  const pending = ctx.confirmations.length > 0;
   const stats = emptyStats();
   const currencies = new Set<string>();
+  const transactions: Transaction[] = [];
+  const outRows: ImportRow[] = [];
+  const byRow = new Map<ParsedRow, Work[]>();
+  for (const w of work) byRow.set(w.row, [...(byRow.get(w.row) ?? []), w]);
   for (const row of parsed) {
-    const tx = valid.get(row);
-    const hasError = row.issues.some((i) => i.severity === 'error');
+    const ws = byRow.get(row) ?? [];
+    const hasError = row.issues.some((i) => i.severity === 'error') || ws.some((w) => w.invalid);
+    const main = ws.find((w) => !w.extra);
     let status: ImportRow['status'];
     if (hasError) status = 'error';
-    else if (row.skipped || !row.draft) status = 'skipped';
-    else if (!tx) status = 'error';
-    else if (duplicates.has(row)) status = 'duplicate';
-    else status = 'ok';
+    else if (row.skipped || !ws.length) status = 'skipped';
+    else if (main?.status === 'duplicate') status = 'duplicate';
+    else if (main?.status === 'possible_duplicate') status = 'possible_duplicate';
+    else status = pending ? 'pending' : 'ok';
+    if (status === 'ok' && pending) status = 'pending';
     const out: ImportRow = { line: row.line, status, issues: row.issues };
     if (row.sheet) out.sheet = row.sheet;
     if (row.raw) out.raw = row.raw;
-    if (tx && status !== 'error') out.transaction = tx;
+    if (main?.tx && status !== 'error') out.transaction = main.tx;
+    const extras = ws.filter((w) => w.extra && w.tx).map((w) => w.tx!);
+    if (extras.length && status !== 'error') out.extraTransactions = extras;
+    if (main?.duplicateOf) out.duplicateOf = main.duplicateOf;
     outRows.push(out);
     stats.totalRows++;
-    if (status === 'ok' && tx) {
-      transactions.push(tx);
+    if (status === 'ok') {
+      for (const tx of [out.transaction, ...extras].filter((t): t is Transaction => !!t)) {
+        transactions.push(tx);
+        stats.byType[tx.type] = (stats.byType[tx.type] ?? 0) + 1;
+        currencies.add(tx.currency);
+        if (!stats.firstDate || tx.date < stats.firstDate) stats.firstDate = tx.date;
+        if (!stats.lastDate || tx.date > stats.lastDate) stats.lastDate = tx.date;
+      }
       stats.imported++;
-      stats.byType[tx.type] = (stats.byType[tx.type] ?? 0) + 1;
-      currencies.add(tx.currency);
-      if (!stats.firstDate || tx.date < stats.firstDate) stats.firstDate = tx.date;
-      if (!stats.lastDate || tx.date > stats.lastDate) stats.lastDate = tx.date;
     } else if (status === 'duplicate') stats.duplicates++;
+    else if (status === 'possible_duplicate') stats.possibleDuplicates++;
+    else if (status === 'pending') stats.pending++;
     else if (status === 'skipped') stats.skipped++;
     else stats.errors++;
   }
@@ -446,11 +649,58 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   const warnings = allIssues.filter((i) => i.severity !== 'error');
   stats.warnings = allIssues.filter((i) => i.severity === 'warning').length;
 
-  // Only suggest instruments actually used by importable transactions.
-  const used = new Set(transactions.map((t) => t.instrumentId).filter(Boolean));
+  const used = new Set(
+    work.filter((w) => w.tx && (w.status === 'ok' || (pending && !w.invalid))).map((w) => w.tx!.instrumentId).filter(Boolean),
+  );
   const instruments = resolver.newInstruments().filter((i) => used.has(i.id));
   stats.newInstruments = instruments.length;
   stats.matchedInstruments = resolver.matchedCount();
 
-  return { detection, transactions, instruments, rows: outRows, warnings, errors, stats };
+  const result: ImportResult = { detection, transactions: pending ? [] : transactions, instruments, rows: outRows, warnings, errors, stats };
+  if (pending) {
+    result.needsConfirmation = ctx.confirmations;
+    const dc = ctx.confirmations.find((c) => c.kind === 'dateFormat');
+    const nc = ctx.confirmations.find((c) => c.kind === 'numberFormat');
+    if (dc) result.dateFormatCandidates = dc.candidates as ImportResult['dateFormatCandidates'];
+    if (nc) result.numberFormatCandidates = nc.candidates as ImportResult['numberFormatCandidates'];
+  }
+  if (instrumentUpdates.length) result.instrumentUpdates = instrumentUpdates;
+  if (ctx.corporateActions.length) result.corporateActions = ctx.corporateActions;
+  if (ctx.reported) result.reconciliation = reconcile(ctx, resolver, [...existingTx, ...transactions]);
+  return result;
+}
+
+function reconcile(ctx: ParseContext, resolver: InstrumentResolver, all: Transaction[]): Reconciliation {
+  const rep = ctx.reported!;
+  const { positions, cash } = computeBalances(all, rep.asOf);
+  const rec: Reconciliation = { source: rep.source, positions: [], cash: rep.cash, positionDifferences: [], cashDifferences: [] };
+  if (rep.asOf) rec.asOf = rep.asOf;
+  for (const p of rep.positions) {
+    const { hint, ...pos } = p;
+    let id = pos.instrumentId;
+    if (!id && hint) {
+      const r = resolver.resolve(hint);
+      if (r && !('error' in r)) id = r.instrument.id;
+    }
+    if (id) pos.instrumentId = id;
+    rec.positions.push(pos);
+    if (!id) continue;
+    const computed = positions.get(id) ?? 0;
+    if (Math.abs(computed - pos.quantity) > 1e-6) {
+      rec.positionDifferences.push({ instrumentId: id, symbol: pos.symbol, reported: pos.quantity, computed: round(computed, 8), difference: round(pos.quantity - computed, 8) });
+    }
+  }
+  for (const [id, q] of positions) {
+    if (Math.abs(q) > 1e-6 && !rec.positions.some((p) => p.instrumentId === id) && rep.positions.length) {
+      rec.positionDifferences.push({ instrumentId: id, symbol: id.split(':').pop() ?? id, reported: 0, computed: round(q, 8), difference: round(-q, 8) });
+    }
+  }
+  for (const c of rep.cash) {
+    const computed = round(cash.get(c.currency) ?? 0, 6);
+    if (Math.abs(computed - c.amount) > 0.01) rec.cashDifferences.push({ currency: c.currency, reported: c.amount, computed, difference: round(c.amount - computed, 6) });
+  }
+  if (rec.positionDifferences.length || rec.cashDifferences.length) {
+    ctx.fileIssues.push(ctx.issue('RECONCILIATION_DIFF', 'warning', { count: rec.positionDifferences.length + rec.cashDifferences.length }));
+  }
+  return rec;
 }

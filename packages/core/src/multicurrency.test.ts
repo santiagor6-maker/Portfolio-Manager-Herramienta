@@ -79,20 +79,39 @@ T.push(tx({ date: '2024-07-05', type: 'BUY', instrumentId: SAP.id, quantity: 30,
 
 const input = engine({ base: 'COP', instruments: [ECO, PETR, AAPL, SAP], prices: PRICES, fx: FX, transactions: T, options: { asOf: '2024-12-31' } });
 
-/** Independent daily TWR: inflows at start of day, outflows at end of day. */
+/**
+ * Independent daily TWR with the documented convention: on a flow day the day is split at the
+ * trades. P(f) = holdings and cash at the close of f-1, priced at day f (instruments traded on f
+ * at their first trade price of the day), FX of day f. Built from valuePortfolio(), the raw
+ * market data and the transaction list only.
+ */
 function bruteForceMonthlyTwr(): Map<string, number> {
   const flows = externalFlows(input);
   const out = new Map<string, number>();
   let prev = valuePortfolio(input, '2022-12-31').totalMarketValueBase;
   let date = '2023-01-01';
   let g = 1;
+  const fx = (c: string, d: string) => (c === 'COP' ? 1 : input.market.fx(c, 'COP', d)!);
   while (date <= '2024-12-31') {
     const v = valuePortfolio(input, date).totalMarketValueBase;
     const today = flows.filter((f) => f.date === date);
-    const inB = sum(today.filter((f) => f.amountBase > 0).map((f) => f.amountBase));
-    const outB = -sum(today.filter((f) => f.amountBase < 0).map((f) => f.amountBase));
-    const den = prev + inB;
-    if (den > 0.01) g *= (v + outB) / den;
+    if (today.length) {
+      const inB = sum(today.filter((f) => f.amountBase > 0).map((f) => f.amountBase));
+      const outB = -sum(today.filter((f) => f.amountBase < 0).map((f) => f.amountBase));
+      const y = valuePortfolio(input, addDays(date, -1));
+      const todays = new Map<string, number>();
+      for (const t of T) if (t.date === date && (t.type === 'BUY' || t.type === 'SELL') && !todays.has(t.instrumentId!)) todays.set(t.instrumentId!, t.price!);
+      const vToday = valuePortfolio(input, date);
+      let pre = 0;
+      for (const h of y.holdings) {
+        const inst = [ECO, PETR, AAPL, SAP].find((i) => i.id === h.instrumentId)!;
+        const px = todays.get(h.instrumentId) ?? vToday.holdings.find((x) => x.instrumentId === h.instrumentId)?.price ?? h.price!;
+        pre += h.quantity * px * fx(inst.currency, date);
+      }
+      for (const c of y.cash) pre += c.amount * fx(c.currency, date);
+      if (prev > 0.01) g *= pre / prev;
+      g *= v / (pre + inB - outB);
+    } else if (prev > 0.01) g *= v / prev;
     const next = addDays(date, 1);
     if (next.slice(0, 7) !== date.slice(0, 7)) {
       out.set(date.slice(0, 7), g - 1);

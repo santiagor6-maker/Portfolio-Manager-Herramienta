@@ -1,6 +1,6 @@
 {
- "version": "2026.10.1",
- "updated": "2026-10-05",
+ "version": "2026.10.2",
+ "updated": "2026-10-06",
  "instruments": [
   {
    "id": "XBOG:ECOPETROL",
@@ -2618,7 +2618,7 @@
   {
    "id": "XLON:VWRL",
    "symbol": "VWRL",
-   "name": "Vanguard FTSE All-World UCITS ETF",
+   "name": "Vanguard FTSE All-World UCITS ETF (Dist, GBP) — dividendos en USD",
    "exchange": "XLON",
    "currency": "GBP",
    "country": "GB",
@@ -2844,15 +2844,30 @@
     "yahoo": "^MXX"
    },
    "pricing": "auto"
+  },
+  {
+   "id": "XLON:VUSA",
+   "symbol": "VUSA",
+   "name": "Vanguard S&P 500 UCITS ETF (Dist, GBP) — dividendos en USD",
+   "exchange": "XLON",
+   "currency": "GBP",
+   "country": "GB",
+   "assetClass": "etf",
+   "isin": "IE00B3XXRP09",
+   "providerSymbols": {
+    "yahoo": "VUSA.L"
+   },
+   "pricing": "auto"
   }
  ],
  "benchmarks": [
   {
    "id": "COLCAP",
-   "name": "COLCAP (proxy: iShares MSCI COLCAP, ICOLCAP)",
+   "name": "COLCAP (proxy: ICOLCAP con dividendos reinvertidos)",
    "instrumentId": "XBOG:ICOLCAP",
    "currency": "COP",
-   "note": "Yahoo no publica la historia del índice COLCAP (^COLCAP no existe y ^737809-COP-STRD solo trae el último valor). Se usa el ETF ICOLCAP como proxy: incluye costos del fondo y distribuye dividendos."
+   "adjust": "total",
+   "note": "Yahoo no publica la historia del índice COLCAP. Para comparar mes a mes se usa el ETF ICOLCAP como índice de retorno total (adjust=total: dividendos reinvertidos; incluye costos del fondo). El índice real está disponible como PROMEDIO mensual en /api/index?id=COLCAP_AVG (BanRep)."
   },
   {
    "id": "IBOV",
@@ -2870,10 +2885,11 @@
   },
   {
    "id": "MSCI_WORLD",
-   "name": "MSCI World (proxy: iShares MSCI World, URTH)",
+   "name": "MSCI World (proxy: iShares URTH con dividendos reinvertidos)",
    "instrumentId": "ARCX:URTH",
    "currency": "USD",
-   "note": "ETF en USD como proxy del MSCI World."
+   "adjust": "total",
+   "note": "ETF en USD como proxy del MSCI World net return (adjust=total; incluye costos del ETF)."
   },
   {
    "id": "SX5E",
@@ -2898,13 +2914,15 @@
    "id": "MSCI_ACWI",
    "name": "MSCI ACWI (proxy: iShares ACWI)",
    "instrumentId": "XNAS:ACWI",
-   "currency": "USD"
+   "currency": "USD",
+   "adjust": "total"
   },
   {
    "id": "MSCI_EM",
    "name": "MSCI Emerging Markets (proxy: iShares EEM)",
    "instrumentId": "ARCX:EEM",
-   "currency": "USD"
+   "currency": "USD",
+   "adjust": "total"
   }
  ]
 }

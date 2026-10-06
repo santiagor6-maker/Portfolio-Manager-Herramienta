@@ -10,7 +10,7 @@ import { cellToString, normalizeText } from './util';
 export const FIELD_SYNONYMS: Record<MappingField, string[]> = {
   date: [
     'fecha', 'fecha operacion', 'fecha de operacion', 'fecha transaccion', 'fecha de transaccion', 'fecha negociacion',
-    'fecha de negociacion', 'fecha movimiento', 'fecha de cumplimiento', 'data', 'data do negocio', 'data da operacao',
+    'fecha de negociacion', 'fecha movimiento', 'data', 'data do negocio', 'data da operacao',
     'data pregao', 'data do pregao', 'data de negociacao', 'date', 'trade date', 'transaction date', 'tradedate', 'dia',
     'time', 'fecha y hora', 'date time', 'datetime',
   ],
@@ -66,6 +66,7 @@ export const FIELD_SYNONYMS: Record<MappingField, string[]> = {
   instrumentId: ['instrument id', 'instrument_id', 'id activo', 'instrumentid'],
   toCurrency: ['to currency', 'moneda destino', 'moeda destino'],
   toAmount: ['to amount', 'monto destino', 'valor destino'],
+  settleDate: ['settlement date', 'settle date', 'fecha liquidacion', 'fecha de liquidacion', 'fecha de cumplimiento', 'data liquidacao', 'data de liquidacao', 'value date', 'fecha valor', 'settledate'],
   fxRateToBase: ['fx rate to base', 'tipo de cambio', 'tasa de cambio', 'taxa de cambio', 'exchange rate', 'trm', 'fx rate', 'fxratetobase'],
 };
 

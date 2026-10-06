@@ -1,22 +1,39 @@
 /**
  * Node entry point: `npm run start -w @pm/server` (or `npx tsx apps/server/src/main.ts`).
- * Env: PORT (default 8787), HOST (default 0.0.0.0), CACHE_DIR (default .cache/market-data),
- *      CORS_ORIGIN (comma-separated, default *), SOCRATA_APP_TOKEN (optional, datos.gov.co).
+ * Env:
+ *   PORT (8787), HOST (127.0.0.1 — set 0.0.0.0 only behind a firewall/proxy),
+ *   CORS_ORIGIN (comma-separated allowlist; default local web dev origins; '*' = any),
+ *   API_TOKEN (optional bearer token), TRUST_PROXY=1 (use X-Forwarded-For for rate limiting),
+ *   RATE_LIMIT_PER_MIN (default 120), CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
+ *   MD_CUSTOM_FEEDS_FILE (JSON array of user-defined feeds),
+ *   provider keys: BRAPI_TOKEN, TWELVEDATA_API_KEY, FMP_API_KEY, EODHD_API_TOKEN,
+ *   ALPHAVANTAGE_API_KEY (+ALPHAVANTAGE_PREMIUM=1), STOOQ_API_KEY, COINGECKO_API_KEY, SOCRATA_APP_TOKEN.
  */
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { serve } from '@hono/node-server';
-import { MarketDataService } from '@pm/market-data';
-import { createApp } from './app';
+import { keysFromEnv, MarketDataService, type CustomFeedInstrument } from '@pm/market-data';
+import { createApp, DEFAULT_CORS_ORIGINS } from './app';
 import { FileStore } from './fileStore';
 
-const port = Number(process.env.PORT ?? 8787);
-const hostname = process.env.HOST ?? '0.0.0.0';
-const cacheDir = resolve(process.env.CACHE_DIR ?? '.cache/market-data');
-const corsOrigin = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()) : '*';
+const env = process.env;
+const port = Number(env.PORT ?? 8787);
+const hostname = env.HOST ?? '127.0.0.1';
+const cacheDir = resolve(env.CACHE_DIR ?? '.cache/market-data');
+const corsOrigin = env.CORS_ORIGIN ? env.CORS_ORIGIN.split(',').map((s) => s.trim()) : DEFAULT_CORS_ORIGINS;
+const perMin = Number(env.RATE_LIMIT_PER_MIN ?? 120);
 
+let customFeeds: CustomFeedInstrument[] = [];
+if (env.MD_CUSTOM_FEEDS_FILE) {
+  customFeeds = JSON.parse(readFileSync(resolve(env.MD_CUSTOM_FEEDS_FILE), 'utf8')) as CustomFeedInstrument[];
+  console.log(`Loaded ${customFeeds.length} custom feed(s) from ${env.MD_CUSTOM_FEEDS_FILE}`);
+}
+
+const store = new FileStore(cacheDir, { maxFiles: Number(env.CACHE_MAX_FILES ?? 20_000) });
 const service = new MarketDataService({
-  store: new FileStore(cacheDir),
-  trmAppToken: process.env.SOCRATA_APP_TOKEN,
+  store,
+  keys: keysFromEnv(env),
+  customFeeds,
   httpOptions: {
     onRequest: ({ url, status, ms, attempt }) => {
       const u = new URL(url);
@@ -25,10 +42,18 @@ const service = new MarketDataService({
   },
 });
 
-const app = createApp({ service, corsOrigin });
+const app = createApp({
+  service,
+  corsOrigin,
+  apiToken: env.API_TOKEN || undefined,
+  trustProxy: env.TRUST_PROXY === '1',
+  rateLimit: perMin > 0 ? { capacity: perMin, refillPerSecond: perMin / 60 } : false,
+});
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
-  console.log(`Portafolio Pro market-data API on http://localhost:${info.port} (cache: ${cacheDir})`);
+  console.log(`Portafolio Pro market-data API on http://${hostname}:${info.port} (cache: ${cacheDir})`);
+  console.log(`  providers: ${JSON.stringify(service.providers())}`);
+  if (hostname === '0.0.0.0' && !env.API_TOKEN) console.warn('  WARNING: listening on all interfaces without API_TOKEN');
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

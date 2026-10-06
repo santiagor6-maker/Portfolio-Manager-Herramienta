@@ -22,6 +22,7 @@ import type {
   MonthlyRow,
   PerformanceSummary,
   Portfolio,
+  PositionPerformance,
   PriceSeries,
   RealizedGain,
   RiskMetrics,
@@ -96,18 +97,19 @@ export interface MarketDataInput {
 }
 
 import { allocationImpl } from './allocation';
+import { type CorporateActionResult, applyCorporateActions as applyCorporateActionsImpl } from './corporate';
 import { isoToDay } from './dates';
+import { Engine, createEngine as createEngineImpl, engineFor } from './engine';
+import { type GoalProjectionOptions, type GoalProjectionResult, goalProjection as goalProjectionImpl } from './goals';
 import { type Diagnostic, createContext, runLedger } from './ledger';
 import { createMarketDataImpl, type MarketDataEx } from './market';
-import { monthlyPerformanceImpl, performanceSummaryImpl, valueSeriesImpl } from './performance';
-import { riskMetricsImpl } from './risk';
-import { buildValuation } from './valuation';
+import { type RiskOptions, riskMetricsImpl } from './risk';
 import { validateTransactionsImpl } from './validate';
-import { xirrImpl } from './xirr';
+import { xirrDetailed, xirrImpl } from './xirr';
 
 /**
  * Build a fill-forward MarketData from series (with FX triangulation through USD/EUR).
- * The returned object also implements `MarketDataEx` (pricePoint, fxPairs, ...).
+ * The returned object also implements `MarketDataEx` (pricePoint, fxPairs, indexLevel, ...).
  */
 export function createMarketData(input: MarketDataInput): MarketData & MarketDataEx {
   return createMarketDataImpl(input);
@@ -130,9 +132,7 @@ export interface ValidationIssue {
 
 /** Positions, cash and values at a date. */
 export function valuePortfolio(input: EngineInput, date: ISODate): Valuation {
-  const ctx = createContext(input);
-  const day = isoToDay(date);
-  return buildValuation(runLedger(ctx, day), day);
+  return engineFor(input).valuation(date);
 }
 
 export function computeHoldings(input: EngineInput, date: ISODate): Holding[] {
@@ -145,16 +145,12 @@ export function computeCash(input: EngineInput, date: ISODate): CashBalance[] {
 
 /** Realized gains per closed lot piece with sell date in [from, to] (inclusive). */
 export function realizedGains(input: EngineInput, from?: ISODate, to?: ISODate): RealizedGain[] {
-  const ledger = runLedger(createContext(input), to ? isoToDay(to) : Infinity);
-  const a = from ? isoToDay(from) : -Infinity;
-  return ledger.realized.filter((r) => r.day >= a).map(({ day: _d, ...r }) => r);
+  return engineFor(input).realized(from, to);
 }
 
 /** Dividend and interest events dated in [from, to] (inclusive). */
 export function incomeEvents(input: EngineInput, from?: ISODate, to?: ISODate): IncomeEvent[] {
-  const ledger = runLedger(createContext(input), to ? isoToDay(to) : Infinity);
-  const a = from ? isoToDay(from) : -Infinity;
-  return ledger.income.filter((e) => e.day >= a).map(({ day: _d, ...e }) => e);
+  return engineFor(input).income(from, to);
 }
 
 /** Monthly tracking table from first transaction month (or `from`) to `to` (default today). */
@@ -162,7 +158,7 @@ export function monthlyPerformance(
   input: EngineInput,
   opts?: { from?: YearMonth; to?: YearMonth; benchmarks?: string[]; asOf?: ISODate; twrMethod?: 'daily' | 'modifiedDietz' },
 ): MonthlyRow[] {
-  return monthlyPerformanceImpl(input, opts);
+  return engineFor(input).monthly(opts ?? {});
 }
 
 export type PeriodKey = 'MTD' | 'QTD' | 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'SI' | 'CUSTOM';
@@ -177,7 +173,7 @@ export function performanceSummary(
   asOf: ISODate,
   custom?: { from: ISODate; to: ISODate },
 ): PerformanceSummary {
-  return performanceSummaryImpl(input, period, asOf, custom);
+  return engineFor(input).summary(period, asOf, custom);
 }
 
 /** Daily (or month-end) value series for charts. cumulativeTwr is 0 at `from`. */
@@ -185,13 +181,10 @@ export function valueSeries(
   input: EngineInput,
   opts: { from: ISODate; to: ISODate; step: 'day' | 'week' | 'month' },
 ): { date: ISODate; valueBase: number; netInvestedBase: number; cumulativeTwr: number }[] {
-  return valueSeriesImpl(input, opts);
+  return engineFor(input).series(opts);
 }
 
-export function riskMetrics(
-  monthly: MonthlyRow[],
-  opts?: { riskFreeAnnual?: number; benchmarkMonthly?: number[]; benchmarkId?: string },
-): RiskMetrics {
+export function riskMetrics(monthly: MonthlyRow[], opts?: RiskOptions): RiskMetrics {
   return riskMetricsImpl(monthly, opts);
 }
 
@@ -204,29 +197,74 @@ export function xirr(flows: { date: ISODate; amount: number }[]): number | undef
   return xirrImpl(flows);
 }
 
+// ---------------------------------------------------------------------------
+// Additions (round 2)
+// ---------------------------------------------------------------------------
+
+export type { RiskOptions } from './risk';
+export type { GoalProjectionOptions, GoalProjectionResult } from './goals';
+export type { CorporateActionResult } from './corporate';
+export type { XirrResult } from './xirr';
+export { Engine };
+
+/** XIRR with a day-count choice ('ACT/ACT' = calendar years) and a multiple-roots flag. */
+export function xirrEx(flows: { date: ISODate; amount: number }[], opts?: { dayCount?: 'ACT/365' | 'ACT/ACT'; guess?: number }) {
+  return xirrDetailed(flows, opts?.guess ?? 0.1, opts?.dayCount ?? 'ACT/365');
+}
+
 /**
- * Engine diagnostics from replaying the ledger: negative cash (margin), oversells,
- * unknown instruments, missing FX for historical cost, invalid rows skipped.
+ * Memoized engine: one ledger pass and one daily valuation chain shared by every summary,
+ * series, monthly table and position report for this input (C20).
+ */
+export function createEngine(input: EngineInput): Engine {
+  return createEngineImpl(input);
+}
+
+/** Per-position performance for a period: total return, realized/unrealized, income, FX part, TWR, IRR (C5). */
+export function positionPerformance(
+  input: EngineInput,
+  period: PeriodKey,
+  asOf: ISODate,
+  custom?: { from: ISODate; to: ISODate },
+): PositionPerformance[] {
+  return engineFor(input).positions(period, asOf, custom);
+}
+
+/** Suggested transactions from provider corporate actions, without duplicating recorded ones (C11). */
+export function applyCorporateActions(
+  transactions: Transaction[],
+  actions: CorporateAction[],
+  instruments: Instrument[],
+  opts?: { portfolioId?: string; dividendToleranceDays?: number; splitToleranceDays?: number },
+): CorporateActionResult {
+  return applyCorporateActionsImpl(transactions, actions, instruments, opts);
+}
+
+/** Contribution / goal projection with pessimistic, expected and optimistic scenarios (C21). */
+export function goalProjection(opts: GoalProjectionOptions): GoalProjectionResult {
+  return goalProjectionImpl(opts);
+}
+
+/**
+ * Engine diagnostics from replaying the ledger: negative cash, oversells, unknown instruments,
+ * missing FX, withdrawals above cash, negative account quantities, implicit FX conversions,
+ * income without position, maturity redemptions, rejected rows (invalid dates).
  */
 export function ledgerDiagnostics(input: EngineInput, to?: ISODate): Diagnostic[] {
-  return runLedger(createContext(input), to ? isoToDay(to) : Infinity).diagnostics;
+  if (!to) return engineFor(input).ledger.diagnostics;
+  return runLedger(createContext(input), isoToDay(to)).diagnostics;
 }
 
 /** External flows (explicit and implicit) in transaction currency and base currency at flow-date FX. */
 export function externalFlows(
   input: EngineInput,
 ): { date: ISODate; kind: string; currency: CurrencyCode; amount: number; amountBase: number; transactionId?: string }[] {
-  const ctx = createContext(input);
-  const ledger = runLedger(ctx);
-  return ledger.flows.map((f) => {
-    const r = f.currency === ctx.base ? 1 : (ctx.market.fxAt(f.currency, ctx.base, f.day) ?? f.rateHint ?? ctx.market.fxNearest(f.currency, ctx.base, f.day) ?? 0);
-    return {
-      date: new Date(f.day * 86_400_000).toISOString().slice(0, 10),
-      kind: f.kind,
-      currency: f.currency,
-      amount: f.amount,
-      amountBase: f.amount * r,
-      transactionId: f.transactionId,
-    };
-  });
+  return engineFor(input).ledger.flows.map((f) => ({
+    date: new Date(f.day * 86_400_000).toISOString().slice(0, 10),
+    kind: f.kind,
+    currency: f.currency,
+    amount: f.amount,
+    amountBase: f.base,
+    transactionId: f.transactionId,
+  }));
 }

@@ -96,28 +96,37 @@ describe('COP investor holding US stocks: price vs FX decomposition', () => {
 });
 
 describe('missing data', () => {
-  it('values holdings without price at cost and flags them; flags missing FX', () => {
+  it('values holdings without price at cost (trade prints off) and flags them; flags missing FX', () => {
     const FUND = inst('MANUAL:FIC1', 'COP', { pricing: 'manual' });
-    const input = engine({
-      base: 'COP',
-      instruments: [FUND, AAPL],
-      prices: [],
-      fx: [],
-      options: { implicitCashFlows: false },
-      transactions: [
-        tx({ date: '2024-01-15', type: 'BUY', instrumentId: FUND.id, quantity: 100, price: 1000, fees: 500, currency: 'COP' }),
-        tx({ date: '2024-01-15', type: 'DEPOSIT', amount: 50, currency: 'MXN' }),
-      ],
-    });
-    const v = valuePortfolio(input, '2024-02-01');
+    const mk = (tradePriceObservations: boolean) =>
+      engine({
+        base: 'COP',
+        instruments: [FUND, AAPL],
+        prices: [],
+        fx: [],
+        options: { implicitCashFlows: false, tradePriceObservations },
+        transactions: [
+          tx({ date: '2024-01-15', type: 'BUY', instrumentId: FUND.id, quantity: 100, price: 1000, fees: 500, currency: 'COP' }),
+          tx({ date: '2024-01-15', type: 'DEPOSIT', amount: 50, currency: 'MXN' }),
+        ],
+      });
+    const v = valuePortfolio(mk(false), '2024-02-01');
     expect(v.missingPrices).toEqual(['MANUAL:FIC1']);
     expect(v.missingFx).toEqual(['MXN']);
     const h = v.holdings[0]!;
+    expect(h.priceSource).toBe('cost');
     expect(h.marketValue).toBe(100_500);
     expect(h.marketValueBase).toBe(100_500);
     expect(h.unrealizedGainBase).toBe(0);
     expect(v.cash.find((c) => c.currency === 'MXN')!.amountBase).toBeUndefined();
     expect(v.totalMarketValueBase).toBe(100_500 - 100_500); // COP cash is -100,500 (margin), MXN unpriced
+    // Default: the trade print is a price observation (1000/unit, fees excluded).
+    const w = valuePortfolio(mk(true), '2024-02-01');
+    expect(w.missingPrices).toEqual([]);
+    expect(w.holdings[0]!.priceSource).toBe('trade');
+    expect(w.holdings[0]!.priceDate).toBe('2024-01-15');
+    expect(w.holdings[0]!.marketValue).toBe(100_000);
+    expect(w.holdings[0]!.unrealizedGain).toBe(-500);
   });
 
   it('bond quoted per 100 (priceMultiplier)', () => {

@@ -65,6 +65,8 @@ describe('allocation', () => {
     instruments: [A, PETR, VOO],
     prices: [prices(A.id, 'USD', { '2024-01-01': 100 }), prices(PETR.id, 'BRL', { '2024-01-01': 40 }), prices(VOO.id, 'USD', { '2024-01-01': 400 })],
     fx: [fxs('USD', 'COP', { '2024-01-01': 4000 }), fxs('USD', 'BRL', { '2024-01-01': 5 })],
+    // Keep the COP deposit as cash: foreign buys are funded by implicit deposits, not converted.
+    options: { implicitFx: 'none' },
     transactions: [
       tx({ date: '2024-01-02', type: 'DEPOSIT', amount: 4_000_000, currency: 'COP', account: 'Trii' }),
       tx({ date: '2024-01-02', type: 'BUY', instrumentId: A.id, quantity: 10, price: 100, currency: 'USD', account: 'IBKR' }),

@@ -1,13 +1,15 @@
 /**
  * Generic importer driven by a user-editable column mapping (auto-suggested from es/pt/en headers).
- * Also the engine behind the canonical template and the Colombian statement preset.
+ * Also the engine behind the canonical template, the Colombian statement preset, broker profiles
+ * and PDF tables.
  */
 import type { AssetClass, TransactionType } from '@pm/core';
 import { findHeaderRow } from '../mapping';
-import { classifyType } from '../txtypes';
+import { parseRatio } from '../numbers';
+import { classifyTypeDetailed } from '../txtypes';
 import type { ColumnMapping, DraftTransaction, InstrumentHint, MappingField, NumberFormat, ParsedRow, RawTable } from '../types';
 import { cellToString, isBlankRow, isCurrencyCode, normalizeText } from '../util';
-import { type ParseContext, type PresetDefinition, TOTAL_ROW_RE, cell, columnValues, str, sum } from './common';
+import { type ParseContext, type PresetDefinition, TOTAL_ROW_RE, cell, str, sum } from './common';
 
 const ASSET_CLASS_WORDS: [RegExp, AssetClass][] = [
   [/\b(etf|fondo bursatil|fundo de indice)\b/, 'etf'],
@@ -41,6 +43,11 @@ export interface GenericParseOptions {
   numberHint?: NumberFormat;
   /** Do not consider these values as instruments (e.g. cash pseudo-tickers). */
   cashSymbols?: string[];
+  /** Account label when the file has none (broker profiles). */
+  account?: string;
+  /** Formats known for this source: skip detection. */
+  fixedDateFormat?: boolean;
+  fixedNumberFormat?: boolean;
 }
 
 export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: ColumnMapping, gopts: GenericParseOptions = {}): ParsedRow[] {
@@ -59,19 +66,38 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     fees: many('fees'), taxes: many('taxes'), currency: one('currency'), exchange: one('exchange'),
     account: one('account'), note: one('note'), ratio: one('ratio'), assetClass: one('assetClass'),
     instrumentId: one('instrumentId'), toCurrency: one('toCurrency'), toAmount: one('toAmount'),
-    fxRateToBase: one('fxRateToBase'),
+    fxRateToBase: one('fxRateToBase'), settleDate: one('settleDate'),
   };
   const first = headerRow + 1;
   if (mapping.dateFormat) ctx.dateFormat = mapping.dateFormat;
-  else ctx.initDates(columnValues(table, first, c.date), 'DMY');
+  else ctx.detectDates([c.date], first, 'DMY', { headerRow, settleCol: c.settleDate, fixed: gopts.fixedDateFormat });
   if (mapping.numberFormat) ctx.numberFormat = mapping.numberFormat;
   else {
-    ctx.initNumbers(
+    ctx.detectNumbers(
+      [c.quantity, c.price, c.amount, c.netAmount, c.toAmount, c.fxRateToBase, ...c.fees, ...c.taxes],
+      first,
       gopts.numberHint ?? 'dot',
-      columnValues(table, first, c.quantity, c.price, c.amount, c.netAmount, c.toAmount, c.ratio, c.fxRateToBase, ...c.fees, ...c.taxes),
+      { headerRow, triple: { q: c.quantity, p: c.price, a: c.amount ?? c.netAmount }, fixed: gopts.fixedNumberFormat },
     );
   }
   const cashSymbols = new Set((gopts.cashSymbols ?? []).map((s) => s.toUpperCase()));
+
+  // Sign convention of standalone FEE/TAX rows: "cash-flow" files show costs as negatives, so a
+  // positive cost there is a refund. Decided per file by majority.
+  let costNeg = 0;
+  let costPos = 0;
+  if (c.type !== undefined) {
+    for (let r = first; r < table.rows.length; r++) {
+      const raw = table.rows[r]!;
+      const cls = classifyTypeDetailed(str(raw, c.type), mapping.typeValues);
+      if ((cls.type === 'FEE' || cls.type === 'TAX') && !cls.refund) {
+        const v = ctx.num(cell(raw, c.amount ?? c.netAmount), { line: 0, issues: [] }, 'amount');
+        if (v !== undefined) v < 0 ? costNeg++ : costPos++;
+      }
+    }
+  }
+  const cashFlowCosts = costNeg > costPos;
+
   const out: ParsedRow[] = [];
   for (let r = first; r < table.rows.length; r++) {
     const raw = table.rows[r]!;
@@ -93,17 +119,19 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const date = ctx.date(dateCell, row);
 
     const typeText = str(raw, c.type);
-    let type: TransactionType | undefined = typeText ? classifyType(typeText, mapping.typeValues) : undefined;
-    if (typeText && !type) {
-      row.issues.push(ctx.issue('UNKNOWN_TYPE', 'error', { value: typeText }, row.line, 'type'));
-    }
+    const cls = typeText ? classifyTypeDetailed(typeText, mapping.typeValues) : { refund: false };
+    let type: TransactionType | undefined = cls.type;
     const quantity = ctx.num(cell(raw, c.quantity), row, 'quantity');
     const price = ctx.num(cell(raw, c.price), row, 'price');
     const amount = ctx.num(cell(raw, c.amount), row, 'amount');
     const net = ctx.num(cell(raw, c.netAmount), row, 'netAmount');
     const fees = sum(...c.fees.map((i) => ctx.num(cell(raw, i), row, 'fees')).map((n) => (n === undefined ? n : Math.abs(n))));
     const taxes = sum(...c.taxes.map((i) => ctx.num(cell(raw, i), row, 'taxes')).map((n) => (n === undefined ? n : Math.abs(n))));
-    const ratio = ctx.num(cell(raw, c.ratio), row, 'ratio');
+    const ratioCell = cell(raw, c.ratio);
+    const ratio = parseRatio(ratioCell, ctx.numberFormat);
+    if (ratio !== undefined && Number.isNaN(ratio)) {
+      row.issues.push(ctx.issue('INVALID_NUMBER', 'error', { field: 'ratio', value: cellToString(ratioCell) }, row.line, 'ratio'));
+    }
     const toAmount = ctx.num(cell(raw, c.toAmount), row, 'toAmount');
     const fxRate = ctx.num(cell(raw, c.fxRateToBase), row, 'fxRateToBase');
 
@@ -112,12 +140,24 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const isin = str(raw, c.isin).toUpperCase();
     const name = str(raw, c.name);
     const instrumentId = str(raw, c.instrumentId);
+    const hasIdent = !!(symbol || isin || instrumentId);
+    const signed = amount ?? net;
 
-    if (!type && !typeText) {
-      if (mapping.defaultType) type = mapping.defaultType;
-      else if (quantity !== undefined && quantity !== 0 && (symbol || isin)) type = quantity > 0 ? 'BUY' : 'SELL';
-      else if ((amount ?? net) !== undefined) type = (amount ?? net)! >= 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+    // Direction from signs for neutral words ("Traslado", "Liquidación", "Ajuste") or missing type.
+    if (!type && (cls.signBased || !typeText)) {
+      const kind = cls.signBased;
+      if (kind === 'fraction') type = quantity ? 'SELL' : 'RETURN_OF_CAPITAL';
+      else if (!typeText && mapping.defaultType) type = mapping.defaultType;
+      else if (quantity !== undefined && quantity !== 0 && hasIdent) {
+        if (kind === 'transfer' && (signed === undefined || signed === 0)) type = quantity > 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT';
+        else type = quantity > 0 ? 'BUY' : 'SELL';
+      } else if (signed !== undefined && signed !== 0) type = signed > 0 ? 'DEPOSIT' : 'WITHDRAWAL';
       else row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'type' }, row.line, 'type'));
+    } else if (cls.type === 'SELL' && cls.signBased === undefined && /fracao|fraccion|cash in lieu|leilao/.test(normalizeText(typeText)) && !quantity) {
+      type = 'RETURN_OF_CAPITAL';
+    }
+    if (typeText && !type && !row.issues.some((i) => i.code === 'MISSING_FIELD')) {
+      row.issues.push(ctx.issue('UNKNOWN_TYPE', 'error', { value: typeText }, row.line, 'type'));
     }
     if (!date || !type || row.issues.some((i) => i.severity === 'error')) continue;
     if (!VALID_TYPES.includes(type)) continue;
@@ -130,7 +170,6 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     if (!currency) currency = mapping.defaultCurrency ?? '';
 
     const draft: DraftTransaction = { date, type, currency };
-    const hasIdent = !!(symbol || isin || instrumentId);
     if (hasIdent || (name && !CASH_TYPES.has(type))) {
       const hint: InstrumentHint = {};
       if (instrumentId) hint.id = instrumentId;
@@ -144,7 +183,11 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       if (ac) hint.assetClass = ac;
       draft.instrument = hint;
     }
-    if (quantity !== undefined) draft.quantity = Math.abs(quantity);
+    if (quantity !== undefined) {
+      draft.quantity = Math.abs(quantity);
+      const contradicts = (type === 'BUY' || type === 'TRANSFER_IN') ? quantity < 0 : (type === 'SELL' || type === 'TRANSFER_OUT') ? false : false;
+      if (contradicts && !cls.signBased) row.issues.push(ctx.issue('QUANTITY_SIGN_CONTRADICTS', 'warning', { type }, row.line, 'quantity'));
+    }
     if (price !== undefined) draft.price = Math.abs(price);
     let gross = amount !== undefined ? Math.abs(amount) : undefined;
     if (gross === undefined && net !== undefined) {
@@ -163,8 +206,25 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       if (fees) draft.fees = fees;
       if (taxes) draft.taxes = taxes;
     }
-    if (gross !== undefined) draft.amount = gross;
-    if (ratio !== undefined && ratio !== 0) draft.ratio = Math.abs(ratio);
+    // Signs: reversals and refunds are kept as negative amounts (TAX/FEE refund, dividend reversal).
+    if (gross !== undefined) {
+      if (type === 'FEE' || type === 'TAX') {
+        const sv = signed ?? gross;
+        let refund = cls.refund;
+        if (!refund && signed !== undefined) refund = cashFlowCosts ? sv > 0 : sv < 0;
+        if (refund) {
+          gross = -Math.abs(gross);
+          row.issues.push(ctx.issue('REFUND', 'info', undefined, row.line));
+        }
+      } else if (type === 'DIVIDEND' || type === 'INTEREST') {
+        if ((signed !== undefined && signed < 0) || cls.refund) {
+          gross = -Math.abs(gross);
+          row.issues.push(ctx.issue('DIVIDEND_REVERSAL_ROW', 'warning', undefined, row.line));
+        }
+      }
+      draft.amount = gross;
+    }
+    if (ratio !== undefined && ratio !== 0 && !Number.isNaN(ratio)) draft.ratio = Math.abs(ratio);
     if ((type === 'SPLIT' || type === 'STOCK_DIVIDEND') && draft.ratio === undefined && quantity !== undefined) {
       const reverse = /grupamento|agrupamiento|reverse|contrasplit|inplit|grupamiento/.test(normalizeText(typeText));
       draft.deltaShares = reverse ? -Math.abs(quantity) : quantity;
@@ -175,7 +235,7 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     if (fxRate !== undefined && fxRate > 0) draft.fxRateToBase = fxRate;
     const note = str(raw, c.note);
     if (note) draft.note = note;
-    const account = str(raw, c.account);
+    const account = str(raw, c.account) || gopts.account;
     if (account) draft.account = account;
     row.draft = draft;
   }
@@ -187,7 +247,7 @@ export const genericPreset: PresetDefinition = {
   label: 'Genérico (mapeo de columnas)',
   broker: 'Cualquiera',
   country: 'INTL',
-  fileKinds: ['csv', 'xlsx', 'html'],
+  fileKinds: ['csv', 'xlsx', 'html', 'pdf'],
   confidence: 'medium',
   description: 'Cualquier CSV/Excel con una fila por movimiento; las columnas se asignan automáticamente por nombre (es/pt/en) y se pueden corregir.',
   exportHelp: 'Exporta tus movimientos a Excel o CSV y revisa el mapeo sugerido de columnas.',

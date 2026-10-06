@@ -20,7 +20,7 @@ describe('createDemoData', () => {
     expect(d.portfolio.baseCurrency).toBe('COP');
     expect(d.isDemo).toBe(true);
     const ids = d.instruments.map((i) => i.id);
-    for (const id of ['XBOG:ECOPETROL', 'XBOG:PFBCOLOM', 'XBOG:ISA', 'BVMF:PETR4', 'BVMF:ITUB4', 'BVMF:WEGE3', 'XNAS:AAPL', 'XNAS:MSFT', 'ARCX:VOO', 'XAMS:ASML', 'XMAD:IBE']) {
+    for (const id of ['XBOG:ECOPETROL', 'XBOG:PFCIBEST', 'XBOG:ISA', 'BVMF:PETR4', 'BVMF:ITUB4', 'BVMF:WEGE3', 'XNAS:AAPL', 'XNAS:MSFT', 'ARCX:VOO', 'XAMS:ASML', 'XMAD:IBE']) {
       expect(ids).toContain(id);
     }
   });
@@ -52,7 +52,8 @@ describe('createDemoData', () => {
 
   it('is clean: valid, funded by explicit deposits, fully priced', () => {
     expect(validateTransactions(d.transactions, d.instruments, { today: '2026-10-05' })).toEqual({ errors: [], warnings: [] });
-    expect(ledgerDiagnostics(d.input)).toEqual([]);
+    expect(ledgerDiagnostics(d.input).filter((x) => x.severity !== 'info')).toEqual([]);
+    expect(ledgerDiagnostics(d.input).filter((x) => x.code === 'MATURITY_REDEEMED')).toHaveLength(2);
     expect(externalFlows(d.input).some((f) => f.kind.startsWith('IMPLICIT'))).toBe(false);
     const v = valuePortfolio(d.input, d.asOf);
     expect(v.missingPrices).toEqual([]);
@@ -61,6 +62,27 @@ describe('createDemoData', () => {
     expect(v.totalMarketValueBase).toBeGreaterThan(200_000_000);
     expect(v.cash.every((c) => c.amount >= 0)).toBe(true);
     expect(realizedGains(d.input).length).toBeGreaterThan(0);
+  });
+
+  it('Bancolombia appears as Grupo Cibest (PFCIBEST)', () => {
+    const c = d.instruments.find((i) => i.id === 'XBOG:PFCIBEST')!;
+    expect(c.providerSymbols?.yahoo).toBe('PFCIBEST.CL');
+    expect(d.instruments.some((i) => i.id.includes('PFBCOLOM'))).toBe(false);
+  });
+
+  it('includes CDTs valued by accrual and redeemed at maturity, plus IPC and IBR series', () => {
+    const cdt = valuePortfolio(d.input, '2024-12-31').holdings.find((h) => h.instrumentId === 'MANUAL:CDT-2024')!;
+    expect(cdt.priceSource).toBe('accrual');
+    expect(cdt.marketValue).toBeCloseTo(10_000_000 * Math.pow(1.12, 320 / 365), 2);
+    const red = realizedGains(d.input).find((r) => r.instrumentId === 'MANUAL:CDT-2024')!;
+    expect(red.sellDate).toBe('2025-02-09');
+    expect(red.proceeds).toBeCloseTo(10_000_000 * Math.pow(1.12, 360 / 365), 2);
+    const rows = monthlyPerformance(d.input);
+    expect(rows.every((r) => r.inflation !== undefined && r.realTwr !== undefined)).toBe(true);
+    expect(rows.at(-1)!.indexReturns).toHaveProperty('IBR');
+    const s = performanceSummary(d.input, 'SI', d.asOf);
+    expect(s.realTwr).toBeLessThan(s.twr);
+    expect(s.percentOfIndex).toHaveProperty('IBR');
   });
 
   it('opens the UI in a working state (monthly table, summary, risk, allocation)', () => {

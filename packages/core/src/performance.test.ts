@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { monthlyPerformance, performanceSummary, valueSeries } from './api';
-import { periodStart } from './performance';
+import { periodStart } from './engine';
 import { engine, fxs, inst, prices, tx } from './__fixtures__/helpers';
 
 /**
@@ -11,11 +11,12 @@ import { engine, fxs, inst, prices, tx } from './__fixtures__/helpers';
  *   02-15 DEPOSIT 1120, BUY 10 @ 112          (mid-month inflow, start-of-day convention)
  *   03-10 SELL 5 @ 115, WITHDRAWAL 575         (mid-month outflow, end-of-day convention)
  *
- * February (hand): V(01-31)=1000, V(02-14)=1100, V(02-15)=2240, V(02-29)=2100
- *   r = 1100/1000 * 2240/(1100+1120) * 2100/2240 - 1 = 1.1 * 2100/2220 - 1 = 0.0405405405...
+ * Convention: the flow day is split at the trades (P = pre-flow value at the trade price).
+ * February (hand): V(01-31)=1000, V(02-14)=1100, P(02-15)=10*112=1120, V(02-15)=2240, V(02-29)=2100
+ *   r = 1100/1000 * 1120/1100 * 2240/(1120+1120) * 2100/2240 - 1 = 105/100 - 1 = 0.05 (pure price return)
  *   Modified Dietz: (2100 - 1000 - 1120) / (1000 + 1120 * 15/29) = -0.0126637...
- * March (hand): V(03-09)=2160, V(03-10)=1725 (+575 out), V(03-31)=1800
- *   r = 2160/2100 * (1725+575)/2160 * 1800/1725 - 1 = 120/105 - 1 = 0.142857...
+ * March (hand): V(03-09)=2160, P(03-10)=20*115=2300, V(03-10)=1725 (575 withdrawn), V(03-31)=1800
+ *   r = 2160/2100 * 2300/2160 * 1725/(2300-575) * 1800/1725 - 1 = 120/105 - 1 = 0.142857...
  */
 const X = inst('XNAS:XYZ', 'USD');
 const px = prices(X.id, 'USD', {
@@ -50,8 +51,8 @@ describe('time-weighted return (daily sub-periods)', () => {
     expect(feb.endValueBase).toBe(2100);
     expect(feb.netFlowsBase).toBe(1120);
     expect(feb.gainBase).toBe(-20);
-    expect(feb.twr).toBeCloseTo(1.1 * (2100 / 2220) - 1, 12);
-    expect(feb.twr).toBeCloseTo(0.0405405405405, 12);
+    expect(feb.twr).toBeCloseTo(1.1 * (1120 / 1100) * (2240 / 2240) * (2100 / 2240) - 1, 12);
+    expect(feb.twr).toBeCloseTo(0.05, 12);
     expect(feb.fxReturn).toBeCloseTo(0, 14);
   });
 
@@ -59,7 +60,8 @@ describe('time-weighted return (daily sub-periods)', () => {
     const mar = rows[2]!;
     expect(mar.netFlowsBase).toBe(-575);
     expect(mar.twr).toBeCloseTo(120 / 105 - 1, 12);
-    expect(mar.cumulativeTwr).toBeCloseTo((1.1 * 2100) / 2220 * (120 / 105) - 1, 12);
+    expect(mar.cumulativeTwr).toBeCloseTo(1.05 * (120 / 105) - 1, 12);
+    expect(mar.cumulativeTwr).toBeCloseTo(0.2, 12); // 100 -> 120
   });
 
   it('Modified Dietz fallback', () => {
@@ -113,12 +115,13 @@ describe('performanceSummary', () => {
     expect(s.realizedGainBase).toBeCloseTo(75, 9);
     expect(s.unrealizedGainBase).toBeCloseTo(180, 9);
     expect(s.realizedGainBase + s.unrealizedGainBase).toBeCloseTo(s.gainBase, 9);
-    expect(s.twr).toBeCloseTo((1.1 * 2100) / 2220 * (120 / 105) - 1, 12);
+    expect(s.twr).toBeCloseTo(0.2, 12);
     expect(s.twrAnnualized).toBeUndefined();
     expect(s.mwr).toBeDefined();
-    // MWR solves -1000(01-31) -1120(02-15) +575(03-10) +1800(03-31) = 0 at mwr.
+    // MWR solves -1000(01-31) -1120(02-15) +575(03-10) +1800(03-31) = 0 at mwr, ACT/ACT years
+    // (the year starting 2024-01-31 has 366 days).
     const npv = (r: number) =>
-      -1000 - 1120 * (1 + r) ** (-15 / 365) + 575 * (1 + r) ** (-39 / 365) + 1800 * (1 + r) ** (-60 / 365);
+      -1000 - 1120 * (1 + r) ** (-15 / 366) + 575 * (1 + r) ** (-39 / 366) + 1800 * (1 + r) ** (-60 / 366);
     expect(Math.abs(npv(s.mwr!))).toBeLessThan(1e-6);
   });
 
@@ -134,7 +137,8 @@ describe('performanceSummary', () => {
     const s = performanceSummary(input, 'CUSTOM', '2024-03-31', { from: '2024-02-15', to: '2024-02-29' });
     expect(s.startValueBase).toBe(1100);
     expect(s.netFlowsBase).toBe(1120);
-    expect(s.twr).toBeCloseTo(2240 / 2220 * (2100 / 2240) - 1, 12);
+    expect(s.twr).toBeCloseTo((1120 / 1100) * (2100 / 2240) - 1, 12);
+    expect(s.twr).toBeCloseTo(105 / 110 - 1, 12);
   });
 
   it('period start dates', () => {
@@ -157,8 +161,12 @@ describe('performanceSummary', () => {
     });
     const s = performanceSummary(long, 'SI', '2022-01-01');
     expect(s.twr).toBeCloseTo(0.21, 12);
-    expect(s.twrAnnualized).toBeCloseTo(Math.pow(1.21, 365.25 / 732) - 1, 12);
-    expect(s.mwr).toBeCloseTo(Math.pow(1.21, 365 / 731) - 1, 8);
+    // ACT/ACT years from the close of 2019-12-31 to 2022-01-01 = 2 + 1/365
+    expect(s.years).toBeCloseTo(2 + 1 / 365, 12);
+    expect(s.twrAnnualized).toBeCloseTo(Math.pow(1.21, 1 / (2 + 1 / 365)) - 1, 12);
+    // MWR: -100 on 2020-01-01, +121 on 2022-01-01 = exactly 2 calendar years -> 10 %
+    expect(s.mwr).toBeCloseTo(0.1, 10);
+    expect(s.mwrPeriod).toBeCloseTo(0.21, 10); // compounded over the invested span 2020-01-01 -> 2022-01-01
   });
 });
 

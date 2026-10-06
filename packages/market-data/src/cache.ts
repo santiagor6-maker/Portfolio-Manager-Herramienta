@@ -24,6 +24,8 @@ export interface PersistentStore {
   get(key: string): Promise<CacheEntry | undefined>;
   set(key: string, entry: CacheEntry): Promise<void>;
   delete(key: string): Promise<void>;
+  /** Optional: delete every key starting with `prefix`; returns how many were removed. */
+  deletePrefix?(prefix: string): Promise<number>;
 }
 
 export const MINUTE = 60_000;
@@ -79,6 +81,10 @@ export class LruCache<T = unknown> {
     this.map.delete(key);
   }
 
+  keys(): string[] {
+    return [...this.map.keys()];
+  }
+
   clear(): void {
     this.map.clear();
   }
@@ -95,6 +101,11 @@ export class MemoryStore implements PersistentStore {
   }
   async delete(key: string) {
     this.data.delete(key);
+  }
+  async deletePrefix(prefix: string) {
+    let n = 0;
+    for (const k of [...this.data.keys()]) if (k.startsWith(prefix) && this.data.delete(k)) n++;
+    return n;
   }
 }
 
@@ -153,7 +164,7 @@ export class TieredCache {
     return m ? { entry: m, tier: 'memory' } : undefined;
   }
 
-  async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
+  async set<T>(key: string, value: T, ttlMs: number, opts: { persist?: boolean } = {}): Promise<void> {
     const storedAt = this.now();
     const entry: CacheEntry<T> = {
       value,
@@ -161,7 +172,7 @@ export class TieredCache {
       expiresAt: Number.isFinite(ttlMs) ? storedAt + ttlMs : null,
     };
     this.memory.set(key, entry);
-    if (this.store && ttlMs >= this.persistMinTtlMs) {
+    if (this.store && opts.persist !== false && ttlMs >= this.persistMinTtlMs) {
       try {
         await this.store.set(key, entry);
       } catch {
@@ -175,11 +186,29 @@ export class TieredCache {
     await this.store?.delete(key).catch(() => undefined);
   }
 
+  /** Invalidate every entry whose key starts with `prefix` (memory and store). */
+  async deletePrefix(prefix: string): Promise<{ memory: number; store: number }> {
+    let memory = 0;
+    for (const k of this.memory.keys()) {
+      if (k.startsWith(prefix)) {
+        this.memory.delete(k);
+        memory++;
+      }
+    }
+    const store = (await this.store?.deletePrefix?.(prefix).catch(() => 0)) ?? 0;
+    return { memory, store };
+  }
+
   /**
    * Return a fresh cached value or run `loader` once (concurrent callers share the load).
    * `ttl` may depend on the loaded value. On loader failure an expired entry is served.
    */
-  async getOrLoad<T>(key: string, ttl: number | ((value: T) => number), loader: () => Promise<T>): Promise<LoadResult<T>> {
+  async getOrLoad<T>(
+    key: string,
+    ttl: number | ((value: T) => number),
+    loader: () => Promise<T>,
+    opts: { persist?: boolean } = {},
+  ): Promise<LoadResult<T>> {
     const found = await this.lookup(key);
     if (found && this.fresh(found.entry)) return { value: found.entry.value as T, from: found.tier };
     const running = this.inflight.get(key);
@@ -187,7 +216,7 @@ export class TieredCache {
     const p = (async (): Promise<LoadResult<T>> => {
       try {
         const value = await loader();
-        await this.set(key, value, typeof ttl === 'function' ? ttl(value) : ttl);
+        await this.set(key, value, typeof ttl === 'function' ? ttl(value) : ttl, opts);
         return { value, from: 'load' };
       } catch (e) {
         if (found) return { value: found.entry.value as T, from: 'stale' };

@@ -12,6 +12,12 @@ function clean(raw: string): { body: string; negative: boolean } | undefined {
   let s = raw.replace(/[   ]/g, ' ').trim();
   if (EMPTY_TOKENS.has(s.toLowerCase())) return undefined;
   let negative = false;
+  // Debit / credit suffixes: "1,234.56 DR", "1.234,56 D", "2.345,00 C" (SINACOR, bank statements).
+  const dc = /^(.*\d)\s*(DR|DB|D|CR|C)$/i.exec(s);
+  if (dc) {
+    s = dc[1]!.trim();
+    if (/^d/i.test(dc[2]!)) negative = true;
+  }
   if (/^\(.*\)$/.test(s)) {
     negative = true;
     s = s.slice(1, -1);
@@ -113,4 +119,35 @@ export function detectNumberFormat(values: Iterable<Cell | undefined>, hint?: Nu
   if (comma > dot) return { format: 'comma', confident: true, votes: { dot, comma }, ambiguous };
   if (dot > comma) return { format: 'dot', confident: true, votes: { dot, comma }, ambiguous };
   return { format: hint ?? 'dot', confident: false, votes: { dot, comma }, ambiguous };
+}
+
+/**
+ * Split / bonus ratio: "2", "2:1", "1x10", "1×10", "1/10", "10%" (bonus) → new shares per old share.
+ * "a:b" / "axb" / "a/b" are read as a / b.
+ */
+export function parseRatio(v: Cell | undefined, format: NumberFormat = 'dot'): number | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim();
+  if (!s) return undefined;
+  const m = /^([\d.,]+)\s*(?::|x|×|\/|for|por|para)\s*([\d.,]+)$/i.exec(s);
+  if (m) {
+    const a = parseNumber(m[1]!, format);
+    const b = parseNumber(m[2]!, format);
+    if (a === undefined || b === undefined || !b || Number.isNaN(a) || Number.isNaN(b)) return NaN;
+    return a / b;
+  }
+  const pct = /^([\d.,]+)\s*%$/.exec(s);
+  if (pct) {
+    const n = parseNumber(pct[1]!, format);
+    return n === undefined ? undefined : n / 100;
+  }
+  return parseNumber(s, format);
+}
+
+/** True for strings that read differently under the two conventions ("1.000", "2,450"). */
+export function isAmbiguousNumber(v: Cell | undefined): boolean {
+  if (typeof v !== 'string') return false;
+  const body = v.replace(/[^\d.,]/g, '');
+  return /^[1-9]\d{0,2}[.,]\d{3}$/.test(body);
 }

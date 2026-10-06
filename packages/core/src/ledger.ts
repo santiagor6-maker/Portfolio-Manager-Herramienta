@@ -659,7 +659,7 @@ export class Ledger {
     const netMatched = net * (matched / q);
     this.credit(tx, tx.currency, netMatched);
     for (const p of pieces) {
-      const share = p.quantity / q;
+      const share = p.exact / q;
       const proceeds = net * k * share;
       const proceedsBase = net * rate * share;
       this.pushRealized({
@@ -703,14 +703,14 @@ export class Ledger {
     // Cash in lieu of the fractional share (reverse splits): sell the fraction for `amount`.
     const cil = num(tx.amount);
     if (cil > 0) {
-      const q = b.quantity;
+      const q = b.lots.reduce((acc, l) => acc + l.quantity, 0); // exact, not the rounded display quantity
       const frac = q - Math.floor(q + 1e-9);
       if (frac > QTY_EPS) {
         const k = this.convert(tx, day, tx.currency, inst.currency);
         const rate = this.txRate(tx, day);
         const { pieces } = b.remove(frac);
         for (const p of pieces) {
-          const share = p.quantity / frac;
+          const share = p.exact / frac;
           this.pushRealized({
             day,
             instrumentId: inst.id,

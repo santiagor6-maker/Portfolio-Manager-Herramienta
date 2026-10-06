@@ -283,7 +283,8 @@ export class Engine {
     const x = xirrDetailed(cf, 0.1, 'ACT/ACT');
     if (x.rate !== undefined) {
       s.mwr = x.rate;
-      s.mwrPeriod = Math.pow(1 + x.rate, years) - 1;
+      // Not annualized: compounded over the span money was invested (first cash flow -> to).
+      s.mwrPeriod = Math.pow(1 + x.rate, yearFraction(isoToDay(cf[0]!.date), toDay)) - 1;
     }
     if (x.multipleRoots) s.mwrMultipleRoots = true;
 

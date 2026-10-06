@@ -1,7 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 import type {
+  CorporateAction,
   CurrencyCode,
   FxPoint,
+  IndexSeries,
   Instrument,
   ISODate,
   Portfolio,
@@ -69,6 +71,64 @@ export interface CachedQuote {
   updatedAt: number;
 }
 
+/** Cached rate/inflation index (CDI, IPCA, IPC_CO, IBR...). Added in schema v3. */
+export interface CachedIndexSeries extends IndexSeries {
+  updatedAt: number;
+  isDemo?: boolean;
+}
+
+/** Provider corporate action (dividend/split...) for a held instrument. Added in schema v3. */
+export interface StoredCorporateAction extends CorporateAction {
+  /** `${instrumentId}|${type}|${date}` */
+  id: string;
+  updatedAt: number;
+}
+
+export interface WatchItem {
+  instrumentId: string;
+  addedAt: number;
+  note?: string;
+}
+
+export type AlertKind = 'priceAbove' | 'priceBelow' | 'monthClose' | 'dividend' | 'dayMove';
+
+export interface AlertRule {
+  id: string;
+  kind: AlertKind;
+  instrumentId?: string;
+  /** priceAbove/priceBelow: price in instrument currency; dayMove: absolute decimal change (0.05). */
+  threshold?: number;
+  enabled: boolean;
+  createdAt: number;
+  /** Last time it fired (ms) and the key of what fired (avoids repeating). */
+  lastFiredAt?: number;
+  lastFiredKey?: string;
+}
+
+export interface AlertEvent {
+  id: string;
+  ruleId?: string;
+  kind: AlertKind;
+  title: string;
+  body: string;
+  createdAt: number;
+  read: boolean;
+  href?: string;
+}
+
+export interface Goal {
+  id: string;
+  name: string;
+  target: number;
+  currency: CurrencyCode;
+  targetDate: ISODate;
+  monthlyContribution: number;
+  expectedReturn: number;
+  /** Portfolio id or 'all' whose value counts toward the goal. */
+  portfolioId: string;
+  createdAt: number;
+}
+
 export interface SettingRow {
   key: string;
   value: unknown;
@@ -91,6 +151,12 @@ export class PortfolioDB extends Dexie {
   quotes!: Table<CachedQuote, string>;
   settings!: Table<SettingRow, string>;
   meta!: Table<MetaRow, string>;
+  indexSeries!: Table<CachedIndexSeries, string>;
+  corporateActions!: Table<StoredCorporateAction, string>;
+  watchlist!: Table<WatchItem, string>;
+  alerts!: Table<AlertRule, string>;
+  alertEvents!: Table<AlertEvent, string>;
+  goals!: Table<Goal, string>;
 
   constructor(name = DB_NAME) {
     super(name);
@@ -122,10 +188,20 @@ export class PortfolioDB extends Dexie {
             if (!t.source) t.source = 'manual';
           });
       });
+
+    // v3: rate/inflation indices, provider corporate actions, watchlist, alerts and goals.
+    this.version(3).stores({
+      indexSeries: 'id, updatedAt',
+      corporateActions: 'id, instrumentId, date',
+      watchlist: 'instrumentId',
+      alerts: 'id, kind',
+      alertEvents: 'id, createdAt, read',
+      goals: 'id',
+    });
   }
 }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export let db = new PortfolioDB();
 

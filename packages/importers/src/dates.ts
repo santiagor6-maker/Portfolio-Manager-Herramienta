@@ -100,7 +100,7 @@ export function detectDateFormat(values: Iterable<Cell | undefined>, hint: DateF
     else if (t.kind === 'ab') {
       if (t.a > 12 && t.b <= 12) dmy++;
       else if (t.b > 12 && t.a <= 12) mdy++;
-      else ambiguous++;
+      else if (t.a !== t.b) ambiguous++;
     }
   }
   if (dmy && mdy) return { format: dmy >= mdy ? 'DMY' : 'MDY', confident: false, inconsistent: true, ambiguous };
@@ -121,6 +121,11 @@ export function parseDate(v: Cell | undefined, format: DateFormat = 'DMY'): ISOD
     return excelSerialToIso(v);
   }
   if (typeof v !== 'string') return undefined;
+  // Excel serial stored as text ("45292", "45292.5").
+  if (/^\d{5}(\.\d+)?$/.test(v.trim())) {
+    const n = Number(v.trim());
+    if (n >= 20000 && n <= 80000) return excelSerialToIso(n);
+  }
   const t = tokenize(v);
   if (!t) return undefined;
   if (t.kind === 'iso' || t.kind === 'named') return makeIso(t.y, t.m, t.d);
@@ -130,4 +135,21 @@ export function parseDate(v: Cell | undefined, format: DateFormat = 'DMY'): ISOD
 
 export function dateFormatLabel(f: DateFormat): string {
   return f === 'DMY' ? 'DD/MM/AAAA' : f === 'MDY' ? 'MM/DD/AAAA' : 'AAAA-MM-DD';
+}
+
+/** a/b/yyyy where both readings are valid and different (03/04/2024). */
+export function isAmbiguousDate(v: Cell | undefined): boolean {
+  if (typeof v !== 'string') return false;
+  const t = tokenize(v);
+  return !!t && t.kind === 'ab' && t.a <= 12 && t.b <= 12 && t.a !== t.b;
+}
+
+/** Both readings of a date cell (for confirmation dialogs and cross-checks). */
+export function dateReadings(v: Cell | undefined): { DMY?: ISODate; MDY?: ISODate } {
+  return { DMY: parseDate(v, 'DMY'), MDY: parseDate(v, 'MDY') };
+}
+
+/** Hour with AM/PM marker → strong US (MDY) hint. */
+export function hasAmPm(v: Cell | undefined): boolean {
+  return typeof v === 'string' && /\d{1,2}:\d{2}(:\d{2})?\s*[ap]\.?m\.?\b/i.test(v);
 }

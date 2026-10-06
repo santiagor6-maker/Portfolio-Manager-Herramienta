@@ -21,6 +21,8 @@ export const EXCHANGES: Record<string, ExchangeInfo> = {
   XASE: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'NYSE American' },
   BATS: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'Cboe BZX' },
   OTC: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'OTC' },
+  /** US listing whose exact exchange is unknown (Yahoo needs no suffix for US symbols). */
+  US: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'EE. UU. (bolsa por confirmar)' },
   XMEX: { country: 'MX', currency: 'MXN', yahooSuffix: '.MX', name: 'BMV' },
   XSGO: { country: 'CL', currency: 'CLP', yahooSuffix: '.SN', name: 'Bolsa de Santiago' },
   XLIM: { country: 'PE', currency: 'PEN', yahooSuffix: '.LM', name: 'BVL' },
@@ -50,7 +52,7 @@ export const EXCHANGES: Record<string, ExchangeInfo> = {
   MANUAL: { country: 'INTL', currency: 'USD', name: 'Manual' },
 };
 
-export const US_EXCHANGES = new Set(['XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'OTC']);
+export const US_EXCHANGES = new Set(['XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'OTC', 'US']);
 
 /** Yahoo suffix → MIC (for symbols such as `PETR4.SA`, `SAP.DE`, eToro `BARC.L`). */
 export const YAHOO_SUFFIX_TO_MIC: Record<string, ExchangeCode> = {
@@ -213,4 +215,17 @@ export const ISIN_COUNTRY_EXCHANGE: Record<string, ExchangeCode> = {
 export const CURRENCY_EXCHANGE: Record<string, ExchangeCode> = {
   BRL: 'BVMF', COP: 'XBOG', MXN: 'XMEX', CLP: 'XSGO', PEN: 'XLIM', GBP: 'XLON', GBX: 'XLON', CHF: 'XSWX', SEK: 'XSTO',
   DKK: 'XCSE', NOK: 'XOSL', CAD: 'XTSE', HKD: 'XHKG', JPY: 'XTKS', AUD: 'XASX',
+};
+
+/**
+ * Unambiguous European tickers → MIC. Symbols that exist on several EU venues with different
+ * companies (e.g. SAN = Santander in Madrid, Sanofi in Paris) are deliberately absent.
+ */
+export const EU_TICKERS: Record<string, ExchangeCode> = {
+  ITX: 'XMAD', IBE: 'XMAD', TEF: 'XMAD', REP: 'XMAD', BBVA: 'XMAD', CABK: 'XMAD', AENA: 'XMAD', FER: 'XMAD', AMS: 'XMAD', ELE: 'XMAD',
+  SAP: 'XETR', SIE: 'XETR', ALV: 'XETR', DTE: 'XETR', BAS: 'XETR', BAYN: 'XETR', VOW3: 'XETR', MBG: 'XETR', BMW: 'XETR', ADS: 'XETR',
+  IFX: 'XETR', MUV2: 'XETR', DBK: 'XETR', EUNL: 'XETR', SXR8: 'XETR', VWCE: 'XETR', XDWD: 'XETR', IS3N: 'XETR',
+  MC: 'XPAR', OR: 'XPAR', TTE: 'XPAR', AIR: 'XPAR', BNP: 'XPAR', SU: 'XPAR', RMS: 'XPAR', KER: 'XPAR', CW8: 'XPAR',
+  ASML: 'XAMS', INGA: 'XAMS', ADYEN: 'XAMS', HEIA: 'XAMS', PRX: 'XAMS', IWDA: 'XAMS', VWRL: 'XAMS',
+  ENEL: 'XMIL', ISP: 'XMIL', UCG: 'XMIL', ENI: 'XMIL', RACE: 'XMIL', STLAM: 'XMIL',
 };

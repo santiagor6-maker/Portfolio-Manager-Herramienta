@@ -12,6 +12,7 @@ import {
   CO_REITS,
   CO_TICKERS,
   CURRENCY_EXCHANGE,
+  EU_TICKERS,
   EXCHANGES,
   ISIN_COUNTRY_EXCHANGE,
   ISIN_DIRECTORY,
@@ -29,7 +30,7 @@ import type { InstrumentHint } from './types';
 import { normalizeText } from './util';
 
 export interface ResolveNote {
-  code: 'EXCHANGE_GUESSED' | 'SYMBOL_FROM_ISIN' | 'CURRENCY_MISMATCH';
+  code: 'EXCHANGE_GUESSED' | 'SYMBOL_FROM_ISIN' | 'CURRENCY_MISMATCH' | 'MGC_FOREIGN_LISTING' | 'EXCHANGE_REQUIRED' | 'EXCHANGE_REFINED';
   params: Record<string, string | number>;
 }
 
@@ -37,6 +38,14 @@ export interface Resolution {
   instrument: Instrument;
   isNew: boolean;
   notes: ResolveNote[];
+  /** Trade currency differs from the instrument's on purpose (MGC: US share bought in COP). */
+  foreignListing?: boolean;
+  /** Suggested change to an existing instrument (e.g. `US:ENB` now known to be on NYSE). */
+  update?: { id: string; changes: Partial<Instrument>; reason: string };
+}
+
+export interface ResolveError {
+  error: ResolveNote;
 }
 
 const FIXED_INCOME_RE = /\b(tesouro|cdb|lci|lca|cdt|debenture|cri|cra|lf|tes|bono|bond|ntn|lft|ltn)\b/;
@@ -74,7 +83,12 @@ export function guessAssetClass(symbol: string, exchange: ExchangeCode, name?: s
 }
 
 export interface ResolverOptions {
+  /** MIC used for unknown US tickers. Default 'US' (exchange to be confirmed; id `US:SYMBOL`). */
   defaultUsExchange?: ExchangeCode;
+  /** Reference catalog (e.g. @pm/market-data CATALOG.instruments) consulted after the user's instruments. */
+  catalog?: Instrument[];
+  /** User answers: symbol/spec → instrument id ("BVMF:PETR4") or MIC ("XMAD"). */
+  securityMap?: Record<string, string>;
 }
 
 export class InstrumentResolver {
@@ -84,11 +98,33 @@ export class InstrumentResolver {
   private readonly created = new Map<string, Instrument>();
   private readonly matched = new Set<string>();
 
+  private readonly catalogById = new Map<string, Instrument>();
+  private readonly catalogByIsin = new Map<string, Instrument>();
+  private readonly catalogBySymbol = new Map<string, Instrument[]>();
+  private readonly securityMap = new Map<string, string>();
+
   constructor(
     existing: Instrument[] = [],
     private readonly opts: ResolverOptions = {},
   ) {
     for (const i of existing) this.index(i);
+    for (const i of opts.catalog ?? []) {
+      this.catalogById.set(i.id, i);
+      if (i.isin) this.catalogByIsin.set(i.isin.toUpperCase(), i);
+      const k = i.symbol.toUpperCase();
+      this.catalogBySymbol.set(k, [...(this.catalogBySymbol.get(k) ?? []), i]);
+    }
+    for (const [k, v] of Object.entries(opts.securityMap ?? {})) this.securityMap.set(normalizeText(k), v.trim());
+  }
+
+  /** Adopt a catalog instrument as a new suggestion (copy, so callers can't mutate the catalog). */
+  private adopt(i: Instrument): Resolution {
+    const known = this.byId.get(i.id);
+    if (known) return this.existing(known);
+    const copy: Instrument = JSON.parse(JSON.stringify(i));
+    this.created.set(copy.id, copy);
+    this.index(copy);
+    return { instrument: copy, isNew: true, notes: [] };
   }
 
   private index(i: Instrument): void {
@@ -108,11 +144,18 @@ export class InstrumentResolver {
     return this.matched.size;
   }
 
-  private usExchange(symbol: string, notes: ResolveNote[]): ExchangeCode {
+  private knownUsExchange(symbol: string): ExchangeCode | undefined {
     if (US_NASDAQ.has(symbol)) return 'XNAS';
     if (US_NYSE.has(symbol)) return 'XNYS';
     if (US_ARCA.has(symbol)) return 'ARCX';
-    const ex = this.opts.defaultUsExchange ?? 'XNAS';
+    const cat = (this.catalogBySymbol.get(symbol) ?? []).find((i) => EXCHANGES[i.exchange]?.country === 'US');
+    return cat?.exchange;
+  }
+
+  private usExchange(symbol: string, notes: ResolveNote[]): ExchangeCode {
+    const known = this.knownUsExchange(symbol);
+    if (known) return known;
+    const ex = this.opts.defaultUsExchange ?? 'US';
     notes.push({ code: 'EXCHANGE_GUESSED', params: { symbol, exchange: ex } });
     return ex;
   }
@@ -122,8 +165,26 @@ export class InstrumentResolver {
     return { instrument: i, isNew, notes: [] };
   }
 
-  resolve(hint: InstrumentHint): Resolution | undefined {
+  resolve(hint: InstrumentHint): Resolution | ResolveError | undefined {
     const notes: ResolveNote[] = [];
+    if (hint.create) {
+      const known = this.byId.get(hint.create.id);
+      if (known) return this.existing(known);
+      const inst: Instrument = { ...hint.create };
+      this.created.set(inst.id, inst);
+      this.index(inst);
+      return { instrument: inst, isNew: true, notes };
+    }
+    // User answers first ("PETROBRAS PN N2" → BVMF:PETR4, "SAN" → XMAD).
+    for (const key of [hint.symbol, hint.name, hint.isin]) {
+      const mapped = key ? this.securityMap.get(normalizeText(key)) : undefined;
+      if (!mapped) continue;
+      if (mapped.includes(':')) {
+        const [ex, ...rest] = mapped.split(':');
+        hint = { ...hint, id: mapped, exchange: ex, symbol: rest.join(':') };
+      } else hint = { ...hint, exchange: mapped };
+      break;
+    }
     if (hint.id) {
       const known = this.byId.get(hint.id);
       if (known) return this.existing(known);
@@ -132,7 +193,10 @@ export class InstrumentResolver {
     if (isin && isValidIsin(isin)) {
       const known = this.byIsin.get(isin);
       if (known) return this.existing(known);
+      const cat = this.catalogByIsin.get(isin);
+      if (cat) return this.adopt(cat);
     }
+    if (hint.id && this.catalogById.has(hint.id)) return this.adopt(this.catalogById.get(hint.id)!);
     let symbol = hint.symbol?.trim().toUpperCase().replace(/\s+/g, ' ');
     let exchange = normalizeExchange(hint.exchange);
     let currency = hint.currency?.toUpperCase();
@@ -181,11 +245,24 @@ export class InstrumentResolver {
     }
     if (!symbol) return undefined;
 
+    let foreignListing = false;
     if (!exchange) {
       const country = hint.country?.toUpperCase() ?? (isin && isValidIsin(isin) ? isin.slice(0, 2) : undefined);
+      const catHits = this.catalogBySymbol.get(symbol) ?? [];
+      const catSameCcy = catHits.filter((i) => !currency || i.currency === currency);
+      const usKnown = this.knownUsExchange(symbol);
       if (B3_TICKER_RE_STRICT.test(symbol) && (!currency || currency === 'BRL')) exchange = 'BVMF';
-      else if (CO_TICKERS.has(symbol) && (!currency || currency === 'COP')) exchange = 'XBOG';
-      else if (currency && CURRENCY_EXCHANGE[currency] && !(currency === 'COP' && country === 'US')) exchange = CURRENCY_EXCHANGE[currency];
+      else if (CO_TICKERS.has(symbol) || catHits.some((i) => i.exchange === 'XBOG')) exchange = 'XBOG';
+      else if (catSameCcy.length === 1) return this.adopt(catSameCcy[0]!);
+      else if (currency === 'COP' && (usKnown || country === 'US')) {
+        // Mercado Global Colombiano: foreign share traded in COP → the US instrument, trade kept in COP.
+        exchange = usKnown ?? this.usExchange(symbol, notes);
+        foreignListing = true;
+        notes.push({ code: 'MGC_FOREIGN_LISTING', params: { symbol, id: `${exchange}:${symbol}` } });
+      } else if (currency === 'EUR' && !country) {
+        exchange = EU_TICKERS[symbol];
+        if (!exchange) return { error: { code: 'EXCHANGE_REQUIRED', params: { symbol, currency } } };
+      } else if (currency && CURRENCY_EXCHANGE[currency] && !(currency === 'COP' && country === 'US')) exchange = CURRENCY_EXCHANGE[currency];
       else if (country === 'US' || currency === 'USD') exchange = this.usExchange(symbol, notes);
       else if (country === 'CO') exchange = 'XBOG';
       else if (country === 'BR') exchange = 'BVMF';
@@ -203,21 +280,31 @@ export class InstrumentResolver {
     if (exchange === 'BVMF' && /^[A-Z0-9]{4}\d{1,2}F$/.test(symbol)) symbol = symbol.slice(0, -1); // fractional market
 
     const id = `${exchange}:${symbol}`;
+    const keepNotes = notes.filter((n) => n.code === 'MGC_FOREIGN_LISTING');
     const known = this.byId.get(id);
-    if (known) return this.existing(known);
+    if (known) return { ...this.existing(known), notes: keepNotes, foreignListing };
     const created = this.created.get(id);
-    if (created) return { instrument: created, isNew: true, notes: [] };
-    // Same symbol already in the user's list on an exchange we only guessed → reuse it.
-    if (notes.some((n) => n.code === 'EXCHANGE_GUESSED')) {
-      const same = this.bySymbol.get(symbol);
-      if (same && same.length === 1) return this.existing(same[0]!);
+    if (created) return { instrument: created, isNew: true, notes: keepNotes, foreignListing };
+    const same = (this.bySymbol.get(symbol) ?? []).filter((i) => EXCHANGES[i.exchange]?.country === EXCHANGES[exchange!]?.country);
+    // Same symbol already known on an exchange we only guessed → reuse it.
+    if (notes.some((n) => n.code === 'EXCHANGE_GUESSED') && same.length === 1) {
+      return { ...this.existing(same[0]!), notes: keepNotes, foreignListing };
+    }
+    // A pseudo 'US:' instrument exists and now the real exchange is known → reuse + suggest refinement.
+    if (EXCHANGES[exchange]?.country === 'US' && exchange !== 'US') {
+      const pseudo = this.byId.get(`US:${symbol}`);
+      if (pseudo) {
+        const r = this.existing(pseudo);
+        return {
+          ...r,
+          notes: [{ code: 'EXCHANGE_REFINED', params: { id: pseudo.id, exchange } }],
+          update: { id: pseudo.id, changes: { exchange }, reason: `exchange:${exchange}` },
+        };
+      }
     }
 
     const info = EXCHANGES[exchange];
     const instCurrency = exchange === 'MANUAL' || exchange === 'CRYPTO' || !info ? currency ?? info?.currency ?? 'USD' : info.currency;
-    if (currency && instCurrency !== currency) {
-      notes.push({ code: 'CURRENCY_MISMATCH', params: { currency, instrumentCurrency: instCurrency } });
-    }
     const instrument: Instrument = {
       id,
       symbol,
@@ -231,8 +318,9 @@ export class InstrumentResolver {
     const ySym = yahooSymbol(symbol, exchange);
     if (ySym && exchange !== 'MANUAL') instrument.providerSymbols = { yahoo: ySym };
     instrument.pricing = exchange === 'MANUAL' ? 'manual' : 'auto';
+    if (hint.extra) Object.assign(instrument, hint.extra);
     this.created.set(id, instrument);
     this.index(instrument);
-    return { instrument, isNew: true, notes };
+    return { instrument, isNew: true, notes, foreignListing };
   }
 }

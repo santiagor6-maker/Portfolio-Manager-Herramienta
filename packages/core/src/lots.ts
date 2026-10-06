@@ -35,7 +35,10 @@ export interface LotState {
 
 export interface ClosedPiece {
   openDay: number;
+  /** Rounded to 1e-9 for display. */
   quantity: number;
+  /** Exact quantity (use for proportional allocation of proceeds). */
+  exact: number;
   cost: number;
   costBase: number;
 }
@@ -100,6 +103,7 @@ export class LotBook {
       pieces.push({
         openDay: lot.openDay,
         quantity: roundQty(take),
+        exact: take,
         cost: take * lot.unitCost,
         costBase: take * lot.unitCostBase,
       });

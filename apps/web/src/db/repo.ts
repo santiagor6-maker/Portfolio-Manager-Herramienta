@@ -1,9 +1,13 @@
-import type { CostMethod, CurrencyCode, FxSeries, PriceSeries } from '@pm/core';
+import type { AllocationDimension, CorporateAction, CostMethod, CurrencyCode, FxSeries, IndexSeries, PriceSeries } from '@pm/core';
 import {
   db,
   SCHEMA_VERSION,
+  type AlertRule,
   type CachedFxSeries,
+  type CachedIndexSeries,
   type CachedPriceSeries,
+  type Goal,
+  type WatchItem,
   type CachedQuote,
   type ManualPrice,
   type StoredInstrument,
@@ -35,6 +39,17 @@ export interface AppSettings {
   /** Annual risk-free rate (decimal) for Sharpe/Sortino. */
   riskFreeRate: number;
   autoRefresh: boolean;
+  /** Monthly table: column preset or explicit column list, and row density. */
+  monthlyColumns: string[] | 'essential' | 'complete';
+  density: 'comfortable' | 'compact';
+  /** Show real (inflation-adjusted) returns in the monthly table and heatmap. */
+  realReturns: boolean;
+  /** Rebalancing targets per dimension: key -> weight (0..1). */
+  targets: Partial<Record<AllocationDimension, Record<string, number>>>;
+  /** Onboarding wizard completed (or dismissed). */
+  onboarded: boolean;
+  /** Notification API permission was requested for alerts. */
+  notifications: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -48,6 +63,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   benchmarks: BENCHMARK_IDS,
   riskFreeRate: 0.04,
   autoRefresh: true,
+  monthlyColumns: 'essential',
+  density: 'comfortable',
+  realReturns: false,
+  targets: {},
+  onboarded: false,
+  notifications: false,
 };
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -183,6 +204,24 @@ export async function mergeFxSeries(series: FxSeries): Promise<void> {
   await db.fxSeries.put({ ...series, pair, points, updatedAt: Date.now(), isDemo: false });
 }
 
+export async function mergeIndexSeries(series: IndexSeries): Promise<void> {
+  const prev = await db.indexSeries.get(series.id);
+  const map = new Map<string, number>();
+  if (prev && !prev.isDemo && prev.kind === series.kind) for (const p of prev.points) map.set(p.date, p.value);
+  for (const p of series.points) map.set(p.date, p.value);
+  const points = [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, value]) => ({ date, value }));
+  await db.indexSeries.put({ ...series, points, updatedAt: Date.now(), isDemo: false });
+}
+
+export function corporateActionId(a: CorporateAction): string {
+  return `${a.instrumentId}|${a.type}|${a.date}`;
+}
+
+export async function cacheCorporateActions(actions: CorporateAction[]): Promise<void> {
+  const now = Date.now();
+  if (actions.length) await db.corporateActions.bulkPut(actions.map((a) => ({ ...a, id: corporateActionId(a), updatedAt: now })));
+}
+
 export async function cacheQuotes(quotes: Omit<CachedQuote, 'updatedAt'>[]): Promise<void> {
   const now = Date.now();
   if (quotes.length) await db.quotes.bulkPut(quotes.map((q) => ({ ...q, updatedAt: now })));
@@ -199,12 +238,13 @@ export interface SeedData {
   prices: PriceSeries[];
   fx: FxSeries[];
   manualPrices?: Omit<ManualPrice, 'updatedAt'>[];
+  indexSeries?: IndexSeries[];
 }
 
 export async function seedData(data: SeedData, isDemo: boolean): Promise<void> {
   await db.transaction(
     'rw',
-    [db.portfolios, db.instruments, db.transactions, db.priceSeries, db.fxSeries, db.manualPrices],
+    [db.portfolios, db.instruments, db.transactions, db.priceSeries, db.fxSeries, db.manualPrices, db.indexSeries],
     async () => {
       await db.portfolios.bulkPut(data.portfolios.map((p) => ({ ...p, isDemo })));
       // Never overwrite a user's instrument with a demo copy.
@@ -223,6 +263,10 @@ export async function seedData(data: SeedData, isDemo: boolean): Promise<void> {
         if (!prev || prev.isDemo || !isDemo) await db.fxSeries.put({ ...s, pair, updatedAt: now, isDemo });
       }
       for (const m of data.manualPrices ?? []) await db.manualPrices.put({ ...m, updatedAt: now });
+      for (const s of data.indexSeries ?? []) {
+        const prev = await db.indexSeries.get(s.id);
+        if (!prev || prev.isDemo || !isDemo) await db.indexSeries.put({ ...s, updatedAt: now, isDemo });
+      }
     },
   );
 }
@@ -259,15 +303,22 @@ export interface BackupFile {
   settings: { key: string; value: unknown }[];
   priceSeries?: CachedPriceSeries[];
   fxSeries?: CachedFxSeries[];
+  indexSeries?: CachedIndexSeries[];
+  watchlist?: WatchItem[];
+  alerts?: AlertRule[];
+  goals?: Goal[];
 }
 
 export async function exportBackup(includeMarketCache = true): Promise<BackupFile> {
-  const [portfolios, instruments, transactions, manualPrices, settings] = await Promise.all([
+  const [portfolios, instruments, transactions, manualPrices, settings, watchlist, alerts, goals] = await Promise.all([
     db.portfolios.toArray(),
     db.instruments.toArray(),
     db.transactions.toArray(),
     db.manualPrices.toArray(),
     db.settings.toArray(),
+    db.watchlist.toArray(),
+    db.alerts.toArray(),
+    db.goals.toArray(),
   ]);
   const out: BackupFile = {
     app: 'portafolio-pro',
@@ -278,10 +329,14 @@ export async function exportBackup(includeMarketCache = true): Promise<BackupFil
     transactions,
     manualPrices,
     settings,
+    watchlist,
+    alerts,
+    goals,
   };
   if (includeMarketCache) {
     out.priceSeries = await db.priceSeries.toArray();
     out.fxSeries = await db.fxSeries.toArray();
+    out.indexSeries = await db.indexSeries.toArray();
   }
   return out;
 }
@@ -311,6 +366,10 @@ export function parseBackup(text: string): BackupFile {
     settings: b.settings ?? [],
     priceSeries: b.priceSeries,
     fxSeries: b.fxSeries,
+    indexSeries: b.indexSeries,
+    watchlist: b.watchlist,
+    alerts: b.alerts,
+    goals: b.goals,
   };
 }
 
@@ -318,7 +377,7 @@ export function parseBackup(text: string): BackupFile {
 export async function restoreBackup(b: BackupFile, mode: 'replace' | 'merge' = 'replace'): Promise<void> {
   await db.transaction(
     'rw',
-    [db.portfolios, db.instruments, db.transactions, db.manualPrices, db.settings, db.priceSeries, db.fxSeries],
+    [db.portfolios, db.instruments, db.transactions, db.manualPrices, db.settings, db.priceSeries, db.fxSeries, db.indexSeries, db.watchlist, db.alerts, db.goals],
     async () => {
       if (mode === 'replace') {
         await Promise.all([
@@ -336,11 +395,19 @@ export async function restoreBackup(b: BackupFile, mode: 'replace' | 'merge' = '
       await db.settings.bulkPut(b.settings);
       if (b.priceSeries?.length) await db.priceSeries.bulkPut(b.priceSeries);
       if (b.fxSeries?.length) await db.fxSeries.bulkPut(b.fxSeries);
+      if (b.indexSeries?.length) await db.indexSeries.bulkPut(b.indexSeries);
+      if (b.watchlist?.length) await db.watchlist.bulkPut(b.watchlist);
+      if (b.alerts?.length) await db.alerts.bulkPut(b.alerts);
+      if (b.goals?.length) await db.goals.bulkPut(b.goals);
     },
   );
 }
 
-/** Deletes everything (user data + caches + settings). */
+/**
+ * Deletes everything (user data + caches + settings). The sample portfolio is NOT seeded again
+ * afterwards: the app opens empty with the onboarding wizard.
+ */
 export async function wipeAll(): Promise<void> {
   await Promise.all(db.tables.map((t) => t.clear()));
+  await setMeta('demoSeeded', true);
 }
