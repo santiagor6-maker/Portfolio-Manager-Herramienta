@@ -5,7 +5,11 @@ import { Layout } from './components/Layout';
 import { useApp } from './store/app';
 import { useAnalysisDriver } from './hooks/useData';
 import { Skeleton } from './components/ui';
-import DashboardPage from './pages/Dashboard';
+const DashboardPage = lazy(() => import('./pages/Dashboard'));
+const ReportPage = lazy(() => import('./pages/Report'));
+const GoalsPage = lazy(() => import('./pages/Goals'));
+const WatchlistPage = lazy(() => import('./pages/Watchlist'));
+const AlertsPage = lazy(() => import('./pages/Alerts'));
 
 const PositionsPage = lazy(() => import('./pages/Positions'));
 const InstrumentPage = lazy(() => import('./pages/Instrument'));
@@ -52,7 +56,11 @@ export function App() {
       <Suspense fallback={null}>
         <Routes>
           <Route element={<Layout />}>
-            <Route index element={<DashboardPage />} />
+            <Route index element={<Lazy el={<DashboardPage />} />} />
+            <Route path="informe" element={<Lazy el={<ReportPage />} />} />
+            <Route path="metas" element={<Lazy el={<GoalsPage />} />} />
+            <Route path="lista" element={<Lazy el={<WatchlistPage />} />} />
+            <Route path="alertas" element={<Lazy el={<AlertsPage />} />} />
             <Route path="posiciones" element={<Lazy el={<PositionsPage />} />} />
             <Route path="posiciones/:id" element={<Lazy el={<InstrumentPage />} />} />
             <Route path="mensual" element={<Lazy el={<MonthlyPage />} />} />

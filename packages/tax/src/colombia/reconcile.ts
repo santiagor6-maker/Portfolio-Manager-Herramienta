@@ -56,7 +56,6 @@ export function reconcileColombia(report: ColombiaTaxReport, docs: { exogena?: C
   const ex = docs.exogena ?? [];
   const certs = docs.certificados ?? [];
   const t = report.ingresos.totals;
-  const v = report.ventas.totals;
   const sumEx = (c: CoExogenaItem['concepto']) => ex.filter((x) => x.concepto === c).reduce((a, x) => a + x.valor, 0);
   const has = (c: CoExogenaItem['concepto']) => ex.some((x) => x.concepto === c);
 
@@ -78,7 +77,6 @@ export function reconcileColombia(report: ColombiaTaxReport, docs: { exogena?: C
     const national = report.ventas.rows.filter((r) => r.currency === 'COP' && r.classification !== 'pendiente_costo');
     addTo(ours, 'enajenacion', 'Ventas brutas de acciones (comisionistas)', national.reduce((a, r) => a + r.proceedsCop, 0));
     addTo(theirs, 'enajenacion', 'Ventas brutas de acciones (comisionistas)', sumEx('enajenacion'));
-    void v;
   }
   lines.push(...reconcileMaps('exogena', ours, theirs, { abs: 1000, rel: 0.005 }));
 

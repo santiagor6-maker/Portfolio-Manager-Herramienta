@@ -100,12 +100,19 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
   }
   const cashFlowCosts = costNeg > costPos;
 
+  const headerNorm = new Set((table.rows[headerRow] ?? []).map((x) => normalizeText(cellToString(x))).filter((x) => x !== ''));
   const out: ParsedRow[] = [];
   for (let r = first; r < table.rows.length; r++) {
     const raw = table.rows[r]!;
     if (isBlankRow(raw)) continue;
     const row = ctx.newRow(r, raw);
     out.push(row);
+    // Header repeated on every page (PDF statements, concatenated exports).
+    const filled = raw.map((x) => normalizeText(cellToString(x))).filter((x) => x !== '');
+    if (filled.length >= 2 && filled.filter((x) => headerNorm.has(x)).length >= Math.ceil(filled.length * 0.6)) {
+      row.skipped = true;
+      continue;
+    }
     const firstText = raw.map((x) => cellToString(x)).find((s) => s !== '') ?? '';
     if (TOTAL_ROW_RE.test(firstText) && !/^\d/.test(cellToString(cell(raw, c.date)))) {
       ctx.skip(row, 'SKIPPED_TOTAL');
