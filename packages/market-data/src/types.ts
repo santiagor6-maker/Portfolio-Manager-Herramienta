@@ -14,7 +14,6 @@ import type {
   PricePoint,
   PriceSeries,
   ProviderId,
-  TransactionSubtype,
 } from '@pm/core';
 
 export type Interval = '1d' | '1mo';
@@ -54,29 +53,13 @@ export interface MarketPriceSeries extends PriceSeries {
 }
 
 /**
- * Corporate action with the information core's CorporateAction does not carry yet (proposed to
- * core as an additive change). Use `toCoreCorporateActions()` to feed the engine.
+ * Core CorporateAction (DIVIDEND | SPLIT | STOCK_DIVIDEND with subtype, exDate/payDate, currency,
+ * targetInstrumentId, costFraction, reviewRequired, source, note) plus the provider price factor.
  */
-export interface MarketCorporateAction extends Omit<CorporateAction, 'type'> {
-  type: 'DIVIDEND' | 'SPLIT' | 'STOCK_DIVIDEND';
-  /** DIVIDEND: 'JCP' | 'ORDINARY'; SPLIT: 'SPINOFF' | 'TICKER_CHANGE' (see core TransactionSubtype). */
-  subtype?: TransactionSubtype;
-  /** DIVIDEND: ex-date (= `date`) and payment date when the provider knows it. */
-  exDate?: ISODate;
-  payDate?: ISODate;
-  /** DIVIDEND: currency of `amountPerShare` when it differs from the instrument currency. */
-  currency?: CurrencyCode;
-  /** SPINOFF / TICKER_CHANGE: receiving instrument. */
-  targetInstrumentId?: string;
-  /** SPINOFF: share (0..1) of the cost basis that moves to the spun-off instrument (approximate). */
-  costFraction?: number;
-  /** Price factor the provider applied for this event (Yahoo's numerator/denominator). */
+export type MarketCorporateAction = CorporateAction & {
+  /** Price factor the provider applied for this event (Yahoo numerator/denominator). */
   priceFactor?: number;
-  /** Heuristic classification: confirm before applying to holdings. */
-  reviewRequired?: boolean;
-  source?: ProviderId;
-  note?: string;
-}
+};
 
 export interface RenameInfo {
   /** Old instrument id, e.g. XBOG:PFBCOLOM. */

@@ -89,20 +89,9 @@ function round4(x: number): number {
 }
 
 /**
- * Map market actions to core's current CorporateAction ('DIVIDEND' | 'SPLIT'):
- * STOCK_DIVIDEND -> SPLIT (same effect on quantity); spin-offs and actions flagged
- * `reviewRequired` are dropped (they must be confirmed by the user as transactions).
+ * @deprecated core's CorporateAction now carries every field; market actions are already core
+ * actions. Kept for compatibility: returns the actions without the provider-only `priceFactor`.
  */
 export function toCoreCorporateActions(actions: readonly MarketCorporateAction[]): CorporateAction[] {
-  const out: CorporateAction[] = [];
-  for (const a of actions) {
-    if (a.reviewRequired || a.subtype === 'SPINOFF' || a.subtype === 'TICKER_CHANGE') continue;
-    if (a.type === 'DIVIDEND') {
-      if (a.currency) continue; // amount not in instrument currency: needs conversion by the caller
-      out.push({ instrumentId: a.instrumentId, date: a.date, type: 'DIVIDEND', amountPerShare: a.amountPerShare });
-    } else {
-      out.push({ instrumentId: a.instrumentId, date: a.date, type: 'SPLIT', ratio: a.ratio });
-    }
-  }
-  return out;
+  return actions.map(({ priceFactor: _pf, ...rest }) => rest);
 }
