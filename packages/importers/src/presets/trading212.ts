@@ -50,7 +50,7 @@ export const trading212Preset: PresetDefinition = {
       action: H.find('Action'), time: H.find('Time'), isin: H.find('ISIN'), ticker: H.find('Ticker'), name: H.find('Name'),
       qty: H.find('No. of shares'), rate: H.find('Exchange rate'), id: H.find('ID'), notes: H.find('Notes'),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.time), 'YMD');
+    ctx.detectDates([c.time], h.index + 1, 'YMD', { fixed: true });
     ctx.initNumbers('dot', []);
     const rows: ParsedRow[] = [];
     const splits = new Map<string, { open?: { row: ParsedRow; qty: number }; close?: { row: ParsedRow; qty: number } }>();

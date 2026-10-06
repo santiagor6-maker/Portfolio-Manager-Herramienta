@@ -3,7 +3,7 @@ import { lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, nextMonth } from
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, round2, sortTransactions, sum } from '../common/util';
-import { classifyForBrazil, type BrCategory } from './classify';
+import { classifyForBrazil, cryptoCustodyOf, type BrCategory, type CryptoCustody } from './classify';
 import { sicalcData, type SicalcData } from './darf';
 
 /** GCAP progressive rates on capital gains of individuals (Lei 13.259/2016 art. 21 da Lei 8.981). */
@@ -53,6 +53,8 @@ export interface CryptoMonth {
   gainBrl: number;
   tax: number;
   darf?: { code: '4600'; amount: number; dueDate: ISODate; sicalc: SicalcData };
+  /** Tax computed but DARF withheld because the custody of some sold asset is not confirmed (T22). */
+  darfBlockedUnknownCustody?: boolean;
 }
 
 export interface CryptoPosition {
@@ -77,7 +79,13 @@ export interface CryptoReport {
 export interface CryptoOptions {
   year: number;
   categoryOverrides?: Record<string, BrCategory>;
-  /** 'brasil' (default): GCAP monthly. 'exterior': only positions; taxed under Lei 14.754 (flagged). */
+  /**
+   * Custody per instrument id. Default: inferred from the exchange (Brazilian exchange → 'brasil';
+   * Binance/Coinbase/... or non-BRL currency → 'exterior', handled by `brazilForeignAnnualReport`
+   * under Lei 14.754; anything else → 'desconhecida', tax shown but no DARF until confirmed).
+   */
+  cryptoCustody?: Record<string, CryptoCustody>;
+  /** @deprecated use cryptoCustody. 'exterior' forces every crypto-asset abroad. */
   custody?: 'brasil' | 'exterior';
   exemptionLimit?: number;
 }
@@ -91,7 +99,27 @@ export function brazilCryptoReport(input: TaxInput, opts: CryptoOptions): Crypto
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
   const limit = opts.exemptionLimit ?? 35_000;
-  const isCrypto = (id?: string) => !!id && classifyForBrazil(instruments.get(id), opts.categoryOverrides) === 'CRYPTO';
+  const custodyMap: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
+  if (opts.custody === 'exterior') {
+    for (const i of input.instruments) if (i.assetClass === 'crypto') custodyMap[i.id] ??= 'exterior';
+  } else if (opts.custody === 'brasil') {
+    for (const i of input.instruments) if (i.assetClass === 'crypto') custodyMap[i.id] ??= 'brasil';
+  }
+  const isCrypto = (id?: string) => !!id && classifyForBrazil(instruments.get(id), opts.categoryOverrides, custodyMap) === 'CRYPTO';
+  const custodyOf = (id: string): CryptoCustody => {
+    const inst = instruments.get(id);
+    return inst ? cryptoCustodyOf(inst, custodyMap) : 'desconhecida';
+  };
+  const abroad = input.instruments.filter((i) => i.assetClass === 'crypto' && cryptoCustodyOf(i, custodyMap) === 'exterior');
+  if (abroad.length && input.transactions.some((t) => abroad.some((a) => a.id === t.instrumentId))) {
+    issues.push({
+      level: 'info',
+      code: 'CRYPTO_ABROAD',
+      message:
+        `Criptoativos custodiados no exterior (${abroad.map((a) => a.symbol).join(', ')}): tributação anual de 15% pela Lei 14.754/2023 ` +
+        '(sem isenção de R$ 35 mil e sem DARF mensal) — ver brazilForeignAnnualReport.',
+    });
+  }
   const toBrl = (ccy: CurrencyCode, date: ISODate) => {
     if (ccy === 'BRL') return 1;
     const r = input.market.fx(ccy, 'BRL', date);
@@ -132,29 +160,37 @@ export function brazilCryptoReport(input: TaxInput, opts: CryptoOptions): Crypto
   }
   prev ??= snap();
   const months: CryptoMonth[] = [];
-  if (opts.custody !== 'exterior') {
-    const byMonth = new Map<YearMonth, CryptoSale[]>();
-    for (const s of sales) byMonth.set(monthOf(s.date), [...(byMonth.get(monthOf(s.date)) ?? []), s]);
-    for (const [month, list] of [...byMonth.entries()].sort()) {
-      const salesBrl = sum(list.map((s) => s.grossBrl));
-      const exempt = salesBrl <= limit;
-      const gain = sum(list.map((s) => Math.max(0, s.gainBrl)));
-      const tax = exempt ? 0 : round2(sum(list.map((s) => gcapTax(Math.max(0, s.gainBrl)))));
-      const due = lastBrazilBusinessDayOfMonth(nextMonth(month));
-      months.push({
-        month,
-        salesBrl,
-        exempt,
-        gainBrl: gain,
-        tax,
-        darf: tax > 0 ? { code: '4600', amount: tax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, tax) } : undefined,
+  const byMonth = new Map<YearMonth, CryptoSale[]>();
+  for (const sl of sales) byMonth.set(monthOf(sl.date), [...(byMonth.get(monthOf(sl.date)) ?? []), sl]);
+  const unknownWarned = new Set<string>();
+  for (const [month, list] of [...byMonth.entries()].sort()) {
+    const salesBrl = sum(list.map((x) => x.grossBrl));
+    const exempt = salesBrl <= limit;
+    const gain = sum(list.map((x) => Math.max(0, x.gainBrl)));
+    const tax = exempt ? 0 : round2(sum(list.map((x) => gcapTax(Math.max(0, x.gainBrl)))));
+    const due = lastBrazilBusinessDayOfMonth(nextMonth(month));
+    const unknown = list.filter((x) => custodyOf(x.instrumentId) !== 'brasil');
+    for (const u of unknown) {
+      if (unknownWarned.has(u.instrumentId)) continue;
+      unknownWarned.add(u.instrumentId);
+      issues.push({
+        level: 'warning',
+        code: 'CRYPTO_CUSTODY_UNKNOWN',
+        instrumentId: u.instrumentId,
+        message:
+          `Custódia de ${u.symbol} não confirmada: se estiver em exchange brasileira, o regime é o GCAP mensal (DARF 4600); ` +
+          'se estiver no exterior ou em carteira própria fora do país, Lei 14.754 anual. Informe cryptoCustody para gerar o DARF.',
       });
     }
-  } else {
-    issues.push({
-      level: 'warning',
-      code: 'CRYPTO_ABROAD',
-      message: 'Criptoativos em exchange no exterior: tributação anual pela Lei 14.754/2023 (15%); não calculada neste relatório.',
+    const blocked = tax > 0 && unknown.length > 0;
+    months.push({
+      month,
+      salesBrl,
+      exempt,
+      gainBrl: gain,
+      tax,
+      darf: tax > 0 && !blocked ? { code: '4600', amount: tax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, tax) } : undefined,
+      darfBlockedUnknownCustody: blocked || undefined,
     });
   }
   return {

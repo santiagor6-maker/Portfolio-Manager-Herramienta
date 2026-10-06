@@ -54,11 +54,12 @@ export const schwabPreset: PresetDefinition = {
       date: H.find('Date'), action: H.find('Action'), symbol: H.find('Symbol'), desc: H.find('Description'),
       qty: H.find('Quantity'), price: H.find('Price'), fees: H.find('Fees & Comm', 'Fees & Commissions'), amount: H.find('Amount'),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date), 'MDY');
+    ctx.detectDates([c.date], h.index + 1, 'MDY', { fixed: true }); // Schwab (US) always MM/DD/YYYY
     ctx.initNumbers('dot', columnValues(table, h.index + 1, c.qty, c.price, c.fees, c.amount));
     const rows: ParsedRow[] = [];
     const dividends: DraftTransaction[] = [];
     const taxes: { row: ParsedRow; d: DraftTransaction }[] = [];
+    const splitLegs: { row: ParsedRow; d: DraftTransaction; qty: number }[] = [];
     for (let r = h.index + 1; r < table.rows.length; r++) {
       const raw = table.rows[r]!;
       const row = ctx.newRow(r, raw);
@@ -110,7 +111,8 @@ export const schwabPreset: PresetDefinition = {
           if (d.quantity !== undefined && price !== undefined) d.amount = round(d.quantity * price, 8);
           else if (amount !== undefined) d.amount = Math.abs(amount) + (rule === 'SELL' ? Math.abs(fees ?? 0) : -Math.abs(fees ?? 0));
         } else if (rule === 'SPLIT') {
-          if (qty !== undefined) d.deltaShares = /reverse/i.test(action) ? -Math.abs(qty) : qty;
+          if (qty !== undefined) d.deltaShares = qty < 0 ? qty : /reverse/i.test(action) && !splitLegs.some((x) => x.d.date === date && x.d.instrument?.symbol === symbol) ? -Math.abs(qty) : qty;
+          splitLegs.push({ row, d, qty: qty ?? 0 });
         } else if (rule === 'TAX') {
           d.amount = -(amount ?? 0); // negative amount in file = tax paid
         } else if (rule === 'FEE') {
@@ -125,6 +127,23 @@ export const schwabPreset: PresetDefinition = {
       row.draft = d;
       if (d.type === 'DIVIDEND') dividends.push(d);
       if (d.type === 'TAX') taxes.push({ row, d });
+    }
+    // Reverse splits come as two rows (old shares removed, new shares added): ratio = new / old.
+    const groups = new Map<string, typeof splitLegs>();
+    for (const l of splitLegs) {
+      const k = `${l.d.date}|${l.d.instrument?.symbol ?? ''}`;
+      groups.set(k, [...(groups.get(k) ?? []), l]);
+    }
+    for (const g of groups.values()) {
+      const out = g.find((l) => l.qty < 0);
+      const inn = g.find((l) => l.qty > 0);
+      if (g.length === 2 && out && inn) {
+        inn.d.ratio = round(inn.qty / Math.abs(out.qty), 10);
+        delete inn.d.deltaShares;
+        out.row.draft = undefined;
+        out.row.skipped = true;
+        out.row.issues.push(ctx.issue('SPLIT_PAIR_MERGED', 'info', { ratio: inn.d.ratio }, out.row.line));
+      }
     }
     // Attach NRA withholding to the dividend of the same symbol and date.
     for (const t of taxes) {

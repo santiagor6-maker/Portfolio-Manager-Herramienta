@@ -313,6 +313,13 @@ body {
   .table .r {
     text-align: right;
   }
+  .table-compact th {
+    padding: 6px 8px;
+  }
+  .table-compact td {
+    padding: 5px 8px;
+    font-size: 12.5px;
+  }
   .skeleton {
     background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
     background-size: 400% 100%;
@@ -333,5 +340,88 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Print / "Guardar como PDF": every page prints cleanly; colours (heatmap, gains) are kept.
+ * ------------------------------------------------------------------------- */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm 10mm;
+  }
+  :root,
+  .dark {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f3f5f8;
+    --surface-3: #e9ecf1;
+    --border: #d9dee6;
+    --text: #0e1525;
+    --text-2: #3f4a5e;
+    --muted: #5f687b;
+    --pos: #047857;
+    --neg: #c2312f;
+    --shadow: none;
+  }
+  html,
+  body {
+    background: #fff !important;
+    font-size: 11px;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  header,
+  nav,
+  aside,
+  button:not(.print-heat),
+  select,
+  input,
+  .btn,
+  .seg,
+  .print\:hidden,
+  [data-print='hide'] {
+    display: none !important;
+  }
+  button.print-heat {
+    display: inline-block !important;
+  }
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+    opacity: 1 !important;
+  }
+  .card {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  .overflow-x-auto,
+  .overflow-auto {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  .table {
+    font-size: 9.5px;
+  }
+  .table th,
+  .table td {
+    padding: 3px 5px !important;
+    position: static !important;
+  }
+  .print-break-avoid {
+    break-inside: avoid;
+  }
+  .print-break-before {
+    break-before: page;
+  }
+  details > summary {
+    list-style: none;
+  }
+  canvas {
+    max-width: 100% !important;
   }
 }

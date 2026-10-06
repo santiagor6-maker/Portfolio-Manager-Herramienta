@@ -1,3 +1,4 @@
+import { indexName } from './indexNames';
 import type { Instrument } from '@pm/core';
 
 /**
@@ -53,5 +54,5 @@ export const BENCHMARKS: Instrument[] = [
 export const BENCHMARK_IDS = BENCHMARKS.map((b) => b.id);
 
 export function benchmarkName(id: string): string {
-  return BENCHMARKS.find((b) => b.id === id)?.name ?? id.replace(/^INDEX:\^?/, '');
+  return BENCHMARKS.find((b) => b.id === id)?.name ?? indexName(id.replace(/^INDEX:\^?/, ''));
 }

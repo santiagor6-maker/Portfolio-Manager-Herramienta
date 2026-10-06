@@ -27,6 +27,9 @@ export interface BrApuracaoOptions {
   initialLosses?: { comum?: number; dayTrade?: number; fii?: number };
   categoryOverrides?: Record<string, BrCategory>;
   transferBasis?: TransferBasisMap;
+  acceptNoteProposals?: boolean;
+  /** Option expiry dates by instrument id (default: derived from the B3 series). */
+  optionExpiries?: Record<string, ISODate>;
   /** Override yearly parameters. */
   config?: (year: number) => BrazilTaxYearConfig;
   /**
@@ -158,6 +161,9 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     until: to ? lastDayOfMonth(to) : undefined,
     categoryOverrides: opts.categoryOverrides,
     transferBasis: opts.transferBasis,
+    acceptNoteProposals: opts.acceptNoteProposals,
+    optionExpiries: opts.optionExpiries,
+    asOf: opts.asOf,
   });
   const issues: TaxIssue[] = [...ledger.issues];
   const trades = ledger.trades.filter((t) => isApuracaoCategory(t.category));
@@ -392,8 +398,9 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     assumptions: [
       'Custo pelo preço médio ponderado, incluindo corretagem e emolumentos (IN RFB 1.585/2015 art. 58), independentemente do método de custo do portfólio.',
       'Day trade: compra e venda do mesmo ativo no mesmo dia na mesma corretora (campo account); casadas primeiro, sem alterar o preço médio da posição.',
-      'Limite de R$ 20 mil considera apenas vendas de ações no mercado à vista em operações comuns (swing trade); não se aplica a ETFs, BDRs, opções, direitos, FIIs nem day trade.',
-      'Venda a descoberto: o resultado é apurado na recompra e não recebe a isenção de R$ 20 mil (leitura conservadora). Vendas sem posição nunca geram DARF até a recompra ou o registro da compra.',
+      'Limite de R$ 20 mil considera as vendas de ações no mercado à vista em operações comuns (swing trade), inclusive vendas a descoberto no mês em que são feitas; não se aplica a ETFs, BDRs, opções, direitos, FIIs nem day trade.',
+      'Venda a descoberto: o valor da venda conta para o limite de R$ 20 mil do mês da venda; o resultado é apurado na recompra e não recebe a isenção (leitura conservadora). Vendas sem posição nunca geram DARF até a recompra ou o registro da compra.',
+      'Opções: vencimento derivado da letra da série (terceira sexta-feira); sem exercício, a posição é encerrada a zero no vencimento (prêmio do lançador tributado; prêmio pago do titular é perda). Exercício (TRANSFER_OUT/IN com nota "exercício") ajusta o prêmio ao custo/preço do ativo-objeto no mesmo dia.',
       'Prejuízo de ações em mês isento é acumulado para compensação futura; ganho isento não consome prejuízo acumulado.',
       'Prejuízos de day trade compensam só day trade; prejuízos de operações comuns podem compensar também day trade; FII tem compensação separada.',
       'IRRF (0,005% swing / 1% day trade) informado no campo taxes das vendas; quando ausente, é estimado e mostrado, mas só abatido com creditEstimatedIrrf.',

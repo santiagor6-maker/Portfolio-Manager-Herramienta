@@ -50,3 +50,5 @@ export function useSliceLabel(dim: AllocationDimension): (s: AllocationSlice) =>
     [dim, locale, t],
   );
 }
+
+export { indexName } from './indexNames';

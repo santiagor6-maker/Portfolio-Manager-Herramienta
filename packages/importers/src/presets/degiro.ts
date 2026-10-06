@@ -94,7 +94,7 @@ export const degiroTransactionsPreset: PresetDefinition = {
       value: H.find(...A.value), rate: H.find(...A.rate), fees: H.find(...A.fees), autoFx: H.find(...A.autoFx),
       total: H.find(...A.total), orderId: H.find(...A.orderId), time: H.find(...A.time),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date), 'DMY');
+    ctx.detectDates([c.date], h.index + 1, 'DMY', { fixed: true }); // DEGIRO always DD-MM-YYYY
     ctx.initNumbers('dot', columnValues(table, h.index + 1, c.qty, c.price, c.local, c.value, c.rate, c.fees, c.total));
     const rows: ParsedRow[] = [];
     for (let r = h.index + 1; r < table.rows.length; r++) {
@@ -172,9 +172,10 @@ export const degiroAccountPreset: PresetDefinition = {
     const H = h.header;
     const c = {
       date: H.find(...A.date), valueDate: H.find(...A.valueDate), product: H.find(...A.product), isin: H.find(...A.isin),
-      desc: H.find(...A.description), change: H.find(...A.change), orderId: H.find(...A.orderId),
+      desc: H.find(...A.description), change: H.find(...A.change), orderId: H.find(...A.orderId), time: H.find(...A.time),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date, c.valueDate), 'DMY');
+    const fx: { row: ParsedRow; key: string; date: string; currency: string; value: number; desc: string }[] = [];
+    ctx.detectDates([c.date], h.index + 1, 'DMY', { fixed: true });
     const changeCells: Cell[] = [];
     if (c.change !== undefined) for (const r of table.rows.slice(h.index + 1)) changeCells.push(r[c.change] ?? null, r[c.change + 1] ?? null);
     ctx.initNumbers('dot', changeCells);
@@ -191,8 +192,17 @@ export const degiroAccountPreset: PresetDefinition = {
         ctx.skip(row, 'SKIPPED_MOVEMENT', { value: desc.slice(0, 60), reason: 'concepto no reconocido.' }, 'warning');
         continue;
       }
-      if (rule === 'SKIP_TRADE' || rule === 'SKIP_FX' || rule === 'SKIP_INTERNAL' || (rule === 'TRADE_FEE' && str(raw, c.orderId))) {
-        const reason = rule === 'SKIP_FX' ? 'conversión automática de divisas ligada a una operación.' : rule === 'SKIP_INTERNAL' ? 'movimiento interno.' : 'se importa desde el archivo de Transacciones.';
+      if (rule === 'SKIP_FX') {
+        // AutoFX legs (credit in one currency, debit in another at the same timestamp) → FX_CONVERSION.
+        const date = ctx.date(cell(raw, c.date), row);
+        const ch = moneyWithCurrency(raw, H, c.change, ctx, row, 'amount');
+        if (date && ch.value !== undefined && ch.currency) {
+          fx.push({ row, key: `${str(raw, c.date)}|${str(raw, c.time)}`, date, currency: ch.currency, value: ch.value, desc });
+        }
+        continue;
+      }
+      if (rule === 'SKIP_TRADE' || rule === 'SKIP_INTERNAL' || (rule === 'TRADE_FEE' && str(raw, c.orderId))) {
+        const reason = rule === 'SKIP_INTERNAL' ? 'movimiento interno.' : 'se importa desde el archivo de Transacciones.';
         ctx.skip(row, 'SKIPPED_MOVEMENT', { value: desc.slice(0, 60), reason });
         continue;
       }
@@ -231,6 +241,23 @@ export const degiroAccountPreset: PresetDefinition = {
       if (d.type === 'DIVIDEND') dividends.push({ row, d });
       else if (rule === 'TAX') taxes.push({ row, d });
     }
+    const usedFx = new Set<number>();
+    fx.forEach((debit, i) => {
+      if (usedFx.has(i) || debit.value >= 0) return;
+      const j = fx.findIndex((cr, k) => !usedFx.has(k) && k !== i && cr.key === debit.key && cr.value > 0 && cr.currency !== debit.currency);
+      if (j < 0) return;
+      const credit = fx[j]!;
+      usedFx.add(i).add(j);
+      debit.row.draft = {
+        date: debit.date, type: 'FX_CONVERSION', currency: debit.currency, amount: Math.abs(debit.value),
+        toCurrency: credit.currency, toAmount: credit.value, note: 'AutoFX DEGIRO',
+      };
+      credit.row.skipped = true;
+      credit.row.issues.push(ctx.issue('AUTOFX_PAIRED', 'info', { line: debit.row.line }, credit.row.line));
+    });
+    fx.forEach((x, i) => {
+      if (!usedFx.has(i)) ctx.skip(x.row, 'AUTOFX_UNPAIRED', { value: x.desc.slice(0, 40) }, 'warning');
+    });
     for (const t of taxes) {
       const div = dividends.find((x) => x.d.date === t.d.date && x.d.currency === t.d.currency && (x.d.instrument?.isin ?? '') === (t.d.instrument?.isin ?? ''));
       if (div && (t.d.amount ?? 0) > 0) {

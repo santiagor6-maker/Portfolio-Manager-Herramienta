@@ -211,6 +211,12 @@ export async function importFile(input: ImportInput, options: ImportOptions): Pr
     options = { ...options, mapping: best.s.mapping };
   }
 
+  if (preset.multiSheet && !forced) {
+    const all = tables.filter((t) => preset!.detect(t) > 0);
+    if (all.length > 1) {
+      table = { name: all.map((t) => t.name).join(' + '), rows: all.flatMap((t) => t.rows), lines: all.flatMap((t) => t.lines) };
+    }
+  }
   detection.presetId = preset.id;
   detection.presetLabel = preset.label;
   detection.presetConfidence = autoGeneric ? 'low' : preset.confidence;

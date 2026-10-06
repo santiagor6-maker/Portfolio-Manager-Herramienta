@@ -347,7 +347,8 @@ describe('M6 suspended stocks: no phantom closes (reviewer illiquid.mts)', () =>
     const h = await service.history({ symbol: 'CNEC.CL', from: '2025-11-03', to: '2025-12-10' });
     expect(h.series.points.at(-1)).toEqual({ date: '2025-11-14', close: 5000 });
     expect(h.series).toMatchObject({ lastTradeDate: '2025-11-14', stale: true });
-    expect(h.notes?.join(' ')).toMatch(/dropped 15 phantom bar/);
+    expect(h.series.points.some((p) => p.provisional)).toBe(false); // an old last trade is never provisional
+    expect(h.notes?.join(' ')).toMatch(/dropped 16 phantom bar/);
     const q = await service.quote('CNEC.CL');
     expect(q).toMatchObject({ price: 5000, date: '2025-11-14', stale: true });
   });
@@ -544,7 +545,7 @@ describe('M18 search quality', () => {
     const { results } = await service.search('isa');
     expect(results[0]?.id).toBe('XBOG:ISA');
     expect(results.some((r) => /visa/i.test(r.name))).toBe(false);
-    expect(results.some((r) => r.providerSymbols?.yahoo === 'FICO')).toBe(false); // "Fair Isaac": no word starts with "isa"
+    expect(results.every((r) => r.origin !== 'yahoo' || /^isa/i.test(r.providerSymbols?.yahoo ?? '') || /\bisa/i.test(r.name))).toBe(true);
   });
 
   it('ISIN search: catalog first, Yahoo resolves the rest', async () => {

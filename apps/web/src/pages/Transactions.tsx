@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { ArrowLeftRight, Download, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Copy, Download, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import type { TransactionType } from '@pm/core';
 import { Card, EmptyState, Modal, PageHeader } from '../components/ui';
 import { TransactionForm } from '../components/TransactionForm';
+import { SuggestionsInbox } from '../components/SuggestionsInbox';
 import { useInstrumentMap, usePortfolios, useScopedTransactions } from '../hooks/useData';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
@@ -49,6 +50,7 @@ export default function TransactionsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<StoredTransaction>();
+  const [duplicating, setDuplicating] = useState<StoredTransaction>();
   const [confirmDelete, setConfirmDelete] = useState<string[]>();
   const [limit, setLimit] = useState(PAGE);
 
@@ -62,6 +64,7 @@ export default function TransactionsPage() {
   const closeForm = () => {
     setFormOpen(false);
     setEditing(undefined);
+    setDuplicating(undefined);
     if (params.get('nuevo')) {
       params.delete('nuevo');
       params.delete('instrumento');
@@ -123,6 +126,8 @@ export default function TransactionsPage() {
           </>
         }
       />
+
+      <SuggestionsInbox />
 
       <Card bodyClassName="!p-0">
         <div className="flex flex-wrap items-end gap-2 p-3 border-b border-line">
@@ -200,9 +205,10 @@ export default function TransactionsPage() {
                   <th className="r">{t('tx.price')}</th>
                   <th className="r">{t('tx.amount')}</th>
                   <th className="r hidden md:table-cell">{t('tx.fees')}</th>
+                  <th className="r hidden md:table-cell">{t('tx.taxesShort')}</th>
                   <th className="hidden lg:table-cell">{t('tx.account')}</th>
                   {selectedPortfolio === 'all' && <th className="hidden xl:table-cell">{t('tx.portfolio')}</th>}
-                  <th className="w-20">
+                  <th className="w-24">
                     <span className="sr-only">{t('common.actions')}</span>
                   </th>
                 </tr>
@@ -251,6 +257,7 @@ export default function TransactionsPage() {
                       <td className="r num">{x.price !== undefined ? formatPrice(x.price, x.currency, f.locale) : '—'}</td>
                       <td className="r num">{amount}</td>
                       <td className="r num text-muted hidden md:table-cell">{x.fees ? formatMoney(x.fees, x.currency, f.locale, { privacy: f.privacy }) : '—'}</td>
+                      <td className="r num text-muted hidden md:table-cell">{x.taxes ? formatMoney(x.taxes, x.currency, f.locale, { privacy: f.privacy }) : '—'}</td>
                       <td className="text-ink-2 text-xs hidden lg:table-cell">{x.account ?? '—'}</td>
                       {selectedPortfolio === 'all' && <td className="text-ink-2 text-xs hidden xl:table-cell">{portfolioName.get(x.portfolioId)}</td>}
                       <td>
@@ -259,11 +266,24 @@ export default function TransactionsPage() {
                             className="btn btn-ghost btn-icon btn-sm !w-7"
                             aria-label={t('tx.edit')}
                             onClick={() => {
+                              setDuplicating(undefined);
                               setEditing(x);
                               setFormOpen(true);
                             }}
                           >
                             <Pencil size={14} />
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-icon btn-sm !w-7"
+                            aria-label={t('tx.duplicate')}
+                            title={t('tx.duplicate')}
+                            onClick={() => {
+                              setEditing(undefined);
+                              setDuplicating(x);
+                              setFormOpen(true);
+                            }}
+                          >
+                            <Copy size={14} />
                           </button>
                           <button className="btn btn-ghost btn-icon btn-sm !w-7 btn-danger" aria-label={t('common.delete')} onClick={() => setConfirmDelete([x.id])}>
                             <Trash2 size={14} />
@@ -275,7 +295,7 @@ export default function TransactionsPage() {
                 })}
                 {filtered.length === 0 && txs && txs.length > 0 && (
                   <tr>
-                    <td colSpan={11} className="text-center text-muted !py-10">
+                    <td colSpan={12} className="text-center text-muted !py-10">
                       {t('common.noResults')}
                     </td>
                   </tr>
@@ -297,6 +317,7 @@ export default function TransactionsPage() {
         open={formOpen}
         onClose={closeForm}
         editing={editing}
+        duplicateOf={duplicating}
         presetInstrumentId={params.get('instrumento') ?? undefined}
         heldQuantity={held}
       />

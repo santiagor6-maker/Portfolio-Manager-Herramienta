@@ -90,8 +90,9 @@ describe('B3 — Movimentação (xlsx)', async () => {
     expect(r.detection.presetId).toBe('b3-movimentacao');
     expect(tx(r, 2)).toMatchObject({ type: 'BUY', instrumentId: 'BVMF:PETR4', quantity: 100, amount: 2345 });
     expect(tx(r, 5)).toMatchObject({ type: 'DIVIDEND', instrumentId: 'BVMF:HGLG11', amount: 11 });
-    expect(tx(r, 6)).toMatchObject({ type: 'DIVIDEND', instrumentId: 'BVMF:ITSA4', amount: 0.55 });
-    expect(byLine(r, 6).issues.map((i) => i.code)).toContain('NET_AMOUNT');
+    // JCP is credited net of 15 % IRRF → gross 0.65 with 0.10 tax (estimated)
+    expect(tx(r, 6)).toMatchObject({ type: 'DIVIDEND', instrumentId: 'BVMF:ITSA4', amount: 0.65, taxes: 0.1 });
+    expect(byLine(r, 6).issues.map((i) => i.code)).toContain('JCP_GROSS_ESTIMATED');
     expect(tx(r, 7)).toMatchObject({ type: 'DIVIDEND', amount: 189 });
     expect(byLine(r, 8).status).toBe('skipped'); // "Dividendo - Transferido" mirror
     expect(tx(r, 9)).toMatchObject({ type: 'SELL', quantity: 50 });
@@ -106,7 +107,8 @@ describe('B3 — Movimentação (xlsx)', async () => {
   it('treats Tesouro Direto as a manual fixed-income instrument and skips non-flows', () => {
     expect(tx(r, 13)).toMatchObject({ type: 'BUY', instrumentId: 'MANUAL:TESOURO-IPCA-2035', quantity: 0.5 });
     expect(r.instruments.find((i) => i.id === 'MANUAL:TESOURO-IPCA-2035')).toMatchObject({ assetClass: 'fixed_income', pricing: 'manual' });
-    for (const line of [12, 14, 15, 17, 18]) expect(byLine(r, line).status).toBe('skipped');
+    for (const line of [12, 14, 15, 18]) expect(byLine(r, line).status).toBe('skipped');
+    expect(tx(r, 17)).toMatchObject({ type: 'SELL', instrumentId: 'BVMF:ITSA4', quantity: 0.4, amount: 3.8 }); // leilão de fração
     expect(r.warnings.some((w) => w.code === 'B3_SETTLEMENT_DATE')).toBe(true);
   });
   it('uses existing transactions to infer ratios when the position started earlier', async () => {
@@ -182,7 +184,9 @@ describe('DEGIRO', async () => {
   it('imports the account statement (dividends with tax, cash flows) and skips trade lines', () => {
     expect(acc.detection.presetId).toBe('degiro-account');
     expect(tx(acc, 2)).toMatchObject({ type: 'DEPOSIT', amount: 2000, currency: 'EUR' });
-    for (const line of [3, 4, 5, 6, 11]) expect(byLine(acc, line).status).toBe('skipped');
+    for (const line of [3, 4, 5, 11]) expect(byLine(acc, line).status).toBe('skipped');
+    // AutoFX legs paired into a conversion (I15)
+    expect(tx(acc, 6)).toMatchObject({ type: 'FX_CONVERSION', currency: 'EUR', amount: 1172.35, toCurrency: 'USD', toAmount: 1250.7 });
     expect(tx(acc, 7)).toMatchObject({ type: 'DIVIDEND', instrumentId: 'XNAS:AAPL', amount: 2.3, taxes: 0.35, currency: 'USD' });
     expect(tx(acc, 9)).toMatchObject({ type: 'INTEREST', amount: 0.12 });
     expect(tx(acc, 10)).toMatchObject({ type: 'WITHDRAWAL', amount: 300 });

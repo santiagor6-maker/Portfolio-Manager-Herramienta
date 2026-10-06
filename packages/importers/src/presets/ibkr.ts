@@ -10,6 +10,7 @@ import type { AssetClass, TransactionType } from '@pm/core';
 import { IBKR_EXCHANGES } from '../markets';
 import type { Cell, DraftTransaction, InstrumentHint, ParsedRow, RawTable } from '../types';
 import { cellToString, normalizeText } from '../util';
+import { parseDate } from '../dates';
 import { HeaderIndex, type ParseContext, type PresetDefinition } from './common';
 
 interface FinInfo {
@@ -81,6 +82,13 @@ function mergeWithholding(
 // Activity Statement
 // ---------------------------------------------------------------------------
 
+/** Informational sections that never carry transactions (no warning when ignored). */
+const META_SECTIONS = new Set([
+  'Statement', 'Account Information', 'Financial Instrument Information', 'Codes', 'Notes/Legal Notes', 'Net Asset Value',
+  'Change in NAV', 'Mark-to-Market Performance Summary', 'Realized & Unrealized Performance Summary', 'Base Currency Exchange Rate',
+  'Location of Customer Assets, Positions and Money', 'Month & Year to Date Performance Summary', 'Disclosures', 'Notes',
+]);
+
 const ACTIVITY_SECTIONS = new Set([
   'Statement', 'Account Information', 'Net Asset Value', 'Trades', 'Dividends', 'Withholding Tax', 'Deposits & Withdrawals',
   'Interest', 'Fees', 'Corporate Actions', 'Financial Instrument Information', 'Open Positions', 'Cash Report',
@@ -112,10 +120,16 @@ export const ibkrActivityPreset: PresetDefinition = {
     ctx.dateFormat = ctx.options.dateFormat ?? 'YMD';
     const headers = new Map<string, HeaderIndex>();
     const info = new Map<string, FinInfo>();
+    let periodEnd: string | undefined;
     // First pass: instrument information (appears at the end of the statement).
     for (const r of table.rows) {
       const section = cellToString(r[0]);
       const kind = cellToString(r[1]);
+      if (section === 'Statement' && kind === 'Data' && cellToString(r[2]) === 'Period') {
+        const end = cellToString(r[3]).split(/\s+-\s+/).pop();
+        const iso = end ? parseDate(end, 'MDY') : undefined;
+        if (iso) periodEnd = iso;
+      }
       if (section !== 'Financial Instrument Information') continue;
       if (kind === 'Header') headers.set(section, new HeaderIndex(r.slice(2)));
       else if (kind === 'Data') {
@@ -140,6 +154,8 @@ export const ibkrActivityPreset: PresetDefinition = {
     const dividends: { row: ParsedRow; d: DraftTransaction }[] = [];
     const taxes: { row: ParsedRow; d: DraftTransaction }[] = [];
     const splitsSeen = new Set<string>();
+    const unhandled = new Map<string, number>();
+    const reported: NonNullable<ParseContext['reported']> = { source: 'ibkr-activity', positions: [], cash: [] };
 
     table.rows.forEach((r, idx) => {
       const section = cellToString(r[0]);
@@ -157,10 +173,52 @@ export const ibkrActivityPreset: PresetDefinition = {
         return i === undefined ? null : f[i] ?? null;
       };
       const getS = (...names: string[]) => cellToString(get(...names));
-      const handled = ['Trades', 'Dividends', 'Payment In Lieu Of Dividends', 'Withholding Tax', 'Deposits & Withdrawals', 'Interest', 'Fees', 'Corporate Actions'];
-      if (!handled.includes(section)) return;
       const currency = getS('Currency');
       if (/^total/i.test(currency) || /^total/i.test(getS('Asset Category')) || /^total/i.test(getS('Subtitle'))) return;
+      if (section === 'Open Positions') {
+        if (getS('DataDiscriminator') && getS('DataDiscriminator') !== 'Summary') return;
+        const sym = ibkrSymbol(getS('Symbol'));
+        const qty = ctx.num(get('Quantity'), { line: 0, issues: [] }, 'quantity');
+        if (!sym || qty === undefined) return;
+        const pos = { symbol: sym, quantity: qty, currency, hint: hint(sym, undefined, currency, info, getS('Asset Category')) } as NonNullable<typeof reported>['positions'][number];
+        const cost = ctx.num(get('Cost Basis'), { line: 0, issues: [] }, 'cost');
+        const value = ctx.num(get('Value'), { line: 0, issues: [] }, 'value');
+        const close = ctx.num(get('Close Price'), { line: 0, issues: [] }, 'price');
+        if (cost !== undefined) pos.costBasis = cost;
+        if (value !== undefined) pos.marketValue = value;
+        if (close !== undefined) pos.price = close;
+        reported.positions.push(pos);
+        if (ctx.options.positionsMode === 'opening') {
+          const row = ctx.newRow(idx, r);
+          rows.push(row);
+          const date = ctx.options.asOfDate ?? periodEnd;
+          if (!date) {
+            row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'asOfDate' }, row.line));
+            return;
+          }
+          const d: DraftTransaction = { date, type: qty >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT', currency, quantity: Math.abs(qty), note: 'Posición inicial (Open Positions)' };
+          const costPrice = ctx.num(get('Cost Price'), row, 'price');
+          if (costPrice !== undefined) d.price = costPrice;
+          if (cost !== undefined) d.amount = Math.abs(cost);
+          if (pos.hint) d.instrument = pos.hint;
+          row.draft = d;
+          row.issues.push(ctx.issue('OPENING_POSITION', 'info', undefined, row.line));
+        }
+        return;
+      }
+      if (section === 'Cash Report') {
+        const kindRow = normalizeText(cellToString(f[0] ?? null));
+        if (kindRow === 'ending cash' && /^[A-Z]{3}$/.test(currency)) {
+          const total = ctx.num(get('Total'), { line: 0, issues: [] }, 'amount');
+          if (total !== undefined) reported.cash.push({ currency, amount: total });
+        }
+        return;
+      }
+      const handled = ['Trades', 'Dividends', 'Payment In Lieu Of Dividends', 'Withholding Tax', 'Deposits & Withdrawals', 'Interest', 'Fees', 'Corporate Actions', 'Transfers', 'Transaction Fees'];
+      if (!handled.includes(section)) {
+        if (!META_SECTIONS.has(section)) unhandled.set(section, (unhandled.get(section) ?? 0) + 1);
+        return;
+      }
       const row = ctx.newRow(idx, r);
       rows.push(row);
 
@@ -187,9 +245,13 @@ export const ibkrActivityPreset: PresetDefinition = {
               ? { date, type: 'FX_CONVERSION', currency: quote, amount: p, toCurrency: base, toAmount: Math.abs(qty) }
               : { date, type: 'FX_CONVERSION', currency: base, amount: Math.abs(qty), toCurrency: quote, toAmount: p };
           const commHeader = commIdx !== undefined ? h.norm[commIdx] ?? '' : '';
-          const commCcy = /comm in ([a-z]{3})/.exec(commHeader)?.[1]?.toUpperCase();
+          const commCcy = /comm in ([a-z]{3})/.exec(commHeader)?.[1]?.toUpperCase() ?? currency;
           if (comm && commCcy === d.currency) d.fees = Math.abs(comm);
-          else if (comm) d.note = `Comisión ${Math.abs(comm)} ${commCcy ?? ''}`.trim();
+          else if (comm) {
+            // IBKR charges FX commissions in the base currency: record them as a separate FEE.
+            row.extra = [{ date, type: 'FEE', currency: commCcy, amount: Math.abs(comm), note: `Comisión conversión ${getS('Symbol')}` }];
+            row.issues.push(ctx.issue('FX_FEE_SEPARATE', 'info', { amount: Math.abs(comm), currency: commCcy }, row.line));
+          }
           row.draft = d;
           return;
         }
@@ -252,6 +314,47 @@ export const ibkrActivityPreset: PresetDefinition = {
         if (amount > 0) row.issues.push(ctx.issue('FEE_REFUND', 'info', undefined, row.line));
         return;
       }
+      if (section === 'Transfers') {
+        const category = getS('Asset Category');
+        const tdate = ctx.date(get('Date', 'Settle Date', 'Date/Time'), row);
+        const dir = normalizeText(getS('Direction'));
+        const qty = ctx.num(get('Qty', 'Quantity'), row, 'quantity');
+        const cashAmt = ctx.num(get('Cash Amount'), row, 'amount');
+        if (!tdate) return;
+        const out = dir.startsWith('out') || (qty !== undefined && qty < 0);
+        const what = `${getS('Type')} ${getS('Direction')} ${getS('Xfer Company')}`.trim();
+        if (/cash/i.test(category) || (!qty && cashAmt)) {
+          if (!cashAmt) return;
+          row.draft = { date: tdate, type: cashAmt >= 0 && !out ? 'DEPOSIT' : 'WITHDRAWAL', currency, amount: Math.abs(cashAmt), note: what };
+          return;
+        }
+        if (!qty) return;
+        const sym = ibkrSymbol(getS('Symbol'));
+        const xprice = ctx.num(get('Xfer Price'), row, 'price');
+        const mv = ctx.num(get('Market Value'), row, 'amount');
+        const d: DraftTransaction = { date: tdate, type: out ? 'TRANSFER_OUT' : 'TRANSFER_IN', currency, quantity: Math.abs(qty), note: what };
+        if (xprice) d.price = xprice;
+        else if (mv) {
+          d.price = Math.abs(mv) / Math.abs(qty);
+          row.issues.push(ctx.issue('TRANSFER_COST_FROM_MARKET', 'warning', undefined, row.line));
+        }
+        if (mv) d.amount = Math.abs(mv);
+        const ih = hint(sym, undefined, currency, info, category);
+        if (ih) d.instrument = ih;
+        row.draft = d;
+        return;
+      }
+      if (section === 'Transaction Fees') {
+        const fdate = ctx.date(get('Date/Time', 'Date'), row);
+        const amt = ctx.num(get('Amount'), row, 'amount');
+        if (!fdate || amt === undefined) return;
+        const sym = ibkrSymbol(getS('Symbol'));
+        const d: DraftTransaction = { date: fdate, type: 'FEE', currency, amount: -amt, note: getS('Description') || 'Transaction fee' };
+        const ih = hint(sym, undefined, currency, info, getS('Asset Category'));
+        if (ih) d.instrument = ih;
+        row.draft = d;
+        return;
+      }
       if (section === 'Corporate Actions') {
         const m = /split (\d+(?:\.\d+)?) for (\d+(?:\.\d+)?)/i.exec(desc);
         const { symbol, isin } = parseIbkrDescription(desc);
@@ -300,6 +403,12 @@ export const ibkrActivityPreset: PresetDefinition = {
       }
     }
     mergeWithholding(ctx, keptDividends, taxes);
+    for (const [section, count] of unhandled) ctx.fileIssues.push(ctx.issue('UNHANDLED_SECTION', 'warning', { section, count }));
+    if (reported.positions.length || reported.cash.length) {
+      const asOf = ctx.options.asOfDate ?? periodEnd;
+      if (asOf) reported.asOf = asOf;
+      ctx.reported = reported;
+    }
     return rows;
   },
 };
@@ -314,7 +423,8 @@ function isFlexHeader(r: Cell[]): boolean {
   const n = r.map((c) => normalizeText(cellToString(c)).replace(/ /g, ''));
   const hits = ['clientaccountid', 'currencyprimary', 'assetclass', 'symbol', 'tradedate', 'quantity', 'tradeprice', 'ibcommission', 'buysell', 'type', 'amount', 'datetime', 'settledate', 'listingexchange', 'isin', 'transactionid', 'tradeid']
     .filter((k) => n.includes(k)).length;
-  return hits >= 4 && (n.includes('currencyprimary') || n.includes('clientaccountid') || n.includes('ibcommission') || n.includes('tradeprice'));
+  const extra = ['position', 'markprice', 'positionvalue', 'direction', 'transfercompany'].filter((k) => n.includes(k)).length;
+  return hits + extra >= 4 && (n.includes('currencyprimary') || n.includes('clientaccountid') || n.includes('ibcommission') || n.includes('tradeprice'));
 }
 
 export const ibkrFlexPreset: PresetDefinition = {
@@ -352,6 +462,7 @@ export const ibkrFlexPreset: PresetDefinition = {
     const rows: ParsedRow[] = [];
     const dividends: { row: ParsedRow; d: DraftTransaction }[] = [];
     const taxes: { row: ParsedRow; d: DraftTransaction }[] = [];
+    const flexReported: NonNullable<ParseContext['reported']> = { source: 'ibkr-flex', positions: [], cash: [] };
     table.rows.forEach((r, idx) => {
       const first = cellToString(r[0]);
       if (FLEX_MARKERS.has(first)) return;
@@ -380,6 +491,56 @@ export const ibkrFlexPreset: PresetDefinition = {
         if (ex) ih.exchange = ex;
       }
       const ref = getS('TransactionID', 'TradeID', 'IBExecID', 'ActionID');
+      if (h.has('MarkPrice', 'PositionValue') && h.has('Position')) {
+        // Open positions (reconciliation / opening snapshot).
+        const qty = ctx.num(get('Position', 'Quantity'), row, 'quantity');
+        if (qty === undefined || !ih) {
+          row.skipped = true;
+          return;
+        }
+        const pos = { symbol, quantity: qty, currency, hint: ih } as NonNullable<ParseContext['reported']>['positions'][number];
+        const mv = ctx.num(get('PositionValue'), row, 'value');
+        const cb = ctx.num(get('CostBasisMoney', 'CostBasis'), row, 'cost');
+        if (mv !== undefined) pos.marketValue = mv;
+        if (cb !== undefined) pos.costBasis = cb;
+        flexReported.positions.push(pos);
+        const rd = cellToString(get('ReportDate'));
+        if (rd) flexReported.asOf = parseDate(rd, 'YMD') ?? flexReported.asOf;
+        if (ctx.options.positionsMode === 'opening') {
+          const date = ctx.options.asOfDate ?? flexReported.asOf;
+          if (!date) {
+            row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'asOfDate' }, row.line));
+            return;
+          }
+          const d: DraftTransaction = { date, type: qty >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT', currency, quantity: Math.abs(qty), instrument: ih, note: 'Posición inicial (Flex)' };
+          const cp = ctx.num(get('CostBasisPrice'), row, 'price');
+          if (cp !== undefined) d.price = cp;
+          if (cb !== undefined) d.amount = Math.abs(cb);
+          row.draft = d;
+        } else row.skipped = true;
+        return;
+      }
+      if (h.has('Direction') && h.has('TransferCompany', 'Type')) {
+        const tdate = ctx.date(get('Date', 'DateTime', 'SettleDate', 'ReportDate'), row);
+        const qty = ctx.num(get('Quantity'), row, 'quantity');
+        if (!tdate || !qty || !ih) {
+          if (!qty) row.skipped = true;
+          return;
+        }
+        const out = /^out/i.test(getS('Direction')) || qty < 0;
+        const d: DraftTransaction = { date: tdate, type: out ? 'TRANSFER_OUT' : 'TRANSFER_IN', currency, quantity: Math.abs(qty), instrument: ih, note: `${getS('Type')} ${getS('Direction')} ${getS('TransferCompany')}`.trim() };
+        const xp = ctx.num(get('TransferPrice', 'Price'), row, 'price');
+        const mv = ctx.num(get('PositionAmount', 'PositionAmountInBase', 'MarketValue'), row, 'amount');
+        if (xp) d.price = xp;
+        else if (mv) {
+          d.price = Math.abs(mv) / Math.abs(qty);
+          row.issues.push(ctx.issue('TRANSFER_COST_FROM_MARKET', 'warning', undefined, row.line));
+        }
+        if (mv) d.amount = Math.abs(mv);
+        if (ref) d.brokerRef = ref;
+        row.draft = d;
+        return;
+      }
       const isTrade = h.has('TradePrice', 'Buy/Sell', 'IBCommission');
       if (ih && isTrade && getS('Description')) ih.name = getS('Description');
       if (isTrade) {
@@ -396,8 +557,12 @@ export const ibkrFlexPreset: PresetDefinition = {
           row.draft = qty > 0
             ? { date, type: 'FX_CONVERSION', currency: quote, amount: p, toCurrency: base, toAmount: Math.abs(qty) }
             : { date, type: 'FX_CONVERSION', currency: base, amount: Math.abs(qty), toCurrency: quote, toAmount: p };
-          const fxCommCcy = getS('IBCommissionCurrency');
-          if (comm && (!fxCommCcy || fxCommCcy === row.draft.currency)) row.draft.fees = Math.abs(comm);
+          const fxCommCcy = getS('IBCommissionCurrency') || currency;
+          if (comm && fxCommCcy === row.draft.currency) row.draft.fees = Math.abs(comm);
+          else if (comm) {
+            row.extra = [{ date, type: 'FEE', currency: fxCommCcy, amount: Math.abs(comm), note: `Comisión conversión ${symbol}`, ...(ref ? { brokerRef: `${ref}-fee` } : {}) }];
+            row.issues.push(ctx.issue('FX_FEE_SEPARATE', 'info', { amount: Math.abs(comm), currency: fxCommCcy }, row.line));
+          }
           if (ref) row.draft.brokerRef = ref;
           return;
         }
@@ -413,7 +578,7 @@ export const ibkrFlexPreset: PresetDefinition = {
         const commCcy = getS('IBCommissionCurrency');
         if (comm) {
           if (!commCcy || commCcy === currency) d.fees = Math.abs(comm);
-          else d.note = `Comisión ${Math.abs(comm)} ${commCcy}`;
+          else row.extra = [{ date, type: 'FEE', currency: commCcy, amount: Math.abs(comm), note: `Comisión ${symbol}`, ...(ref ? { brokerRef: `${ref}-fee` } : {}) }];
         }
         if (ih) d.instrument = ih;
         if (ref) d.brokerRef = ref;
@@ -450,6 +615,10 @@ export const ibkrFlexPreset: PresetDefinition = {
       row.draft = d;
     });
     mergeWithholding(ctx, dividends, taxes);
+    if (flexReported.positions.length) {
+      if (ctx.options.asOfDate) flexReported.asOf = ctx.options.asOfDate;
+      ctx.reported = flexReported;
+    }
     return rows;
   },
 };

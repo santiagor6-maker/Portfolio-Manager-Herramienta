@@ -144,12 +144,134 @@ describe.skipIf(!LIVE)('LIVE providers', () => {
       log(`[search] ecopetrol -> ${s.results.slice(0, 5).map((r) => `${r.id}(${r.origin})`).join(', ')}`);
       expect(s.results[0]?.id).toBe('XBOG:ECOPETROL');
       const ids = CATALOG.instruments.map((i) => i.id);
-      const qs = await service.quotes(ids);
+      const qs = (await Promise.all([0, 100, 200].map((i) => service.quotes(ids.slice(i, i + 100))))).flat();
       const failed = qs.map((q, i) => (q.ok ? null : `${ids[i]}: ${q.error.message}`)).filter(Boolean);
       const stale = qs.map((q, i) => (q.ok && q.data.stale ? `${ids[i]} (${q.data.date})` : null)).filter(Boolean);
       log(`[catalog] ${ids.length - failed.length}/${ids.length} quotes OK; failed: ${failed.join('; ') || 'none'}; stale: ${stale.join(', ') || 'none'}`);
       expect(failed).toEqual([]);
     },
     240_000,
+  );
+});
+
+describe.skipIf(!LIVE)('LIVE round 2', () => {
+  const service = new MarketDataService();
+  const today = todayISO();
+  const log = (s: string) => console.log(s);
+
+  it(
+    'Colombia indices from BanRep SDMX; IPC_CO derived from UVR equals DANE',
+    async () => {
+      for (const id of ['UVR', 'IBR', 'IBR_EA', 'IBR_3M', 'DTF', 'TPM_CO']) {
+        const r = await service.index({ id, from: addDays(today, -40) });
+        const last = r.series.points.at(-1)!;
+        log(`[index] ${id.padEnd(7)} ${r.series.kind}${r.series.dayCount ? ' ' + r.series.dayCount : ''} n=${r.series.points.length} last ${last.date} ${last.value} (${r.series.source})`);
+        expect(r.series.points.length).toBeGreaterThan(5);
+      }
+      const ipc = await service.index({ id: 'IPC_CO', from: '2024-12-01', to: '2025-03-31' });
+      log(`[index] IPC_CO ${ipc.series.points.map((p) => `${p.date.slice(0, 7)}=${p.value}`).join(' ')}`);
+      expect(ipc.series.points.map((p) => Math.round(p.value * 100) / 100)).toEqual([0.46, 0.94, 1.14, 0.52]);
+      const recent = await service.index({ id: 'IPC_CO', from: addDays(today, -150) });
+      log(`[index] IPC_CO recent ${recent.series.points.map((p) => `${p.date.slice(0, 7)}=${p.value}`).join(' ')}`);
+      const colcap = await service.index({ id: 'COLCAP_AVG', from: addDays(today, -120) });
+      log(`[index] COLCAP_AVG ${colcap.series.points.map((p) => `${p.date}=${p.value}`).join(' ')}`);
+    },
+    T,
+  );
+
+  it(
+    'Brazil / US / EU indices (BCB SGS, FRED, ECB) — reported, may be blocked from the build container',
+    async () => {
+      for (const id of ['CDI', 'SELIC', 'IPCA', 'CPI_US', 'HICP_EA']) {
+        try {
+          const r = await service.index({ id, from: addDays(today, -60) });
+          log(`[index] ${id} OK n=${r.series.points.length} last ${r.series.points.at(-1)?.date} ${r.series.points.at(-1)?.value}`);
+        } catch (e) {
+          log(`[index] ${id} UNREACHABLE: ${(e as Error).message.slice(0, 120)}`);
+        }
+      }
+    },
+    T,
+  );
+
+  it(
+    'FIC and pension funds from the Superintendencia Financiera',
+    async () => {
+      const s = await service.search('fiducuenta');
+      const fic = s.results.filter((r) => r.origin === 'fic');
+      log(`[fic] search fiducuenta -> ${fic.map((r) => r.id).join(', ')}`);
+      expect(fic.length).toBeGreaterThan(0);
+      const h = await service.history({ symbol: fic[0]!.id, from: addDays(today, -60), interval: '1mo' });
+      log(`[fic] ${fic[0]!.id} ${h.series.points.map((p) => `${p.date}=${p.close}`).join(' ')}`);
+      expect(h.series.points.length).toBeGreaterThan(1);
+      const afp = (await service.search('porvenir moderado')).results.find((r) => r.origin === 'afp');
+      const ha = await service.history({ symbol: afp!.id, from: addDays(today, -20) });
+      log(`[afp] ${afp!.id} ${afp!.name} last ${ha.series.points.at(-1)?.date} ${ha.series.points.at(-1)?.close}`);
+      const cdt = (await service.search('cdt ibr')).results.find((r) => r.origin === 'template');
+      log(`[template] ${cdt?.id} ${JSON.stringify(cdt?.accrual)}`);
+    },
+    T,
+  );
+
+  it(
+    'renamed tickers, suspended stock, bonificação and spin-off on live Yahoo data',
+    async () => {
+      for (const old of ['PFBCOLOM.CL', 'BCOLOMBIA.CL', 'ELET3.SA', 'EMBR3.SA', 'CCRO3.SA']) {
+        const h = await service.history({ symbol: old, from: '2025-01-01', to: '2025-03-31', interval: '1mo' });
+        log(`[alias] ${old} -> ${h.instrument.id} n=${h.series.points.length} renamedFrom=${h.renamedFrom?.fromId}`);
+        expect(h.series.points.length).toBe(3);
+      }
+      const cnec = await service.history({ symbol: 'CNEC.CL', from: '2025-10-01' });
+      const q = await service.quote('CNEC.CL');
+      log(`[stale] CNEC last ${JSON.stringify(cnec.series.points.at(-1))} lastTrade=${cnec.series.lastTradeDate} stale=${cnec.series.stale}; quote ${q.price} ${q.date} stale=${q.stale}`);
+      expect(cnec.series.points.at(-1)!.close).toBe(q.price);
+      const itub = await service.history({ symbol: 'ITUB4.SA', from: '2025-03-01', to: '2025-03-31' });
+      const ge = await service.history({ symbol: 'GE', from: '2024-03-25', to: '2024-04-05' });
+      log(`[actions] ITUB4 ${JSON.stringify(itub.actions.filter((a) => a.type !== 'DIVIDEND').map((a) => [a.date, a.type, a.ratio]))}; GE ${JSON.stringify(ge.actions.filter((a) => a.type !== 'DIVIDEND').map((a) => [a.date, a.subtype, a.targetInstrumentId, a.costFraction]))} GE 2024-03-25 as traded ${ge.series.points[0]!.close}`);
+      expect(itub.actions.some((a) => a.type === 'STOCK_DIVIDEND')).toBe(true);
+      expect(ge.actions.some((a) => a.subtype === 'SPINOFF')).toBe(true);
+      const vusa = await service.history({ symbol: 'VUSA.L', from: addDays(today, -365) });
+      log(`[divs] VUSA.L ${vusa.series.currency} ${JSON.stringify(vusa.actions.map((a) => [a.date, a.amountPerShare, a.currency]))}`);
+      const petr = await service.history({ symbol: 'PETR4.SA', from: addDays(today, -10), interval: '1mo' });
+      log(`[provisional] PETR4 marketState=${petr.marketState} last ${JSON.stringify(petr.series.points.at(-1))}`);
+    },
+    T,
+  );
+
+  it(
+    'crypto via CoinGecko and reachability of the other fallback providers',
+    async () => {
+      const cg = await service.fallbackProviders.find((p) => p.id === 'coingecko')!.dailyHistory(
+        { instrumentId: 'CRYPTO:BTC-USD', exchange: 'CRYPTO', symbol: 'BTC-USD', yahoo: 'BTC-USD' },
+        addDays(today, -7),
+        today,
+      );
+      log(`[coingecko] BTC-USD n=${cg.points.length} last ${JSON.stringify(cg.points.at(-1))}`);
+      expect(cg.points.length).toBeGreaterThan(5);
+      for (const p of service.fallbackProviders.filter((x) => x.id !== 'coingecko')) {
+        const t = p.id === 'brapi' ? { instrumentId: 'BVMF:PETR4', exchange: 'BVMF', symbol: 'PETR4', yahoo: 'PETR4.SA' } : { instrumentId: 'XNAS:AAPL', exchange: 'XNAS', symbol: 'AAPL', yahoo: 'AAPL' };
+        try {
+          const h = await p.dailyHistory(t, addDays(today, -10), today);
+          log(`[provider] ${p.id} OK n=${h.points.length}`);
+        } catch (e) {
+          log(`[provider] ${p.id} UNREACHABLE: ${(e as Error).message.slice(0, 100)}`);
+        }
+      }
+      for (const [b, q, side] of [['USD', 'BRL', 'buy'], ['BTC', 'BRL', 'sell']] as const) {
+        try {
+          const r = await service.fxSeries({ base: b, quote: q, from: addDays(today, -10), side });
+          log(`[fx] ${b}/${q} side=${side} source=${r.series.source} last ${JSON.stringify(r.series.points.at(-1))}`);
+        } catch (e) {
+          log(`[fx] ${b}/${q} side=${side} ${(e as Error).message.slice(0, 100)}`);
+        }
+      }
+      try {
+        const td = await service.search('tesouro ipca');
+        log(`[tesouro] ${td.results.filter((r) => r.origin === 'tesouro').length} titles ${td.warnings ? 'warnings: ' + td.warnings.join('; ').slice(0, 120) : ''}`);
+      } catch (e) {
+        log(`[tesouro] ${(e as Error).message}`);
+      }
+    },
+    T,
   );
 });

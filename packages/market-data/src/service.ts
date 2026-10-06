@@ -616,7 +616,7 @@ export class MarketDataService {
     const open = !!h.session && nowS >= h.session.start && nowS < h.session.end;
     const last = points[points.length - 1];
     if (last) {
-      const intradayLast = open && last.date === h.lastTradeDate;
+      const intradayLast = open && last.date === h.lastTradeDate && last.date === today;
       const currentMonth = interval === '1mo' && last.date.slice(0, 7) === today.slice(0, 7);
       if (intradayLast || currentMonth) points = [...points.slice(0, -1), { ...last, provisional: true }];
     }

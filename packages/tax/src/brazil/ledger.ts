@@ -1,6 +1,6 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
-import { b3Root, basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
-import { monthOf } from '../common/dates';
+import { b3Root, basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
+import { monthOf, thirdFriday } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
 import { classifyForBrazil, isB3Category, type BrCategory } from './classify';
@@ -26,6 +26,13 @@ export interface BrTrade {
   shortCover?: boolean;
   /** Date of the short sale, for short covers. */
   shortSaleDate?: ISODate;
+  /**
+   * Opening of a short sale: no result yet (recognized at the buy-back), but its gross value counts
+   * toward the month's sales (R$ 20k limit) and the IRRF base in the month it is sold (T23).
+   */
+  shortOpen?: boolean;
+  /** Option expired without exercise: closed at zero on the expiry date (T24). */
+  expired?: boolean;
   transactionIds: string[];
 }
 
@@ -65,7 +72,37 @@ export interface BrLedgerOptions {
   transferBasis?: TransferBasisMap;
   /** Apply free-text cost hints found in notes; default false (proposal only). */
   acceptNoteProposals?: boolean;
+  /** Option expiry dates by instrument id (override the date derived from the B3 series letter). */
+  optionExpiries?: Record<string, ISODate>;
+  /** Expiries after this date are not applied (default: `until`, else the latest transaction date). */
+  asOf?: ISODate;
 }
+
+const CALL_LETTERS = 'ABCDEFGHIJKL';
+const PUT_LETTERS = 'MNOPQRSTUVWX';
+
+/** B3 option type from the series letter (5th character). */
+export function b3OptionType(symbol: string): 'call' | 'put' | undefined {
+  const c = symbol.toUpperCase()[4] ?? '';
+  return CALL_LETTERS.includes(c) ? 'call' : PUT_LETTERS.includes(c) ? 'put' : undefined;
+}
+
+/**
+ * Expiry of a B3 stock option: the series letter gives the month (A-L calls, M-X puts = Jan-Dec);
+ * the year is the first such month on/after `from`; the day is the third Friday (B3 rule since 2021).
+ */
+export function b3OptionExpiry(symbol: string, from: ISODate): ISODate | undefined {
+  const c = symbol.toUpperCase()[4] ?? '';
+  const idx = CALL_LETTERS.indexOf(c) >= 0 ? CALL_LETTERS.indexOf(c) : PUT_LETTERS.indexOf(c);
+  if (idx < 0) return undefined;
+  const month = idx + 1;
+  let year = Number(from.slice(0, 4));
+  let d = thirdFriday(year, month);
+  while (d < from) d = thirdFriday(++year, month);
+  return d;
+}
+
+const EXERCISE_NOTE = /exerc|assign|atribu/i;
 
 interface Side {
   qty: number;
@@ -123,7 +160,28 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     byDay.set(k, list);
   }
 
-  for (const [key, dayTxs] of byDay) {
+  // Option expiries (T24): add an expiry "day" for every option instrument.
+  const horizon = opts.until ?? opts.asOf ?? input.transactions.reduce((m, t) => (t.date > m ? t.date : m), '');
+  const expiryOf = new Map<string, ISODate>();
+  for (const t of txs) {
+    const id = t.instrumentId!;
+    if (expiryOf.has(id) || cat(id) !== 'OPCAO') continue;
+    const e = opts.optionExpiries?.[id] ?? b3OptionExpiry(instruments.get(id)?.symbol ?? '', t.date);
+    if (!e) continue;
+    expiryOf.set(id, e);
+    if (e <= horizon && !byDay.has(`${e}|${id}`)) byDay.set(`${e}|${id}`, []);
+  }
+  // Process by date; options before other assets of the same day so exercise premiums reach the
+  // underlying trade.
+  const keys = [...byDay.keys()]
+    .map((k, i) => ({ k, i, date: k.slice(0, 10), opt: cat(k.slice(11)) === 'OPCAO' ? 0 : 1 }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.opt - b.opt || a.i - b.i)
+    .map((x) => x.k);
+  /** Premium adjustments from option exercise, applied to same-day trades of the underlying (by B3 root). */
+  const exerciseAdj = new Map<string, { buyAdj: number; sellAdj: number; used: boolean; optionId: string }>();
+
+  for (const key of keys) {
+    const dayTxs = byDay.get(key)!;
     const [date, id] = key.split('|') as [string, string];
     const inst = instruments.get(id);
     const symbol = displaySymbol(id, inst);
@@ -135,9 +193,12 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     for (const t of dayTxs) {
       switch (t.type) {
         case 'SPLIT': {
-          const ratio = t.ratio ?? 1;
+          const ratio = snapRatio(t.ratio ?? 1);
           p.qty *= ratio;
           p.shortQty *= ratio;
+          // Rounded ratios (e.g. 0.3333 for 3:1) leave 99.99 shares: snap to the integer (T30).
+          if (Math.abs(p.qty - Math.round(p.qty)) < 0.01) p.qty = Math.round(p.qty);
+          if (Math.abs(p.shortQty - Math.round(p.shortQty)) < 0.01) p.shortQty = Math.round(p.shortQty);
           const frac = p.qty - Math.floor(p.qty + 1e-9);
           if (frac > 1e-6) {
             const fracCost = (p.cost * frac) / p.qty;
@@ -176,6 +237,21 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           break;
         }
         case 'TRANSFER_IN': {
+          if (category === 'OPCAO' && EXERCISE_NOTE.test(t.note ?? '') && p.shortQty > 1e-12) {
+            // Assignment of a written option: the premium received adjusts the underlying trade.
+            const q = Math.min(t.quantity ?? p.shortQty, p.shortQty);
+            const premium = (p.shortNet * q) / p.shortQty;
+            p.shortNet -= premium;
+            p.shortGross -= (p.shortGross * q) / p.shortQty;
+            p.shortQty -= q;
+            const type = b3OptionType(symbol);
+            const k = `${date}|${b3Root(symbol)}`;
+            const a = exerciseAdj.get(k) ?? { buyAdj: 0, sellAdj: 0, used: false, optionId: id };
+            if (type === 'call') a.sellAdj += premium; // writer sells the underlying: premium raises the sale value
+            else a.buyAdj -= premium; // put writer buys the underlying: premium lowers the cost
+            exerciseAdj.set(k, a);
+            break;
+          }
           const qty = t.quantity ?? 0;
           const { basis, proposal } = resolveTransferBasis(t, opts.transferBasis, opts.acceptNoteProposals);
           const original = basis ? basisTotalCost(basis, qty) : undefined;
@@ -242,6 +318,18 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
       side.ids.push(t.id);
     }
 
+    const adj = category !== 'OPCAO' ? exerciseAdj.get(`${date}|${b3Root(symbol)}`) : undefined;
+    if (adj && !adj.used) {
+      const groups = [...byAccount.values()];
+      const gb = groups.find((g) => g.buy.qty > 0);
+      const gs = groups.find((g) => g.sell.qty > 0);
+      if ((adj.buyAdj !== 0 && gb) || (adj.sellAdj !== 0 && gs)) {
+        if (gb) gb.buy.value += adj.buyAdj;
+        if (gs) gs.sell.value += adj.sellAdj;
+        adj.used = true;
+      }
+    }
+
     const restBuy = emptySide();
     const restSell = emptySide();
     const addRest = (target: Side, src: Side, f: number) => {
@@ -287,7 +375,6 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         const cover = Math.min(buyQty, p.shortQty);
         const f = cover / p.shortQty;
         const proceeds = p.shortNet * f;
-        const gross = p.shortGross * f;
         const cost = (buyValue * cover) / buyQty;
         trades.push({
           date,
@@ -297,18 +384,18 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           category,
           kind: 'swing',
           quantity: cover,
-          grossSales: gross,
+          // gross and IRRF were already counted in the month of the short sale (shortOpen)
+          grossSales: 0,
           netProceeds: proceeds,
           cost,
           result: proceeds - cost,
-          irrfReported: p.shortIrrfKnown ? p.shortIrrf * f : undefined,
           shortCover: true,
           shortSaleDate: p.shortSince,
           transactionIds: restBuy.ids,
         });
         p.shortQty -= cover;
         p.shortNet -= proceeds;
-        p.shortGross -= gross;
+        p.shortGross -= p.shortGross * f;
         p.shortIrrf -= p.shortIrrf * f;
         if (p.shortQty < 1e-9) Object.assign(p, { shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false, shortSince: undefined });
         buyValue -= cost;
@@ -381,9 +468,25 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         p.shortIrrf += restSell.irrf * f;
         p.shortIrrfKnown ||= restSell.irrfKnown;
         p.shortSince ??= date;
+        trades.push({
+          date,
+          month: monthOf(date),
+          instrumentId: id,
+          symbol,
+          category,
+          kind: 'swing',
+          quantity: excess,
+          grossSales: restSell.gross * f,
+          netProceeds: 0,
+          cost: 0,
+          result: 0,
+          irrfReported: restSell.irrfKnown ? restSell.irrf * f : undefined,
+          shortOpen: true,
+          transactionIds: restSell.ids,
+        });
         issues.push({
-          level: 'warning',
-          code: 'SHORT_SALE',
+          level: category === 'OPCAO' ? 'info' : 'warning',
+          code: category === 'OPCAO' ? 'OPCAO_LANCADA' : 'SHORT_SALE',
           instrumentId: id,
           transactionId: restSell.ids[0],
           message:
@@ -393,13 +496,62 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
       }
     }
 
-    // 3) transfers out (no taxable event; reduce at average cost)
+    // 3) transfers out (no taxable event; reduce at average cost) and option exercise
     for (const t of dayTxs) {
       if (t.type !== 'TRANSFER_OUT') continue;
+      if (category === 'OPCAO' && EXERCISE_NOTE.test(t.note ?? '') && p.qty > 1e-12) {
+        const q = Math.min(t.quantity ?? p.qty, p.qty);
+        const premium = (p.cost * q) / p.qty;
+        p.qty -= q;
+        p.cost -= premium;
+        const type = b3OptionType(symbol);
+        const k = `${date}|${b3Root(symbol)}`;
+        const a = exerciseAdj.get(k) ?? { buyAdj: 0, sellAdj: 0, used: false, optionId: id };
+        if (type === 'call') a.buyAdj += premium; // call holder buys the underlying: premium adds to cost
+        else a.sellAdj -= premium; // put holder sells the underlying: premium reduces the sale value
+        exerciseAdj.set(k, a);
+        continue;
+      }
       const q = Math.min(t.quantity ?? 0, p.qty);
       const c = p.qty > 0 ? (p.cost * q) / p.qty : 0;
       p.qty -= q;
       p.cost -= c;
+    }
+
+    // 4) option expiry without exercise (T24): close at zero
+    if (category === 'OPCAO' && expiryOf.get(id) === date) {
+      if (p.qty > 1e-12) {
+        trades.push({
+          date, month: monthOf(date), instrumentId: id, symbol, category, kind: 'swing',
+          quantity: p.qty, grossSales: 0, netProceeds: 0, cost: p.cost, result: -p.cost, expired: true, transactionIds: [],
+        });
+        p.qty = 0;
+        p.cost = 0;
+      }
+      if (p.shortQty > 1e-12) {
+        trades.push({
+          date, month: monthOf(date), instrumentId: id, symbol, category, kind: 'swing',
+          quantity: p.shortQty, grossSales: 0, netProceeds: p.shortNet, cost: 0, result: p.shortNet,
+          shortCover: true, shortSaleDate: p.shortSince, expired: true, transactionIds: [],
+        });
+        Object.assign(p, { shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false, shortSince: undefined });
+      }
+      issues.push({
+        level: 'info',
+        code: 'OPCAO_VENCIDA',
+        instrumentId: id,
+        message: `Opção ${symbol} vencida em ${date} sem exercício: posição encerrada a zero (prêmio reconhecido como ${'ganho do lançador / perda do titular'}).`,
+      });
+    }
+  }
+  for (const [k, a] of exerciseAdj) {
+    if (!a.used) {
+      issues.push({
+        level: 'warning',
+        code: 'EXERCICIO_SEM_ATIVO',
+        instrumentId: a.optionId,
+        message: `Exercício de opção em ${k.slice(0, 10)} sem negócio do ativo-objeto (${k.slice(11)}) no mesmo dia: registre a compra/venda do ativo para ajustar o prêmio ao custo/preço.`,
+      });
     }
   }
 
@@ -417,7 +569,22 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         averageCost: p.cost / p.qty,
       });
     }
-    if (p.shortQty > 1e-9) {
+    if (p.shortQty > 1e-9 && cat(id) === 'OPCAO' && (expiryOf.get(id) ?? '') > horizon) {
+      openShorts.push({
+        instrumentId: id,
+        symbol: displaySymbol(id, inst),
+        category: cat(id),
+        quantity: p.shortQty,
+        proceeds: p.shortNet,
+        since: p.shortSince ?? '',
+      });
+      issues.push({
+        level: 'info',
+        code: 'OPCAO_LANCADA_EM_ABERTO',
+        instrumentId: id,
+        message: `Opção lançada ${displaySymbol(id, inst)} em aberto (${p.shortQty}); vence em ${expiryOf.get(id)}: o prêmio será apurado na recompra ou no vencimento.`,
+      });
+    } else if (p.shortQty > 1e-9) {
       openShorts.push({
         instrumentId: id,
         symbol: displaySymbol(id, inst),

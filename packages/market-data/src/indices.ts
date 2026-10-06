@@ -20,7 +20,7 @@ import type { HttpClient } from './http';
 import { BanrepSdmx } from './providers/banrep-sdmx';
 import { fetchSgs } from './providers/bcb';
 import { parseCsv } from './providers/ecb';
-import { roundSig, sliceRange } from './series';
+import { sliceRange } from './series';
 import type { IndexInfo, IndexResponse } from './types';
 
 type Shape = Omit<IndexSeries, 'points' | 'source' | 'id'>;
@@ -58,7 +58,8 @@ export function ipcFromUvr(uvr: readonly IndexPoint[], from: ISODate, to: ISODat
     const a = byDate.get(`${m1.slice(0, 7)}-15`);
     const b = byDate.get(`${m2.slice(0, 7)}-15`);
     if (a === undefined || b === undefined) continue;
-    out.push({ date: m, value: roundSig((b / a - 1) * 100, 6) });
+    // DANE publishes the monthly variation with 2 decimals; UVR rounding (4 decimals) adds ~1e-5 noise.
+    out.push({ date: m, value: Math.round((b / a - 1) * 10_000) / 100 });
   }
   return out;
 }

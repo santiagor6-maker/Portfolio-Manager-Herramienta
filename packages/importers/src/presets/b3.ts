@@ -8,8 +8,9 @@
 import type { TransactionType } from '@pm/core';
 import { B3_TICKER_RE_STRICT } from '../markets';
 import type { DraftTransaction, InstrumentHint, ParsedRow } from '../types';
-import { normalizeText } from '../util';
-import { type PresetDefinition, cell, columnValues, locateHeader, str } from './common';
+import { businessDaysBetween } from '../calendars';
+import { normalizeText, round } from '../util';
+import { type ParseContext, type PresetDefinition, cell, locateHeader, str } from './common';
 
 const NEG_GROUPS = [
   ['Data do Negócio'], ['Tipo de Movimentação'], ['Mercado'], ['Código de Negociação'], ['Quantidade'], ['Preço'], ['Valor'],
@@ -49,8 +50,9 @@ export const b3NegociacaoPreset: PresetDefinition = {
       inst: H.find('Instituição'), code: H.find('Código de Negociação'), qty: H.find('Quantidade'),
       price: H.find('Preço'), value: H.find('Valor'),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date), 'DMY');
-    ctx.initNumbers('comma', columnValues(table, h.index + 1, c.qty, c.price, c.value));
+    // B3 always exports DD/MM/AAAA and pt-BR numbers (I19: no ambiguity warnings).
+    ctx.detectDates([c.date], h.index + 1, 'DMY', { fixed: true });
+    ctx.detectNumbers([c.qty, c.price, c.value], h.index + 1, 'comma', { fixed: true });
     ctx.fileIssues.push(ctx.issue('B3_NO_FEES', 'info'));
     const rows: ParsedRow[] = [];
     for (let r = h.index + 1; r < table.rows.length; r++) {
@@ -94,6 +96,9 @@ type MovRule =
   | { kind: 'income'; type: TransactionType; net?: boolean }
   | { kind: 'split'; reverse: boolean }
   | { kind: 'bonus' }
+  | { kind: 'fraction' }
+  | { kind: 'auction' }
+  | { kind: 'corporate'; action: 'merger' | 'spinoff' | 'conversion' | 'other' }
   | { kind: 'skip'; reason: string; severity: 'info' | 'warning' };
 
 export function b3MovementRule(movement: string): MovRule | undefined {
@@ -110,8 +115,12 @@ export function b3MovementRule(movement: string): MovRule | undefined {
   if (/direito|cessao|recibo de subscricao|solicitacao de subscricao/.test(m)) return { kind: 'skip', reason: 'derechos de suscripción: si los ejerces, la suscripción aparece aparte.', severity: 'info' };
   if (/emprestimo/.test(m)) return { kind: 'skip', reason: 'préstamo de acciones (BTC), no cambia tu propiedad.', severity: 'info' };
   if (/^transferencia/.test(m)) return { kind: 'skip', reason: 'transferencia de custodia entre corretoras; no cambia tu posición total.', severity: 'info' };
-  if (/fracao|leilao/.test(m)) return { kind: 'skip', reason: 'fracciones/subasta: regístralo manualmente si es relevante.', severity: 'warning' };
-  if (/incorporacao|cisao|conversao|resgate de/.test(m)) return { kind: 'skip', reason: 'evento corporativo: regístralo manualmente.', severity: 'warning' };
+  if (/leilao/.test(m)) return { kind: 'auction' };
+  if (/fracao/.test(m)) return { kind: 'fraction' };
+  if (/incorporacao/.test(m)) return { kind: 'corporate', action: 'merger' };
+  if (/cisao/.test(m)) return { kind: 'corporate', action: 'spinoff' };
+  if (/conversao/.test(m)) return { kind: 'corporate', action: 'conversion' };
+  if (/resgate de|grupamento de|troca de|atualizacao de codigo/.test(m)) return { kind: 'corporate', action: 'other' };
   return undefined;
 }
 
@@ -135,10 +144,13 @@ export const b3MovimentacaoPreset: PresetDefinition = {
       dir: H.find('Entrada/Saída'), date: H.find('Data'), mov: H.find('Movimentação'), product: H.find('Produto'),
       inst: H.find('Instituição'), qty: H.find('Quantidade'), price: H.find('Preço unitário'), value: H.find('Valor da Operação'),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date), 'DMY');
-    ctx.initNumbers('comma', columnValues(table, h.index + 1, c.qty, c.price, c.value));
+    ctx.detectDates([c.date], h.index + 1, 'DMY', { fixed: true });
+    ctx.detectNumbers([c.qty, c.price, c.value], h.index + 1, 'comma', { fixed: true });
     const rows: ParsedRow[] = [];
     let hasTrades = false;
+    const settlement = settlementMatcher(ctx);
+    const fractions: { row: ParsedRow; d: DraftTransaction; key: string }[] = [];
+    const auctions: { row: ParsedRow; d: DraftTransaction; key: string; value?: number }[] = [];
     const transferred: { row: ParsedRow; d: DraftTransaction; base: string }[] = [];
     const incomes: DraftTransaction[] = [];
     for (let r = h.index + 1; r < table.rows.length; r++) {
@@ -169,6 +181,21 @@ export const b3MovimentacaoPreset: PresetDefinition = {
       if (!date) continue;
       const instrument = parseB3Product(str(raw, c.product));
       const credit = dir.startsWith('credito') || dir.startsWith('entrada');
+      if (rule.kind === 'corporate') {
+        // Incorporação / cisão / conversão: collect legs for the corporate-action wizard.
+        let ca = ctx.corporateActions.find((x) => x.date === date && x.kind === rule.action);
+        if (!ca) {
+          ca = { line: row.line, date, kind: rule.action, description: movement, legs: [] };
+          ctx.corporateActions.push(ca);
+        }
+        const leg: (typeof ca.legs)[number] = { direction: credit ? 'in' : 'out' };
+        if (instrument.symbol) leg.symbol = instrument.symbol;
+        if (instrument.name) leg.name = instrument.name;
+        if (qty !== undefined) leg.quantity = Math.abs(qty);
+        ca.legs.push(leg);
+        ctx.skip(row, 'CORPORATE_ACTION_PENDING', { value: movement }, 'warning');
+        continue;
+      }
       const d: DraftTransaction = { date, type: 'BUY', currency: 'BRL', instrument };
       const inst = str(raw, c.inst);
       if (inst) d.account = inst;
@@ -186,7 +213,6 @@ export const b3MovimentacaoPreset: PresetDefinition = {
           if (value !== undefined) d.amount = Math.abs(value);
           else if (qty !== undefined && price !== undefined) d.amount = Math.abs(qty * price);
           d.note = movement;
-          if (rule.net) row.issues.push(ctx.issue('NET_AMOUNT', 'info', undefined, row.line));
           break;
         case 'split':
           d.type = 'SPLIT';
@@ -199,8 +225,30 @@ export const b3MovimentacaoPreset: PresetDefinition = {
           if (price !== undefined) d.price = price;
           d.note = movement;
           break;
+        case 'fraction':
+        case 'auction':
+          d.type = 'SELL';
+          if (qty !== undefined) d.quantity = Math.abs(qty);
+          d.note = movement;
+          break;
+      }
+      if (rule.kind === 'trade' && settlement.match(row, d)) continue;
+      if (rule.kind === 'income' && rule.net && d.amount) {
+        // JCP is credited net of 15 % IRRF: record gross + tax (estimated).
+        const net = d.amount;
+        const gross = round(net / 0.85, 2);
+        d.amount = gross;
+        d.taxes = round(gross - net, 2);
+        row.issues.push(ctx.issue('JCP_GROSS_ESTIMATED', 'info', { net, gross }, row.line));
       }
       row.draft = d;
+      const pkey = instrument.symbol ?? instrument.name ?? '';
+      if (rule.kind === 'fraction') fractions.push({ row, d, key: pkey });
+      if (rule.kind === 'auction') {
+        const a: (typeof auctions)[number] = { row, d, key: pkey };
+        if (value !== undefined) a.value = Math.abs(value);
+        auctions.push(a);
+      }
       const key = `${d.date}|${instrument.symbol ?? instrument.name}|${d.type}|${d.amount ?? ''}`;
       if (isTransferred) transferred.push({ row, d, base: key });
       else if (rule.kind === 'income') incomes.push(d);
@@ -214,8 +262,132 @@ export const b3MovimentacaoPreset: PresetDefinition = {
         t.row.issues.push(ctx.issue('SKIPPED_MOVEMENT', 'info', { value: 'Transferido', reason: 'duplicado del provento original.' }, t.row.line));
       }
     }
-    if (hasTrades) ctx.fileIssues.push(ctx.issue('B3_SETTLEMENT_DATE', 'info'));
+    // "Fração em Ativos" (shares removed) + "Leilão de Fração" (cash later) → one SELL of the fraction.
+    for (const f of fractions) {
+      const idx = auctions.findIndex((a) => a.key === f.key && a.d.date >= f.d.date);
+      if (idx >= 0) {
+        const a = auctions.splice(idx, 1)[0]!;
+        const value = a.value ?? (a.d.amount ?? 0);
+        f.d.amount = value;
+        f.d.price = f.d.quantity ? round(value / f.d.quantity, 8) : 0;
+        f.d.note = `${f.d.note} + ${a.d.note} (${a.d.date})`;
+        a.row.draft = undefined;
+        a.row.skipped = true;
+        a.row.issues.push(ctx.issue('FRACTION_SOLD', 'info', undefined, a.row.line));
+      } else {
+        f.d.price = 0;
+        f.d.amount = 0;
+        f.row.issues.push(ctx.issue('FRACTION_PENDING', 'warning', undefined, f.row.line));
+      }
+    }
+    for (const a of auctions) {
+      if (a.value !== undefined) {
+        a.d.amount = a.value;
+        if (a.d.quantity) a.d.price = round(a.value / a.d.quantity, 8);
+      }
+    }
+    if (hasTrades && settlement.matched === 0 && ctx.options.b3SettlementMode !== 'skip') ctx.fileIssues.push(ctx.issue('B3_SETTLEMENT_DATE', 'info'));
     ctx.fileIssues.push(ctx.issue('B3_NO_FEES', 'info'));
+    return rows;
+  },
+};
+
+/**
+ * Matches "Transferência - Liquidação" rows (settlement, D+2 business days on the B3 calendar) with
+ * trades already imported from Negociação or notas de corretagem, so they are not counted twice.
+ */
+function settlementMatcher(ctx: ParseContext) {
+  const mode = ctx.options.b3SettlementMode ?? 'auto';
+  const sources = new Set(['import:b3-negociacao', 'import:nota-corretagem', 'import:nota-sinacor-pdf']);
+  const trades = (ctx.options.existingTransactions ?? []).filter((t) => (t.type === 'BUY' || t.type === 'SELL') && sources.has(t.source ?? '') && t.instrumentId);
+  const bySymbol = new Map<string, typeof trades>();
+  for (const t of trades) {
+    const sym = t.instrumentId!.split(':').pop()!.replace(/F$/, '');
+    bySymbol.set(sym, [...(bySymbol.get(sym) ?? []), t]);
+  }
+  const used = new Set<string>();
+  const state = {
+    matched: 0,
+    match(row: ParsedRow, d: DraftTransaction): boolean {
+      if (mode === 'include') return false;
+      if (mode === 'skip') {
+        ctx.skip(row, 'SKIPPED_MOVEMENT', { value: 'Transferência - Liquidação', reason: 'liquidaciones omitidas (b3SettlementMode = skip).' });
+        return true;
+      }
+      const sym = d.instrument?.symbol?.replace(/F$/, '');
+      if (!sym) return false;
+      const cand = (bySymbol.get(sym) ?? []).find((t) => {
+        if (used.has(t.id) || t.type !== d.type || Math.abs((t.quantity ?? 0) - (d.quantity ?? 0)) > 1e-6) return false;
+        const bd = businessDaysBetween(t.date, d.date, 'BR');
+        return bd >= 0 && bd <= 3;
+      });
+      if (!cand) return false;
+      used.add(cand.id);
+      state.matched++;
+      ctx.skip(row, 'SETTLEMENT_MATCHED', { date: cand.date });
+      return true;
+    },
+  };
+  return state;
+}
+
+const POS_GROUPS = [['Produto'], ['Instituição'], ['Código de Negociação'], ['Quantidade'], ['Preço de Fechamento'], ['Valor Atualizado']];
+
+/** B3 Área do Investidor → Extratos → Posição: reconciliation (default) or opening positions. */
+export const b3PosicaoPreset: PresetDefinition = {
+  id: 'b3-posicao',
+  label: 'B3 Área do Investidor — Posição (XLSX)',
+  broker: 'B3',
+  country: 'BR',
+  fileKinds: ['xlsx'],
+  confidence: 'medium',
+  multiSheet: true,
+  description: 'Foto de tus posiciones en B3 (acciones, FII, ETF, BDR). Sirve para conciliar contra lo importado o como posición inicial.',
+  exportHelp: 'investidor.b3.com.br → Extratos → Posição → elige la fecha → Baixar → Excel.',
+  detect(table) {
+    const h = locateHeader(table, POS_GROUPS, 0.8, 10);
+    return h ? 0.95 : 0;
+  },
+  parse(table, ctx) {
+    const h = locateHeader(table, POS_GROUPS, 0.6, 10)!;
+    const H = h.header;
+    const c = {
+      product: H.find('Produto'), inst: H.find('Instituição'), code: H.find('Código de Negociação'), isin: H.find('Código ISIN / Distribuição', 'Código ISIN'),
+      qty: H.find('Quantidade'), price: H.find('Preço de Fechamento'), value: H.find('Valor Atualizado'),
+    };
+    ctx.detectNumbers([c.qty, c.price, c.value], h.index + 1, 'comma', { fixed: true });
+    const reported: NonNullable<ParseContext['reported']> = { source: 'b3-posicao', positions: [], cash: [] };
+    if (ctx.options.asOfDate) reported.asOf = ctx.options.asOfDate;
+    const rows: ParsedRow[] = [];
+    for (let r = h.index + 1; r < table.rows.length; r++) {
+      const raw = table.rows[r]!;
+      const code = str(raw, c.code).toUpperCase();
+      const qty = ctx.num(cell(raw, c.qty), { line: 0, issues: [] }, 'quantity');
+      if (!code || qty === undefined) continue;
+      const price = ctx.num(cell(raw, c.price), { line: 0, issues: [] }, 'price');
+      const value = ctx.num(cell(raw, c.value), { line: 0, issues: [] }, 'value');
+      const hint = { symbol: code, exchange: 'BVMF', currency: 'BRL', name: str(raw, c.product) };
+      const pos: NonNullable<ParseContext['reported']>['positions'][number] = { symbol: code, quantity: qty, currency: 'BRL', hint };
+      if (price !== undefined) pos.price = price;
+      if (value !== undefined) pos.marketValue = value;
+      reported.positions.push(pos);
+      if (ctx.options.positionsMode === 'opening') {
+        const row = ctx.newRow(r, raw);
+        rows.push(row);
+        if (!ctx.options.asOfDate) {
+          row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'asOfDate' }, row.line));
+          continue;
+        }
+        const d: DraftTransaction = { date: ctx.options.asOfDate, type: 'TRANSFER_IN', currency: 'BRL', quantity: qty, instrument: hint, note: 'Posición inicial (B3 Posição)' };
+        if (price !== undefined) d.price = price;
+        if (value !== undefined) d.amount = value;
+        const inst = str(raw, c.inst);
+        if (inst) d.account = inst;
+        row.draft = d;
+        row.issues.push(ctx.issue('TRANSFER_COST_FROM_MARKET', 'warning', undefined, row.line));
+      }
+    }
+    ctx.reported = reported;
     return rows;
   },
 };

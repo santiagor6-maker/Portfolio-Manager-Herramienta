@@ -91,7 +91,8 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       const raw = table.rows[r]!;
       const cls = classifyTypeDetailed(str(raw, c.type), mapping.typeValues);
       if ((cls.type === 'FEE' || cls.type === 'TAX') && !cls.refund) {
-        const v = ctx.num(cell(raw, c.amount ?? c.netAmount), { line: 0, issues: [] }, 'amount');
+        const dummy = { line: 0, issues: [] };
+        const v = ctx.num(cell(raw, c.amount), dummy, 'amount') ?? ctx.num(cell(raw, c.netAmount), dummy, 'amount');
         if (v !== undefined) v < 0 ? costNeg++ : costPos++;
       }
     }

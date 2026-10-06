@@ -29,7 +29,7 @@ export const etoroPreset: PresetDefinition = {
       date: H.find('Date'), type: H.find('Type'), details: H.find('Details'), amount: H.find('Amount'),
       units: H.find('Units'), pos: H.find('Position ID'), asset: H.find('Asset type'),
     };
-    ctx.initDates(columnValues(table, h.index + 1, c.date), 'DMY');
+    ctx.detectDates([c.date], h.index + 1, 'DMY', { fixed: true }); // eToro statements: DD/MM/YYYY HH:MM:SS
     ctx.initNumbers('dot', columnValues(table, h.index + 1, c.amount, c.units));
     const rows: ParsedRow[] = [];
     for (let r = h.index + 1; r < table.rows.length; r++) {

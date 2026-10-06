@@ -292,12 +292,15 @@ describe('T9 — TRANSFER_IN keeps the original date and cost', () => {
     expect(row.openDate).toBe('2019-03-15');
     expect(row.costCop).toBeCloseTo(500 * 3200, 6);
   });
-  it('S-CO3 (reviewer free-text note "bought 2019 at 50") and the options map', () => {
+  it('S-CO3 free-text note is only a proposal (round 2, T29); options map and acceptNoteProposals apply it', () => {
     const t1 = tx({ date: '2024-09-01', type: 'TRANSFER_IN', instrumentId: I.AAPL.id, quantity: 10, price: 220, currency: 'USD', note: 'bought 2019 at 50' });
     const sell = tx({ date: '2025-06-02', type: 'SELL', instrumentId: I.AAPL.id, quantity: 10, price: 200, currency: 'USD' });
     const r = buildColombiaTaxReport(co([t1, sell]), { year: 2025 });
-    expect(r.ventas.rows[0]!.classification).toBe('ganancia_ocasional');
-    expect(r.issues.map((i) => i.code)).toContain('TRANSFER_BASIS_APPROXIMATE');
+    expect(r.ventas.rows[0]!.classification).toBe('renta_ordinaria');
+    expect(r.issues.map((i) => i.code)).toContain('TRANSFER_BASIS_PROPOSED');
+    const ra = buildColombiaTaxReport(co([t1, sell]), { year: 2025, acceptNoteProposals: true });
+    expect(ra.ventas.rows[0]!.classification).toBe('ganancia_ocasional');
+    expect(ra.issues.map((i) => i.code)).toContain('TRANSFER_BASIS_APPROXIMATE');
     const plain = tx({ date: '2024-09-01', type: 'TRANSFER_IN', instrumentId: I.AAPL.id, quantity: 10, price: 220, currency: 'USD' });
     const r2 = buildColombiaTaxReport(co([plain, sell]), { year: 2025, transferBasis: { [plain.id]: { openDate: '2019-03-15', unitCost: 50 } } });
     expect(r2.ventas.rows[0]!.costCop).toBeCloseTo(500 * 3200, 6);
@@ -330,7 +333,9 @@ describe('T11 — DARF: late charges, Sicalc data, payment status', () => {
     expect(c.juros).toBeCloseTo(21, 6);
     expect(c.total).toBeCloseTo(1172.8, 6);
     expect(darfLateCharges(1000, '2026-04-30', '2026-09-30', { '2026-05': 0.01, '2026-06': 0.01, '2026-07': 0.01, '2026-08': 0.01 }).multaRate).toBe(0.2);
-    expect(darfLateCharges(1000, '2026-04-30', '2026-06-15').missingSelicMonths).toEqual(['2026-05']);
+    expect(darfLateCharges(1000, '2026-12-30', '2027-03-15').missingSelicMonths).toEqual(['2027-01', '2027-02']);
+    // built-in Selic table (T35, round 2)
+    expect(darfLateCharges(1000, '2025-03-31', '2025-06-10').jurosRate).toBeCloseTo(0.0106 + 0.0114 + 0.01, 10);
   });
   const sale = [
     tx({ date: '2026-01-05', type: 'BUY', instrumentId: I.PETR4.id, quantity: 2000, price: 30, currency: B }),
@@ -404,14 +409,16 @@ describe('T12 — options, subscription rights, fixed income, crypto', () => {
     expect(r.totals.rendimentosIsentos).toBeCloseTo(50, 6);
   });
   it('crypto: R$ 35k monthly exemption, 15% GCAP, DARF 4600', () => {
-    const r = brazilCryptoReport(
-      br([
-        tx({ date: '2025-01-10', type: 'BUY', instrumentId: BTC.id, quantity: 1, amount: 200_000, currency: B }),
-        tx({ date: '2025-03-10', type: 'SELL', instrumentId: BTC.id, quantity: 0.1, amount: 30_000, currency: B }),
-        tx({ date: '2025-04-10', type: 'SELL', instrumentId: BTC.id, quantity: 0.2, amount: 60_000, currency: B }),
-      ]),
-      { year: 2025 },
-    );
+    const txs = [
+      tx({ date: '2025-01-10', type: 'BUY', instrumentId: BTC.id, quantity: 1, amount: 200_000, currency: B }),
+      tx({ date: '2025-03-10', type: 'SELL', instrumentId: BTC.id, quantity: 0.1, amount: 30_000, currency: B }),
+      tx({ date: '2025-04-10', type: 'SELL', instrumentId: BTC.id, quantity: 0.2, amount: 60_000, currency: B }),
+    ];
+    // round 2 (T22): custody unknown (MANUAL) → tax shown, DARF withheld until confirmed
+    const unknown = brazilCryptoReport(br(txs), { year: 2025 });
+    expect(unknown.months[1]).toMatchObject({ tax: 3000, darfBlockedUnknownCustody: true });
+    expect(unknown.months[1]!.darf).toBeUndefined();
+    const r = brazilCryptoReport(br(txs), { year: 2025, cryptoCustody: { [BTC.id]: 'brasil' } });
     expect(r.months[0]).toMatchObject({ month: '2025-03', exempt: true, tax: 0 });
     expect(r.months[1]).toMatchObject({ month: '2025-04', exempt: false, tax: 3000 });
     expect(r.months[1]!.darf).toMatchObject({ code: '4600', dueDate: '2025-05-30' });

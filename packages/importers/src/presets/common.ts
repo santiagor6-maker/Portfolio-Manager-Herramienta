@@ -26,6 +26,8 @@ import { cellToString, normalizeText } from '../util';
 export interface PresetDefinition extends PresetInfo {
   /** 0..1 header-signature score for a table. */
   detect(table: RawTable): number;
+  /** Merge every matching sheet (e.g. B3 Posição: Ações, BDR, ETF, FII sheets) before parsing. */
+  multiSheet?: boolean;
   parse(table: RawTable, ctx: ParseContext): ParsedRow[];
 }
 

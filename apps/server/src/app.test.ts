@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { TTL } from '@pm/market-data';
 import { MarketDataApiError, MarketDataClient } from '@pm/market-data/client';
-import { createTestService } from '../../../packages/market-data/test/helpers';
+import { createTestService, presplitOnly } from '../../../packages/market-data/test/helpers';
 import { createApp } from './app';
 import { FileStore } from './fileStore';
 
@@ -198,6 +198,146 @@ describe('FileStore', () => {
       expect(h.series.points).toHaveLength(4);
       expect(second.fetch.calls).toHaveLength(0);
       expect(TTL.IMMUTABLE).toBe(Number.POSITIVE_INFINITY);
+    } finally {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------ review round 1
+describe('round 2: server hardening and new routes', () => {
+  it('M10 foreign Origin is refused server-side (not just hidden by CORS)', async () => {
+    const { app, fetch } = setup();
+    const r = await app.request('/api/history?symbol=AAPL&from=2025-01-01', { headers: { Origin: 'https://evil.example' } });
+    expect(r.status).toBe(403);
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();
+    expect(fetch.calls).toEqual([]);
+    const pre = await app.request('/api/batch', { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' } });
+    expect(pre.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('M10 optional API token', async () => {
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, apiToken: 's3cret' });
+    expect((await app.request('/api/catalog')).status).toBe(401);
+    expect((await app.request('/api/catalog', { headers: { Authorization: 'Bearer s3cret' } })).status).toBe(200);
+    expect((await app.request('/api/catalog', { headers: { 'x-api-key': 's3cret' } })).status).toBe(200);
+    expect((await app.request('/api/health')).status).toBe(200);
+  });
+
+  it('M10 per-client rate limit with Retry-After; batch costs more', async () => {
+    let now = 0;
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, rateLimit: { capacity: 3, refillPerSecond: 1 }, now: () => now });
+    for (let i = 0; i < 3; i++) expect((await app.request('/api/catalog')).status).toBe(200);
+    const r = await app.request('/api/catalog');
+    expect(r.status).toBe(429);
+    expect(r.headers.get('retry-after')).toBe('1');
+    now += 1000;
+    expect((await app.request('/api/catalog')).status).toBe(200);
+  });
+
+  it('M10 batch caps: items and estimated points', async () => {
+    const { app } = setup();
+    const post = (body: unknown) => app.request('/api/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const many = await post({ quotes: Array.from({ length: 101 }, (_, i) => `S${i}`) });
+    expect(many.status).toBe(400);
+    const huge = await post({ histories: Array.from({ length: 10 }, () => ({ symbol: 'AAPL', from: '1970-01-01' })) });
+    expect(huge.status).toBe(400);
+    expect(((await huge.json()) as any).error.message).toMatch(/too large/);
+  });
+
+  it('M11 body limit counts streamed bytes (chunked, no Content-Length)', async () => {
+    const { app } = setup();
+    const chunk = new TextEncoder().encode(' '.repeat(16 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(ctrl) {
+        if (sent++ < 20) ctrl.enqueue(chunk);
+        else ctrl.close();
+      },
+    });
+    const r = await app.request('/api/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: stream, duplex: 'half' } as RequestInit);
+    expect(r.status).toBe(413);
+  });
+
+  it('M12 path-escape symbols are rejected without upstream calls', async () => {
+    const { app, fetch } = setup();
+    for (const s of ['CRYPTO:..', 'XNYS:..', encodeURIComponent('../v7/finance/quote')]) {
+      const r = await app.request(`/api/history?symbol=${s}&from=2025-01-01`);
+      expect(r.status, s).toBe(400);
+    }
+    expect(fetch.calls).toEqual([]);
+  });
+
+  it('M17 internal errors are not leaked', async () => {
+    const { app } = setup();
+    const res = await app.request('/api/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ histories: [null], quotes: [123] }) });
+    const body = (await res.json()) as any;
+    expect(body.histories[0].error.code).toBe('BAD_REQUEST');
+    expect(body.quotes[0].error.code).toBe('BAD_REQUEST');
+    expect(JSON.stringify(body)).not.toMatch(/Cannot read|is not a function/);
+  });
+
+  it('GET /api/index (and /api/rates alias), list without id, batch indices', async () => {
+    const { app } = setup();
+    const list = await getJson(app, '/api/index');
+    expect(list.body.indices.map((i: any) => i.id)).toEqual(expect.arrayContaining(['CDI', 'SELIC', 'IPCA', 'IPC_CO', 'IBR', 'UVR', 'DTF', 'CPI_US']));
+    const cdi = await getJson(app, '/api/index?id=CDI&from=2025-01-02&to=2025-01-10');
+    expect(cdi.status).toBe(200);
+    expect(cdi.body.series).toMatchObject({ id: 'CDI', kind: 'periodRate', period: 'day' });
+    const ipc = await getJson(app, '/api/rates?series=IPC_CO&from=2025-01-01&to=2025-01-31');
+    expect(ipc.body.series.points).toHaveLength(1);
+    expect((await getJson(app, '/api/index?id=NOPE&from=2025-01-01')).status).toBe(400);
+  });
+
+  it('GET /api/fx side=compra (PTAX buy)', async () => {
+    const { app } = setup();
+    const r = await getJson(app, '/api/fx?base=USD&quote=BRL&from=2025-01-02&to=2025-01-02&side=compra');
+    expect(r.body).toMatchObject({ side: 'buy', series: { source: 'bcb-ptax', points: [{ rate: 6.191 }] } });
+  });
+
+  it('GET /api/history adjust=total and degraded responses are no-store', async () => {
+    const { app } = setup();
+    const tr = await getJson(app, '/api/history?symbol=ECOPETROL.CL&from=2025-03-28&to=2025-04-01&adjust=total');
+    expect(tr.body.notes.join(' ')).toMatch(/total-return/);
+    const { service } = createTestService({ failSplitHistory: true, routes: presplitOnly });
+    const app2 = createApp({ service, log: null });
+    const d = await app2.request('/api/history?symbol=NVDA&from=2024-01-02&to=2024-01-05');
+    expect(d.headers.get('cache-control')).toBe('no-store');
+    expect(((await d.json()) as any).degraded).toBe(true);
+  });
+
+  it('M16 DELETE /api/cache invalidates a symbol (loopback client)', async () => {
+    const { app } = setup();
+    await app.request('/api/history?symbol=PETR4.SA&from=2024-11-01&to=2025-02-28');
+    const r = await app.request('/api/cache?symbol=BVMF:PETR4', { method: 'DELETE' });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).removed).toBeGreaterThan(0);
+  });
+
+  it('health lists providers', async () => {
+    const { app } = setup();
+    const r = await getJson(app, '/api/health');
+    expect(r.body.providers.prices).toEqual(expect.arrayContaining(['yahoo', 'brapi', 'stooq', 'coingecko', 'tesouro', 'superfin']));
+    expect(r.body.providers.fx).toEqual(expect.arrayContaining(['banrep-trm', 'banrep-sdmx', 'bcb-ptax', 'ecb', 'yahoo', 'coingecko']));
+  });
+});
+
+describe('M16 FileStore is bounded and supports prefix invalidation', () => {
+  it('prunes least recently used files and deletes by prefix', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'pm-store-'));
+    try {
+      const store = new FileStore(d, { maxFiles: 3, pruneEvery: 1000 });
+      for (let i = 0; i < 5; i++) {
+        await store.set(`hist:v2:yahoo:S${i}:2024`, { value: i, storedAt: 0, expiresAt: null });
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      expect(await store.prune()).toBe(2);
+      expect(await store.get('hist:v2:yahoo:S0:2024')).toBeUndefined();
+      expect(await store.get('hist:v2:yahoo:S4:2024')).toBeDefined();
+      expect(await store.deletePrefix('hist:v2:yahoo:S4:')).toBe(1);
+      expect(await store.get('hist:v2:yahoo:S4:2024')).toBeUndefined();
     } finally {
       await rm(d, { recursive: true, force: true });
     }

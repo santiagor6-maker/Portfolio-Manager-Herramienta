@@ -68,11 +68,6 @@ export const canonicalPreset: PresetDefinition = {
       const idx = h.header.find(col.column);
       if (idx !== undefined) mapping.columns[col.field] = idx;
     }
-    ctx.initDates(
-      table.rows.slice(h.index + 1).map((r) => r[mapping.columns.date as number] ?? null),
-      'YMD',
-    );
-    mapping.dateFormat = ctx.dateFormat;
     return parseWithMapping(table, ctx, mapping);
   },
 };

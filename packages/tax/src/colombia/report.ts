@@ -1,5 +1,5 @@
 import type { CountryCode, CurrencyCode, Instrument, ISODate, Transaction } from '@pm/core';
-import { basisTotalCost, issuerKey, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
+import { basisTotalCost, issuerKey, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool } from '../common/cashPool';
 import { addWeekdays, addYears, daysBetween } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
@@ -552,9 +552,12 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
         break;
       }
       case 'SPLIT': {
-        const ratio = tx.ratio ?? 1;
+        const ratio = snapRatio(tx.ratio ?? 1);
         const list = lots.get(id) ?? [];
-        for (const lot of list) lot.quantity *= ratio;
+        for (const lot of list) {
+          lot.quantity *= ratio;
+          if (Math.abs(lot.quantity - Math.round(lot.quantity)) < 0.01) lot.quantity = Math.round(lot.quantity);
+        }
         const total = sum(list.map((l) => l.quantity));
         const frac = total - Math.floor(total + 1e-9);
         if (frac > 1e-6 && inst?.assetClass !== 'crypto' && inst?.assetClass !== 'fund') {

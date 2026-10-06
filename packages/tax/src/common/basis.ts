@@ -60,7 +60,7 @@ export function parseLocaleNumber(raw: string): number | undefined {
  * Loose free-text hint, e.g. "bought 2019 at 50", "comprado em 2019-03-15 a 50", "comprada el 2019 por 50".
  * Never applied automatically: returned as a proposal for the user to confirm.
  */
-const LOOSE_RE = /(?:bought|purchased|comprad[oa]s?|adquirid[oa]s?|compra)\s*(?:on|in|en|em|el|no|na)?\s*(\d{4}(?:-\d{2}-\d{2})?)\s*(?:at|a|@|por|for)\s*(?:US\$|R\$|\$|COP|USD|BRL)?\s*([\d.,]+)(?!\s*(?:%|por\s*ciento|por\s*cento|percent))/i;
+const LOOSE_RE = /(?:bought|purchased|comprad[oa]s?|adquirid[oa]s?|compra)\s*(?:on|in|en|em|el|no|na)?\s*(\d{4}(?:-\d{2}-\d{2})?)\s*(?:at|a|@|por|for)\s*(?:US\$|R\$|\$|COP|USD|BRL)?\s*(\d(?:[\d.,]*\d)?)(?![\d.,])(?!\s*(?:%|por\s*ciento|por\s*cento|percent))/i;
 
 export function transferBasisOf(tx: Transaction, map?: TransferBasisMap): TransferBasis | undefined {
   const fromMap = map?.[tx.id];
@@ -139,4 +139,16 @@ export function issuerKey(inst: Instrument | undefined, id: string, overrides?: 
   if (inst.exchange === 'BVMF') return `BVMF:${b3Root(inst.symbol)}`;
   if (inst.exchange === 'XBOG') return `XBOG:${BVC_ISSUERS[inst.symbol.toUpperCase()] ?? inst.symbol.toUpperCase()}`;
   return inst.id;
+}
+
+/**
+ * Split/grupamento ratios are often typed rounded (0.3333 for 3:1). Snap to the nearest simple
+ * fraction n/m (m <= 20, n <= 100) when within 5e-5 (T30).
+ */
+export function snapRatio(r: number): number {
+  for (let m = 1; m <= 20; m++) {
+    const n = Math.round(r * m);
+    if (n >= 1 && n <= 100 * m && Math.abs(r - n / m) < 5e-5) return n / m;
+  }
+  return r;
 }

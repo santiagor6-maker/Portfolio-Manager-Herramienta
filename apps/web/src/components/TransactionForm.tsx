@@ -1,46 +1,53 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLiveQuery } from 'dexie-react-hooks';
 import clsx from 'clsx';
-import type { AssetClass, Instrument, TransactionType } from '@pm/core';
+import { CheckCircle2, Sparkles } from 'lucide-react';
+import * as core from '@pm/core';
+import type { Instrument, TransactionType } from '@pm/core';
 import { Banner, Field, Modal } from './ui';
-import { InstrumentPicker } from './InstrumentPicker';
+import { InstrumentPicker, type ManualRequest } from './InstrumentPicker';
+import { ManualInstrumentEditor, draftFrom, draftToInstrument, type ManualDraft } from './ManualInstrumentEditor';
 import { NEEDS_AMOUNT, NEEDS_INSTRUMENT, NEEDS_QTY_PRICE, NEEDS_RATIO, validateTxDraft, type TxDraft, type TxErrors } from './txValidation';
 import { CURRENCY_CODES } from '../lib/currencies';
 import { parseDecimal, toInputNumber } from '../lib/parse';
-import { formatMoney } from '../lib/format';
-import { todayIso } from '../lib/ids';
+import { formatDate, formatFxRate, formatMoney, formatPct, formatPrice } from '../lib/format';
+import { addDays, todayIso } from '../lib/ids';
 import { useFmt, useApp } from '../store/app';
 import { useInstrumentMap, usePortfolios } from '../hooks/useData';
 import { createPortfolio, saveTransaction, upsertInstruments } from '../db/repo';
-import type { StoredTransaction } from '../db/schema';
+import { db, type StoredTransaction } from '../db/schema';
+import { fetchHistory } from '../services/marketData';
 
 const NEW_PORTFOLIO = '__new';
 const QUICK: TransactionType[] = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FX_CONVERSION'];
 const OTHER: TransactionType[] = ['INTEREST', 'FEE', 'TAX', 'SPLIT', 'STOCK_DIVIDEND', 'TRANSFER_IN', 'TRANSFER_OUT', 'RETURN_OF_CAPITAL'];
-const MANUAL_CLASSES: AssetClass[] = ['fund', 'fixed_income', 'bond', 'equity', 'etf', 'reit', 'crypto', 'commodity', 'other'];
+/** Tolerances before warning: trade price vs close of the day, FX conversion vs official/market rate. */
+export const PRICE_TOLERANCE = 0.05;
+export const FX_TOLERANCE = 0.02;
 
 type NumField = 'quantity' | 'price' | 'amount' | 'fees' | 'taxes' | 'toAmount' | 'ratio' | 'fxRateToBase';
 
-function slug(s: string): string {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 24);
+/** Name of the reference rate for a pair: TRM for COP, PTAX for BRL, market otherwise. */
+export function fxReferenceName(a: string, b: string): 'TRM' | 'PTAX' | 'market' {
+  if (a === 'COP' || b === 'COP') return 'TRM';
+  if (a === 'BRL' || b === 'BRL') return 'PTAX';
+  return 'market';
 }
 
 export function TransactionForm({
   open,
   onClose,
   editing,
+  duplicateOf,
   presetInstrumentId,
   heldQuantity,
 }: {
   open: boolean;
   onClose: () => void;
   editing?: StoredTransaction;
+  /** Prefill from an existing row but save as a new transaction. */
+  duplicateOf?: StoredTransaction;
   presetInstrumentId?: string;
   heldQuantity?: (instrumentId: string) => number | undefined;
 }) {
@@ -57,7 +64,6 @@ export function TransactionForm({
 
   const [type, setType] = useState<TransactionType>('BUY');
   const [portfolioChoice, setPortfolioId] = useState(defaultPortfolio);
-  // The live query may resolve after the form opens: fall back to the default until the choice is valid.
   const portfolioId =
     portfolioChoice === NEW_PORTFOLIO || portfolios.some((p) => p.id === portfolioChoice) ? portfolioChoice : defaultPortfolio;
   const [date, setDate] = useState(todayIso());
@@ -65,32 +71,41 @@ export function TransactionForm({
   const [currency, setCurrency] = useState(f.currency);
   const [toCurrency, setToCurrency] = useState('USD');
   const [nums, setNums] = useState<Partial<Record<NumField, string>>>({});
+  const [priceAuto, setPriceAuto] = useState(false);
   const [account, setAccount] = useState('');
   const [note, setNote] = useState('');
-  const [manual, setManual] = useState<{ name: string; symbol: string; currency: string; country: string; assetClass: AssetClass }>();
+  const [manual, setManual] = useState<ManualDraft>();
+  const [conflict, setConflict] = useState<Instrument>();
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
+  const fetched = useRef(new Set<string>());
+  const firstField = useRef<HTMLDivElement>(null);
 
   // (Re)initialise when opened.
   useEffect(() => {
     if (!open) return;
     setSubmitted(false);
     setManual(undefined);
-    if (editing) {
-      setType(editing.type);
-      setPortfolioId(editing.portfolioId);
-      setDate(editing.date);
-      setInstrument(editing.instrumentId ? instruments.get(editing.instrumentId) : undefined);
-      setCurrency(editing.currency);
-      setToCurrency(editing.toCurrency ?? 'USD');
+    setConflict(undefined);
+    setSavedCount(0);
+    const src = editing ?? duplicateOf;
+    if (src) {
+      setType(src.type);
+      setPortfolioId(src.portfolioId);
+      setDate(duplicateOf ? todayIso() : src.date);
+      setInstrument(src.instrumentId ? instruments.get(src.instrumentId) : undefined);
+      setCurrency(src.currency);
+      setToCurrency(src.toCurrency ?? 'USD');
       const n: Partial<Record<NumField, string>> = {};
       for (const k of ['quantity', 'price', 'amount', 'fees', 'taxes', 'toAmount', 'ratio', 'fxRateToBase'] as NumField[]) {
-        const v = editing[k];
+        const v = src[k];
         if (v !== undefined) n[k] = toInputNumber(v, f.locale);
       }
       setNums(n);
-      setAccount(editing.account ?? '');
-      setNote(editing.note ?? '');
+      setPriceAuto(false);
+      setAccount(src.account ?? '');
+      setNote(src.note ?? '');
     } else {
       setType('BUY');
       setPortfolioId(defaultPortfolio);
@@ -99,17 +114,19 @@ export function TransactionForm({
       setInstrument(pre);
       setCurrency(pre?.currency ?? f.currency);
       setNums({});
+      setPriceAuto(false);
       setAccount('');
       setNote('');
     }
-  }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, editing, duplicateOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const num = (k: NumField) => parseDecimal(nums[k] ?? '', f.locale);
+  const manualResult = manual ? draftToInstrument(manual, f.locale) : undefined;
   const draft: TxDraft = {
     portfolioId,
     type,
     date,
-    instrument: instrument ?? (manual ? manualInstrument(manual) : undefined),
+    instrument: instrument ?? manualResult?.instrument,
     quantity: num('quantity'),
     price: num('price'),
     amount: num('amount'),
@@ -125,6 +142,65 @@ export function TransactionForm({
   };
   const held = draft.instrument ? heldQuantity?.(draft.instrument.id) : undefined;
   const { errors, warnings } = validateTxDraft(draft, { today: todayIso(), heldQuantity: held });
+
+  // ---- Market reference price for the trade date (suggested + sanity check) ----
+  const series = useLiveQuery(() => (instrument ? db.priceSeries.get(instrument.id) : undefined), [instrument?.id]);
+  const ref = useMemo(() => {
+    if (!series || !NEEDS_QTY_PRICE.includes(type)) return undefined;
+    let best: { date: string; close: number } | undefined;
+    for (const p of series.points) {
+      if (p.date > date) break;
+      best = p;
+    }
+    // Too old to be a useful reference.
+    return best && best.date >= addDays(date, -10) ? best : undefined;
+  }, [series, date, type]);
+  useEffect(() => {
+    if (!open || !instrument || instrument.pricing === 'manual' || instrument.accrual || !NEEDS_QTY_PRICE.includes(type)) return;
+    const key = `${instrument.id}|${date.slice(0, 7)}`;
+    const covers = series?.points.some((p) => p.date <= date && p.date >= addDays(date, -10));
+    if (covers || fetched.current.has(key)) return;
+    fetched.current.add(key);
+    void fetchHistory(instrument, addDays(date, -20));
+  }, [open, instrument, date, type, series]);
+  useEffect(() => {
+    if (!ref || !(priceAuto || !nums.price) || editing) return;
+    setNums((n) => ({ ...n, price: toInputNumber(ref.close, f.locale) }));
+    setPriceAuto(true);
+  }, [ref?.date, ref?.close]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- FX reference for conversions ----
+  const fxRows = useLiveQuery(() => (type === 'FX_CONVERSION' ? db.fxSeries.toArray() : []), [type]);
+  const fxRef = useMemo(() => {
+    if (type !== 'FX_CONVERSION' || !fxRows?.length || currency === toCurrency) return undefined;
+    try {
+      const m = core.createMarketData({ prices: [], fx: fxRows.map(({ base, quote, points, source }) => ({ base, quote, points, source })) });
+      return m.fx(currency, toCurrency, date);
+    } catch {
+      return undefined;
+    }
+  }, [type, fxRows, currency, toCurrency, date]);
+
+  const extraWarnings: string[] = [];
+  if (ref && draft.price && NEEDS_QTY_PRICE.includes(type)) {
+    const diff = draft.price / ref.close - 1;
+    if (Math.abs(diff) > PRICE_TOLERANCE)
+      extraWarnings.push(t('validation.priceVsMarket', { diff: formatPct(diff, f.locale, { signed: true, decimals: 1 }), close: formatPrice(ref.close, currency, f.locale), date: formatDate(ref.date, f.locale) }));
+  }
+  const implied = draft.amount && draft.toAmount ? draft.toAmount / draft.amount : undefined;
+  const refName = fxReferenceName(currency, toCurrency);
+  if (implied && fxRef) {
+    const diff = implied / fxRef - 1;
+    if (Math.abs(diff) > FX_TOLERANCE)
+      extraWarnings.push(
+        t('validation.fxVsMarket', {
+          diff: formatPct(diff, f.locale, { signed: true, decimals: 1 }),
+          ref: t(`tx.fxRef.${refName}`),
+          rate: `1 ${currency} = ${formatFxRate(fxRef, f.locale)} ${toCurrency}`,
+        }),
+      );
+  }
+
   const showErr = (k: keyof TxErrors) => (submitted && errors[k] ? t(errors[k]!) : undefined);
   const total = useMemo(() => {
     if (NEEDS_QTY_PRICE.includes(type)) {
@@ -135,9 +211,10 @@ export function TransactionForm({
     return draft.amount;
   }, [type, draft.quantity, draft.price, draft.fees, draft.taxes, draft.amount]);
 
-  const submit = async () => {
+  const submit = async (again = false) => {
     setSubmitted(true);
     if (Object.keys(errors).length) return;
+    if (manual && !manualResult?.instrument) return;
     setSaving(true);
     try {
       const inst = draft.instrument;
@@ -152,9 +229,10 @@ export function TransactionForm({
           createdAt: date,
         });
         targetPortfolio = p.id;
+        setPortfolioId(p.id);
         setSelected('selectedPortfolioId', p.id);
       }
-      const row: Omit<StoredTransaction, 'id'> & { id?: string } = {
+      await saveTransaction({
         id: editing?.id,
         portfolioId: targetPortfolio,
         type,
@@ -174,15 +252,24 @@ export function TransactionForm({
         note: draft.note,
         source: editing?.source ?? 'manual',
         createdAt: editing?.createdAt,
-      };
-      await saveTransaction(row);
-      onClose();
+      });
+      if (again && !editing) {
+        // "Agregar y nuevo": keep type, date, portfolio, account and currency.
+        setNums({});
+        setPriceAuto(false);
+        setInstrument(undefined);
+        setManual(undefined);
+        setNote('');
+        setSubmitted(false);
+        setSavedCount((c) => c + 1);
+        setTimeout(() => firstField.current?.querySelector<HTMLElement>('input, button.input')?.focus(), 0);
+      } else onClose();
     } finally {
       setSaving(false);
     }
   };
 
-  const numInput = (k: NumField, label: string, opts: { hint?: string; suffix?: string; autoFocus?: boolean } = {}) => (
+  const numInput = (k: NumField, label: string, opts: { hint?: React.ReactNode; suffix?: string } = {}) => (
     <Field label={label} htmlFor={`f-${k}`} error={showErr(k as keyof TxErrors)} hint={opts.hint}>
       <div className="relative">
         <input
@@ -192,8 +279,10 @@ export function TransactionForm({
           className={clsx('input num', opts.suffix && '!pr-12')}
           aria-invalid={!!showErr(k as keyof TxErrors)}
           value={nums[k] ?? ''}
-          data-autofocus={opts.autoFocus ? '' : undefined}
-          onChange={(e) => setNums((n) => ({ ...n, [k]: e.target.value }))}
+          onChange={(e) => {
+            setNums((n) => ({ ...n, [k]: e.target.value }));
+            if (k === 'price') setPriceAuto(false);
+          }}
         />
         {opts.suffix && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted">{opts.suffix}</span>}
       </div>
@@ -212,17 +301,33 @@ export function TransactionForm({
     </Field>
   );
 
+  const priceHint = ref ? (
+    <span className="inline-flex items-center gap-1">
+      <Sparkles size={11} aria-hidden /> {t(priceAuto ? 'tx.priceSuggested' : 'tx.priceReference', { date: formatDate(ref.date, f.locale, 'short'), price: formatPrice(ref.close, currency, f.locale) })}
+    </span>
+  ) : undefined;
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       wide
-      title={editing ? t('tx.edit') : t('tx.add')}
+      title={editing ? t('tx.edit') : duplicateOf ? t('tx.duplicate') : t('tx.add')}
       footer={
         <>
+          {savedCount > 0 && (
+            <span className="mr-auto text-xs text-pos inline-flex items-center gap-1" role="status">
+              <CheckCircle2 size={13} /> {t('tx.savedCount', { count: savedCount })}
+            </span>
+          )}
           <button className="btn" onClick={onClose} type="button">
-            {t('common.cancel')}
+            {savedCount ? t('common.close') : t('common.cancel')}
           </button>
+          {!editing && (
+            <button className="btn" onClick={() => void submit(true)} disabled={saving} data-testid="tx-save-again">
+              {t('tx.addAndNew')}
+            </button>
+          )}
           <button className="btn btn-primary" onClick={() => void submit()} disabled={saving} data-testid="tx-save">
             {editing ? t('common.save') : t('tx.addShort')}
           </button>
@@ -283,50 +388,31 @@ export function TransactionForm({
         </div>
 
         {(NEEDS_INSTRUMENT.includes(type) || type === 'INTEREST') && (
-          <div>
-            <Field label={t('tx.instrument') + (type === 'INTEREST' ? ` (${t('common.optional')})` : '')} htmlFor="f-instrument" error={showErr('instrument')}>
-              {manual ? (
-                <div className="card !shadow-none p-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  <div className="col-span-2">
-                    <label className="label" htmlFor="m-name">
-                      {t('tx.manualName')}
-                    </label>
-                    <input id="m-name" className="input" value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value, symbol: slug(e.target.value) })} />
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="m-ccy">
-                      {t('dim.currency')}
-                    </label>
-                    <select id="m-ccy" className="select" value={manual.currency} onChange={(e) => { setManual({ ...manual, currency: e.target.value }); setCurrency(e.target.value); }}>
-                      {CURRENCY_CODES.map((c) => (
-                        <option key={c}>{c}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="m-class">
-                      {t('dim.assetClass')}
-                    </label>
-                    <select id="m-class" className="select" value={manual.assetClass} onChange={(e) => setManual({ ...manual, assetClass: e.target.value as AssetClass })}>
-                      {MANUAL_CLASSES.map((c) => (
-                        <option key={c} value={c}>
-                          {t(`assetClass.${c}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="m-country">
-                      {t('dim.country')}
-                    </label>
-                    <input id="m-country" className="input uppercase" maxLength={2} value={manual.country} onChange={(e) => setManual({ ...manual, country: e.target.value.toUpperCase() })} />
-                  </div>
-                  <p className="col-span-full text-xs text-muted">{t('tx.manualHint')}</p>
-                  <button type="button" className="btn btn-sm col-span-full sm:col-span-1" onClick={() => setManual(undefined)}>
-                    {t('tx.searchInstead')}
-                  </button>
-                </div>
-              ) : (
+          <div ref={firstField}>
+            {manual ? (
+              <ManualInstrumentEditor
+                draft={manual}
+                onChange={(d) => {
+                  setManual(d);
+                  setCurrency(d.currency);
+                }}
+                errors={submitted ? (manualResult?.errors ?? {}) : {}}
+                conflict={conflict}
+                onUseConflict={() => {
+                  if (conflict) {
+                    setInstrument(conflict);
+                    setCurrency(conflict.currency);
+                  }
+                  setManual(undefined);
+                  setConflict(undefined);
+                }}
+                onCancel={() => {
+                  setManual(undefined);
+                  setConflict(undefined);
+                }}
+              />
+            ) : (
+              <Field label={t('tx.instrument') + (type === 'INTEREST' ? ` (${t('common.optional')})` : '')} htmlFor="f-instrument" error={showErr('instrument')}>
                 <InstrumentPicker
                   inputId="f-instrument"
                   value={instrument}
@@ -334,25 +420,27 @@ export function TransactionForm({
                   onChange={(i) => {
                     setInstrument(i);
                     setCurrency(i.currency);
+                    setPriceAuto(false);
+                    setNums((n) => ({ ...n, price: '' }));
                   }}
-                  onCreateManual={(name) => {
+                  onCreateManual={(req: ManualRequest) => {
                     setInstrument(undefined);
-                    setManual({ name, symbol: slug(name), currency: f.currency, country: f.currency === 'BRL' ? 'BR' : 'CO', assetClass: 'fund' });
-                    setCurrency(f.currency);
+                    setConflict(req.conflict);
+                    const d = draftFrom(req.name, f.currency, req.template);
+                    setManual(d);
+                    setCurrency(d.currency);
                   }}
                 />
-              )}
-            </Field>
-            {held !== undefined && (type === 'SELL' || type === 'TRANSFER_OUT') && (
-              <p className="text-xs text-muted mt-1">{t('tx.held', { qty: held })}</p>
+              </Field>
             )}
+            {held !== undefined && (type === 'SELL' || type === 'TRANSFER_OUT') && <p className="text-xs text-muted mt-1">{t('tx.held', { qty: held })}</p>}
           </div>
         )}
 
         {NEEDS_QTY_PRICE.includes(type) && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {numInput('quantity', t('tx.quantity'))}
-            {numInput('price', t('tx.price'), { suffix: currency })}
+            {numInput('price', t('tx.price'), { suffix: currency, hint: priceHint })}
             {numInput('fees', t('tx.fees'), { suffix: currency })}
             {currencySelect('f-ccy', currency, setCurrency, t('dim.currency'), showErr('currency'))}
           </div>
@@ -379,24 +467,28 @@ export function TransactionForm({
             {numInput('amount', t('tx.fromAmount'), { suffix: currency })}
             {currencySelect('f-toccy', toCurrency, setToCurrency, t('tx.toCurrency'), showErr('toCurrency'))}
             {numInput('toAmount', t('tx.toAmount'), { suffix: toCurrency })}
-            {draft.amount && draft.toAmount ? (
-              <p className="col-span-full text-xs text-muted num">
-                {t('tx.impliedRate')}: 1 {toCurrency} = {formatMoney(draft.amount / draft.toAmount, currency, f.locale, { decimals: 4 })} · 1 {currency} ={' '}
-                {formatMoney(draft.toAmount / draft.amount, toCurrency, f.locale, { decimals: 6 })}
-              </p>
-            ) : null}
+            <div className="col-span-full text-xs text-muted num flex flex-wrap gap-x-4 gap-y-1">
+              {implied ? (
+                <span>
+                  {t('tx.impliedRate')}: 1 {currency} = {formatFxRate(implied, f.locale)} {toCurrency} · 1 {toCurrency} = {formatFxRate(1 / implied, f.locale)} {currency}
+                </span>
+              ) : null}
+              {fxRef ? (
+                <span data-testid="fx-reference">
+                  {t(`tx.fxRef.${refName}`)} {formatDate(date, f.locale, 'short')}: 1 {toCurrency} = {formatFxRate(1 / fxRef, f.locale)} {currency}
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
 
-        {NEEDS_RATIO.includes(type) && (
-          <div className="grid grid-cols-2 gap-3">{numInput('ratio', t('tx.ratio'), { hint: t('tx.ratioHint') })}</div>
-        )}
+        {NEEDS_RATIO.includes(type) && <div className="grid grid-cols-2 gap-3">{numInput('ratio', t('tx.ratio'), { hint: t('tx.ratioHint') })}</div>}
 
         <details className="group">
           <summary className="cursor-pointer text-xs font-medium text-ink-2 select-none">{t('tx.more')}</summary>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
             <Field label={t('tx.account')} htmlFor="f-account">
-              <input id="f-account" className="input" list="accounts" value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Trii, XP, IBKR…" />
+              <input id="f-account" className="input" value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Trii, XP, IBKR…" />
             </Field>
             {NEEDS_QTY_PRICE.includes(type) && numInput('taxes', t('tx.taxes'), { suffix: currency })}
             {numInput('fxRateToBase', t('tx.fxRateToBase'), { hint: t('tx.fxRateToBaseHint') })}
@@ -413,27 +505,13 @@ export function TransactionForm({
           </div>
         )}
 
-        {warnings.map((w) => (
+        {[...warnings.map((w) => t(w, { qty: held })), ...extraWarnings].map((w) => (
           <Banner key={w} tone="warn">
-            {t(w, { qty: held })}
+            {w}
           </Banner>
         ))}
         <button type="submit" className="hidden" />
       </form>
     </Modal>
   );
-}
-
-function manualInstrument(m: { name: string; symbol: string; currency: string; country: string; assetClass: AssetClass }): Instrument {
-  const symbol = m.symbol || slug(m.name) || 'MANUAL';
-  return {
-    id: `MANUAL:${symbol}`,
-    symbol,
-    name: m.name || symbol,
-    exchange: 'MANUAL',
-    currency: m.currency,
-    country: m.country || 'CO',
-    assetClass: m.assetClass,
-    pricing: 'manual',
-  };
 }

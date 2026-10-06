@@ -32,19 +32,25 @@ describe('de-duplication', () => {
   });
   it('keeps identical legitimate rows within one file and dedupes them on re-import', async () => {
     const csv = 'date,type,symbol,exchange,quantity,price,currency\n2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n';
-    const first = await importText(csv, { portfolioId: 'p1' });
+    // Identical rows in one file are a blocking choice: excluded until the user accepts them.
+    const blocked = await importText(csv, { portfolioId: 'p1' });
+    expect(blocked.stats).toMatchObject({ imported: 1, possibleDuplicates: 1 });
+    expect(byLine(blocked, 3)).toMatchObject({ status: 'possible_duplicate', duplicateOf: { inFile: true, line: 2 } });
+    const first = await importText(csv, { portfolioId: 'p1', acceptDuplicates: 'in-file' });
     expect(first.stats.imported).toBe(2);
     const second = await importText(csv, { portfolioId: 'p1', existingTransactions: first.transactions });
     expect(second.stats).toMatchObject({ imported: 0, duplicates: 2 });
-    const third = await importText(csv + '2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n', { portfolioId: 'p1', existingTransactions: first.transactions });
+    const third = await importText(csv + '2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n', { portfolioId: 'p1', existingTransactions: first.transactions, acceptDuplicates: [4] });
     expect(third.stats).toMatchObject({ imported: 1, duplicates: 2 });
   });
   it('flags possible duplicates coming from another source (B3 Negociação vs Movimentação)', async () => {
     const neg = await importFixture('b3-negociacao.xlsx');
     const mov = await importFixture('b3-movimentacao.xlsx', { existingTransactions: neg.transactions, existingInstruments: neg.instruments });
+    // Settlements (D+2 business days) of trades already imported from Negociação are skipped.
     const petr = byLine(mov, 2);
-    expect(petr.status).toBe('ok');
-    expect(petr.issues.map((i) => i.code)).toContain('POSSIBLE_DUPLICATE');
+    expect(petr.status).toBe('skipped');
+    expect(petr.issues.map((i) => i.code)).toContain('SETTLEMENT_MATCHED');
+    expect(byLine(mov, 9).status).toBe('skipped'); // PETR4 sale settlement
     expect(mov.stats.matchedInstruments).toBeGreaterThan(0);
   });
 });
@@ -114,10 +120,11 @@ describe('generic importer and mapping', () => {
     expect(r.errors[0]!.code).toBe('NEEDS_MAPPING');
     expect(r.mappingSuggestion!.headers).toEqual(['Col A', 'Col B', 'Col C']);
     const csv = 'Cuando;Que;Papel;Cuantos;A cuanto\n02/01/2024;C;ECOPETROL;100;2.450,5\n03/01/2024;V;ECOPETROL;50;2.500\n';
-    const mapped = await importText(csv, {
-      portfolioId: 'p1',
-      mapping: { headerRow: 0, columns: { date: 0, type: 1, symbol: 2, quantity: 3, price: 4 }, defaultCurrency: 'COP', defaultExchange: 'XBOG', typeValues: { C: 'BUY', V: 'SELL' } },
-    });
+    const mapping = { headerRow: 0, columns: { date: 0, type: 1, symbol: 2, quantity: 3, price: 4 }, defaultCurrency: 'COP', defaultExchange: 'XBOG', typeValues: { C: 'BUY' as const, V: 'SELL' as const } };
+    const ask = await importText(csv, { portfolioId: 'p1', mapping });
+    expect(ask.dateFormatCandidates).toEqual(['DMY', 'MDY']); // 02/01 and 03/01 are ambiguous
+    expect(ask.transactions).toEqual([]);
+    const mapped = await importText(csv, { portfolioId: 'p1', mapping: { ...mapping, dateFormat: 'DMY' } });
     expect(mapped.errors).toEqual([]);
     expect(mapped.transactions).toHaveLength(2);
     expect(mapped.transactions[0]).toMatchObject({ date: '2024-01-02', type: 'BUY', instrumentId: 'XBOG:ECOPETROL', price: 2450.5, currency: 'COP' });
@@ -125,7 +132,7 @@ describe('generic importer and mapping', () => {
   });
   it('reads HTML tables saved as .xls', async () => {
     const html = '<html><body><table><tr><th>Fecha</th><th>Operación</th><th>Especie</th><th>Cantidad</th><th>Precio</th></tr>' +
-      '<tr><td>02/01/2024</td><td>Compra</td><td>ISA</td><td>10</td><td>17.500,00</td></tr></table></body></html>';
+      '<tr><td>22/01/2024</td><td>Compra</td><td>ISA</td><td>10</td><td>17.500,00</td></tr></table></body></html>';
     const r = await importFile({ data: new TextEncoder().encode(html), fileName: 'extracto.xls' }, { portfolioId: 'p1' });
     expect(r.detection).toMatchObject({ fileKind: 'html', presetId: 'extracto-co' });
     expect(r.transactions[0]).toMatchObject({ instrumentId: 'XBOG:ISA', price: 17500, currency: 'COP' });

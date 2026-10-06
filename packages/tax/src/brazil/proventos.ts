@@ -50,6 +50,22 @@ export interface BrProventosOptions {
    * transition: no 10% withholding). Notes like "ref. 2025" / "lucros de 2024" are detected too.
    */
   preLei15270Dividends?: string[];
+  /**
+   * Date of "crédito" (declaration) of JCP by transaction id: LC 224/2025 applies the rate of the
+   * date of payment OR credit, so JCP credited in 2025 and paid in 2026 keeps 15% (T31).
+   * Notes like "JCP declarado em 12/2025" / "creditado em 2025-12-20" are detected too.
+   */
+  jcpCreditDates?: Record<string, string>;
+}
+
+const CREDIT_RE = /(declarad[oa]|creditad[oa]|cr[eé]dito|aprovad[oa]|data[\s-]*com)\D{0,12}(?:(\d{4})-(\d{2})(?:-\d{2})?|(?:\d{2}\/)?(\d{2})\/(\d{4}))/i;
+
+function jcpCreditYear(tx: Transaction, map?: Record<string, string>): number | undefined {
+  const d = map?.[tx.id];
+  if (d) return Number(d.slice(0, 4));
+  const m = CREDIT_RE.exec(tx.note ?? '');
+  if (!m) return undefined;
+  return Number(m[2] ?? m[5]);
 }
 
 /** Lei 15.270/2025 transition hint in the note: profits of 2025 or earlier. */
@@ -94,7 +110,12 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       gross,
       irrf,
       net: gross - irrf,
-      expectedIrrf: type === 'JCP' ? gross * cfg.jcpRate : 0,
+      expectedIrrf:
+        type === 'JCP'
+          ? gross * (jcpCreditYear(tx, opts.jcpCreditDates) !== undefined && jcpCreditYear(tx, opts.jcpCreditDates)! < opts.year
+              ? brazilConfig(jcpCreditYear(tx, opts.jcpCreditDates)!).jcpRate
+              : cfg.jcpRate)
+          : 0,
       dirpf: line ? { ficha: line.ficha, linha: line.linha } : undefined,
       issuer: tx.instrumentId ? issuerKey(inst, tx.instrumentId, opts.issuers) : undefined,
       lei15270Transition:

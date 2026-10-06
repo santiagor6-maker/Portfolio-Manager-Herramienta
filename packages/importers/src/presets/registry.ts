@@ -1,4 +1,4 @@
-import { b3MovimentacaoPreset, b3NegociacaoPreset } from './b3';
+import { b3MovimentacaoPreset, b3NegociacaoPreset, b3PosicaoPreset } from './b3';
 import { canonicalPreset } from './canonical';
 import type { PresetDefinition } from './common';
 import { degiroAccountPreset, degiroTransactionsPreset } from './degiro';
@@ -18,6 +18,7 @@ export const PRESETS: PresetDefinition[] = [
   ibkrFlexPreset,
   b3NegociacaoPreset,
   b3MovimentacaoPreset,
+  b3PosicaoPreset,
   notaCorretagemPreset,
   schwabPreset,
   degiroTransactionsPreset,

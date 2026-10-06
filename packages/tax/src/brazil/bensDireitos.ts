@@ -3,7 +3,7 @@ import { b3Root, type TransferBasisMap } from '../common/basis';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { instrumentMap, sum } from '../common/util';
-import type { BrCategory } from './classify';
+import type { BrCategory, CryptoCustody } from './classify';
 import { B3_CNPJ, BENS_E_DIREITOS_CODES } from './config';
 import { brazilCryptoReport } from './crypto';
 import { brazilForeignAnnualReport, type PtaxProvider } from './exterior';
@@ -58,6 +58,10 @@ export interface BensDireitosOptions {
   foreignCashCountry?: Record<CurrencyCode, CountryCode>;
   /** Fixed-income instruments that are exempt (LCI/LCA...). */
   rendaFixaExemptIds?: string[];
+  /** Crypto custody per instrument id. */
+  cryptoCustody?: Record<string, CryptoCustody>;
+  /** Apply free-text transfer-cost hints. */
+  acceptNoteProposals?: boolean;
 }
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
@@ -73,7 +77,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
   const { year } = opts;
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
-  const lo = { categoryOverrides: opts.categoryOverrides, transferBasis: opts.transferBasis };
+  const lo = { categoryOverrides: opts.categoryOverrides, transferBasis: opts.transferBasis, acceptNoteProposals: opts.acceptNoteProposals };
   const cur = runBrazilB3Ledger(input, { until: `${year}-12-31`, ...lo });
   const prev = runBrazilB3Ledger(input, { until: `${year - 1}-12-31`, ...lo });
   issues.push(...cur.issues);
@@ -174,7 +178,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
   }
 
   // Crypto
-  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides });
+  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, cryptoCustody: opts.cryptoCustody });
   const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
   const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
   for (const id of new Set([...crCur.keys(), ...crPrev.keys()])) {
@@ -208,6 +212,8 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     ptax: opts.ptax,
     categoryOverrides: opts.categoryOverrides,
     transferBasis: opts.transferBasis,
+    cryptoCustody: opts.cryptoCustody,
+    acceptNoteProposals: opts.acceptNoteProposals,
   });
   issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));
   const fPrev = new Map(foreign.positionsPrevYear.map((p) => [p.instrumentId, p]));
@@ -220,7 +226,16 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     const symbol = c?.symbol ?? p?.symbol ?? inst?.symbol ?? id;
     const assetClass = c?.assetClass ?? p?.assetClass ?? inst?.assetClass;
     const isFund = assetClass === 'etf' || assetClass === 'fund' || assetClass === 'reit';
-    const code = isFund ? BENS_E_DIREITOS_CODES.FOREIGN_FUND : BENS_E_DIREITOS_CODES.FOREIGN_STOCK;
+    const isCrypto = assetClass === 'crypto';
+    const code = isCrypto
+      ? /^BTC$/i.test(symbol)
+        ? BENS_E_DIREITOS_CODES.CRYPTO_BTC
+        : STABLE.test(symbol)
+          ? BENS_E_DIREITOS_CODES.CRYPTO_STABLE
+          : BENS_E_DIREITOS_CODES.CRYPTO_ALT
+      : isFund
+        ? BENS_E_DIREITOS_CODES.FOREIGN_FUND
+        : BENS_E_DIREITOS_CODES.FOREIGN_STOCK;
     const sales = foreign.sales.filter((s) => s.instrumentId === id);
     const income = foreign.income.filter((i) => i.instrumentId === id);
     items.push({
@@ -232,7 +247,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       instrumentId: id,
       ticker: symbol,
       discriminacao: c
-        ? `${fmt(c.quantity)} ${isFund ? 'cotas' : 'ações'} ${symbol}${c.name ? ` (${c.name})` : ''}, custo ${c.currency} ${fmt2(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
+        ? `${fmt(c.quantity)} ${isCrypto ? 'unidades de' : isFund ? 'cotas' : 'ações'} ${symbol}${c.name ? ` (${c.name})` : ''}, custo ${c.currency} ${fmt2(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
         : `${symbol}: posição totalmente vendida em ${year}.`,
       quantidade: c?.quantity ?? 0,
       situacaoAnterior: p?.costBrl ?? 0,

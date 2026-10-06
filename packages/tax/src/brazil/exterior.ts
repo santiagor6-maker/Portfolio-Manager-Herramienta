@@ -1,11 +1,11 @@
 import type { CurrencyCode, ISODate } from '@pm/core';
-import { basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
+import { basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
 import { lastBrazilBusinessDayOfMonth, yearOf } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
-import { classifyForBrazil, type BrCategory } from './classify';
+import { classifyForBrazil, type BrCategory, type CryptoCustody } from './classify';
 import { brazilConfig, type BrazilTaxYearConfig } from './config';
 
 /** BCB PTAX closing rates (BRL per unit of foreign currency). */
@@ -26,6 +26,8 @@ export interface BrForeignOptions {
   transferBasis?: TransferBasisMap;
   /** Apply free-text cost hints found in notes; default false (proposal only). */
   acceptNoteProposals?: boolean;
+  /** Crypto custody per instrument id (foreign custody → this report, Lei 14.754). */
+  cryptoCustody?: Record<string, CryptoCustody>;
   /**
    * Portfolio base currency; when 'BRL' (default) `fxRateToBase` of foreign-currency deposits is
    * used as the cost actually paid for the currency (IN RFB 2.180/2024).
@@ -158,7 +160,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     });
   }
 
-  const isForeign = (id?: string) => classifyForBrazil(id ? instruments.get(id) : undefined, opts.categoryOverrides) === 'FOREIGN';
+  const isForeign = (id?: string) => classifyForBrazil(id ? instruments.get(id) : undefined, opts.categoryOverrides, opts.cryptoCustody) === 'FOREIGN';
   const pos = new Map<string, { qty: number; costFx: number; costBrl: number }>();
   const pool = new CurrencyPool();
   let shortfallWarned = false;
@@ -338,7 +340,8 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
         break;
       }
       case 'SPLIT':
-        p.qty *= tx.ratio ?? 1;
+        p.qty *= snapRatio(tx.ratio ?? 1);
+        if (Math.abs(p.qty - Math.round(p.qty)) < 0.01) p.qty = Math.round(p.qty);
         break;
       case 'STOCK_DIVIDEND': {
         const newQty = tx.quantity ?? p.qty * (tx.ratio ?? 0);
