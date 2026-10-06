@@ -5,6 +5,7 @@
 import Papa from 'papaparse';
 import readXlsxFile from 'read-excel-file/universal';
 import { decodeBytes, toUint8Array, type TextEncodingName } from './decode';
+import { parseXls } from './xls';
 import type { Cell, FileKind, ImportData, RawTable } from './types';
 import { cellToString } from './util';
 
@@ -15,6 +16,8 @@ export interface ReadResult {
   delimiter?: string;
   /** Decoded text for text formats (CSV/HTML/JSON). */
   text?: string;
+  /** Raw bytes (PDF). */
+  bytes?: Uint8Array;
   error?: { code: string; detail?: string };
 }
 
@@ -32,7 +35,10 @@ export function sniffKind(bytes: Uint8Array | string, fileName?: string): FileKi
   if (typeof bytes !== 'string') {
     if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'xlsx';
     if (bytes.length >= 8 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) return 'xls';
-  }
+    // %PDF (allow a few junk bytes before the header, as PDF readers do)
+    const head = String.fromCharCode(...bytes.subarray(0, Math.min(1024, bytes.length)));
+    if (head.includes('%PDF-')) return 'pdf';
+  } else if (bytes.trimStart().startsWith('%PDF-')) return 'pdf';
   const head = (typeof bytes === 'string' ? bytes.slice(0, 2048) : decodeBytes(bytes.subarray(0, 2048)).text)
     .replace(/^﻿/, '')
     .trimStart()
@@ -112,8 +118,6 @@ export function parseCsvText(text: string, name = 'csv', delimiter?: string): { 
 
 function decodeEntities(s: string): string {
   return s
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
@@ -124,32 +128,66 @@ function decodeEntities(s: string): string {
     .trim();
 }
 
-/** Minimal regex HTML table reader (no DOM needed, works in workers and Node). */
+/**
+ * HTML table reader (no DOM needed, works in workers and Node). Handles nested tables (each becomes
+ * its own table; a cell holding a nested table contributes no text) and expands `colspan`.
+ */
 export function parseHtmlTables(html: string): RawTable[] {
-  const tables: RawTable[] = [];
-  const tableRe = /<table[\s\S]*?<\/table>/gi;
-  let tm: RegExpExecArray | null;
-  let idx = 0;
-  while ((tm = tableRe.exec(html))) {
-    const rows: Cell[][] = [];
-    const lines: number[] = [];
-    const trRe = /<tr[\s\S]*?<\/tr>/gi;
-    let rm: RegExpExecArray | null;
-    let rowNo = 0;
-    while ((rm = trRe.exec(tm[0]))) {
-      rowNo++;
-      const cells: Cell[] = [];
-      const tdRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-      let cm: RegExpExecArray | null;
-      while ((cm = tdRe.exec(rm[0]))) cells.push(decodeEntities(cm[1]!));
-      if (cells.some((c) => c !== '')) {
-        rows.push(cells);
-        lines.push(rowNo);
+  type T = { rows: Cell[][]; lines: number[]; row?: Cell[]; cell?: string; span: number; rowNo: number };
+  const done: T[] = [];
+  const stack: T[] = [];
+  const re = /<\/?(table|tr|td|th)\b[^>]*>|<br\s*\/?>|<!--[\s\S]*?-->|<[^>]+>|[^<]+/gi;
+  let m: RegExpExecArray | null;
+  const closeCell = (t: T) => {
+    if (t.row && t.cell !== undefined) {
+      t.row.push(decodeEntities(t.cell));
+      for (let i = 1; i < t.span; i++) t.row.push('');
+    }
+    t.cell = undefined;
+  };
+  const closeRow = (t: T) => {
+    closeCell(t);
+    if (t.row) {
+      t.rowNo++;
+      if (t.row.some((c) => c !== '')) {
+        t.rows.push(t.row);
+        t.lines.push(t.rowNo);
       }
     }
-    if (rows.length) tables.push({ name: `tabla ${++idx}`, rows, lines });
+    t.row = undefined;
+  };
+  while ((m = re.exec(html))) {
+    const tok = m[0];
+    const tag = m[1]?.toLowerCase();
+    const closing = tok.startsWith('</');
+    const top = stack[stack.length - 1];
+    if (tag === 'table') {
+      if (!closing) stack.push({ rows: [], lines: [], span: 1, rowNo: 0 });
+      else if (top) {
+        closeRow(top);
+        done.push(stack.pop()!);
+      }
+    } else if (tag === 'tr' && top) {
+      closeRow(top);
+      if (!closing) top.row = [];
+    } else if ((tag === 'td' || tag === 'th') && top) {
+      closeCell(top);
+      if (!closing) {
+        if (!top.row) top.row = [];
+        top.cell = '';
+        const span = /colspan\s*=\s*["']?(\d+)/i.exec(tok);
+        top.span = span ? Math.max(1, Math.min(50, Number(span[1]))) : 1;
+      }
+    } else if (/^<br/i.test(tok)) {
+      if (top && top.cell !== undefined) top.cell += ' ';
+    } else if (!tok.startsWith('<') && top && top.cell !== undefined) top.cell += tok;
   }
-  return tables;
+  while (stack.length) {
+    const t = stack.pop()!;
+    closeRow(t);
+    done.push(t);
+  }
+  return done.filter((t) => t.rows.length).map((t, i) => ({ name: `tabla ${i + 1}`, rows: t.rows, lines: t.lines }));
 }
 
 export async function parseXlsx(bytes: Uint8Array): Promise<RawTable[]> {
@@ -172,7 +210,15 @@ export async function parseXlsx(bytes: Uint8Array): Promise<RawTable[]> {
 export async function readTables(data: ImportData, fileName?: string, encoding?: string): Promise<ReadResult> {
   const input = await toBytesOrText(data);
   const kind = sniffKind(input, fileName);
-  if (kind === 'xls') return { kind, tables: [], error: { code: 'FILE_XLS_LEGACY' } };
+  if (kind === 'pdf') return { kind, tables: [], bytes: typeof input === 'string' ? new TextEncoder().encode(input) : input };
+  if (kind === 'xls') {
+    if (typeof input === 'string') return { kind, tables: [], error: { code: 'FILE_UNSUPPORTED' } };
+    try {
+      return { kind, tables: parseXls(input) };
+    } catch (e) {
+      return { kind, tables: [], error: { code: 'FILE_XLS_LEGACY', detail: e instanceof Error ? e.message : String(e) } };
+    }
+  }
   if (kind === 'xlsx') {
     if (typeof input === 'string') return { kind, tables: [], error: { code: 'FILE_UNSUPPORTED' } };
     try {

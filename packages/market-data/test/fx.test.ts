@@ -169,8 +169,22 @@ describe('FX router', () => {
     expect(r.fallbacks?.[0]?.error).toMatch(/403/);
   });
 
-  it('source=yahoo forces Yahoo; source=official never uses Yahoo', async () => {
+  it('TRM falls back to BanRep SDMX (second official source) when datos.gov.co is down', async () => {
     const { service } = createTestService({ blockedHosts: ['www.datos.gov.co'] });
+    const r = await service.fxSeries({ base: 'USD', quote: 'COP', from: '2025-01-02', to: '2025-01-06', source: 'official' });
+    expect(r.series.source).toBe('banrep-sdmx');
+    expect(r.series.points.map((p) => [p.date, p.rate])).toEqual([
+      ['2025-01-02', 4409.15],
+      ['2025-01-03', 4410.5],
+      ['2025-01-04', 4355.51],
+      ['2025-01-05', 4355.51],
+      ['2025-01-06', 4355.51],
+    ]);
+    expect(r.fallbacks?.map((f) => f.source)).toEqual(['banrep-trm']);
+  });
+
+  it('source=yahoo forces Yahoo; source=official never uses Yahoo', async () => {
+    const { service } = createTestService({ blockedHosts: ['www.datos.gov.co', 'totoro.banrep.gov.co'] });
     const y = await service.fxSeries({ base: 'USD', quote: 'COP', from: '2025-01-02', to: '2025-01-02', source: 'yahoo' });
     expect(y.series).toMatchObject({ source: 'yahoo', points: [{ date: '2025-01-02', rate: 4403.17 }] });
     await expect(service.fxSeries({ base: 'USD', quote: 'COP', from: '2025-01-02', to: '2025-01-02', source: 'official' })).rejects.toMatchObject({

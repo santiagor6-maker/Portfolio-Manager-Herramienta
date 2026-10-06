@@ -1,5 +1,5 @@
 import type { CountryCode, CurrencyCode, Instrument, ISODate, Transaction } from '@pm/core';
-import { basisTotalCost, issuerKey, transferBasisOf, type TransferBasisMap } from '../common/basis';
+import { basisTotalCost, issuerKey, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool } from '../common/cashPool';
 import { addWeekdays, addYears, daysBetween } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
@@ -55,6 +55,8 @@ export interface ColombiaReportOptions {
   art361IncludeMgc?: boolean;
   /** Original purchase date/cost of securities received by TRANSFER_IN (by transaction id). */
   transferBasis?: TransferBasisMap;
+  /** Apply free-text cost hints found in notes ("bought 2019 at 50"); default false (proposal only). */
+  acceptNoteProposals?: boolean;
   /**
    * When a sale is realized for income tax: 'settlement' (default; Art. 27 ET — individuals not
    * keeping books realize income when received: T+2 BVC/Europe, T+1 USA since 2024-05-28) or
@@ -451,7 +453,7 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
       }
       case 'TRANSFER_IN': {
         const qty = tx.quantity ?? 0;
-        const basis = transferBasisOf(tx, opts.transferBasis);
+        const { basis, proposal } = resolveTransferBasis(tx, opts.transferBasis, opts.acceptNoteProposals);
         const list = lots.get(id) ?? [];
         if (basis) {
           const costLocal = basisTotalCost(basis, qty) ?? grossAmount(tx) + fees;
@@ -467,6 +469,18 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
             });
           }
         } else {
+          if (proposal) {
+            issues.push({
+              level: 'warning',
+              code: 'TRANSFER_BASIS_PROPOSED',
+              transactionId: tx.id,
+              instrumentId: id,
+              message:
+                `La nota del traslado de ${displaySymbol(id, inst)} sugiere compra el ${proposal.openDate} a ${proposal.unitCost} por unidad; ` +
+                'no se aplicó automáticamente. Confírmelo (transferBasis, nota "[costo: AAAA-MM-DD @ precio]" o acceptNoteProposals).',
+            });
+          }
+
           const costLocal = grossAmount(tx) + fees;
           list.push({ openDate: tx.date, quantity: qty, costLocal, costCop: costLocal * trm(ccy, tx.date) });
           issues.push({

@@ -29,12 +29,12 @@ describe('server routes', () => {
     expect(r.headers.get('server-timing')).toMatch(/total;dur=/);
   });
 
-  it('CORS preflight and headers', async () => {
+  it('CORS allowlist: the web dev origin is allowed and echoed', async () => {
     const pre = await app.request('/api/history', { method: 'OPTIONS', headers: { Origin: 'http://localhost:5173', 'Access-Control-Request-Method': 'GET' } });
     expect(pre.status).toBe(204);
-    expect(pre.headers.get('access-control-allow-origin')).toBe('*');
+    expect(pre.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
     const r = await app.request('/api/health', { headers: { Origin: 'http://localhost:5173' } });
-    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
   });
 
   it('GET /api/search', async () => {
@@ -67,7 +67,12 @@ describe('server routes', () => {
       { date: '2025-01-31', close: 37.69 },
       { date: '2025-02-28', close: 35.93 },
     ]);
-    expect(r.body.actions).toHaveLength(2);
+    // brapi itemizes Yahoo's 2024-12-12 dividend into dividend + JCP with payment dates (M8).
+    expect(r.body.actions.map((a: any) => [a.date, a.subtype, a.amountPerShare, a.payDate])).toEqual([
+      ['2024-12-12', 'ORDINARY', 1.450543, '2025-02-20'],
+      ['2024-12-12', 'JCP', 0.1012, '2025-03-20'],
+      ['2024-12-26', 'ORDINARY', 1.356891, '2025-05-20'],
+    ]);
     expect(r.headers.get('cache-control')).toMatch(/max-age=86400/);
   });
 

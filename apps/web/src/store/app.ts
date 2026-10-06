@@ -25,6 +25,8 @@ interface AppState {
   analysis?: Analysis;
   computing: boolean;
   market: MarketState;
+  onboardingOpen: boolean;
+  setOnboardingOpen(v: boolean): void;
   setReady(settings: AppSettings): void;
   setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void;
   setAnalysis(a: Analysis): void;
@@ -37,6 +39,8 @@ export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   computing: false,
   market: { status: 'idle', sources: {}, failedSymbols: [] },
+  onboardingOpen: false,
+  setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   setReady: (settings) => set({ ready: true, settings }),
   setSetting: (key, value) => {
     set((s) => ({ settings: { ...s.settings, [key]: value } }));

@@ -795,14 +795,26 @@ function dividendAction(instrumentId: string, d: DividendEvent, source: string):
 }
 
 /**
- * Replace Yahoo dividends on dates brapi knows with brapi's itemized events (JCP vs dividend,
- * payment date); Yahoo-only dates are kept.
+ * Itemize Yahoo dividends with brapi's events (JCP vs dividend, payment date). A Yahoo dividend
+ * is replaced by the brapi events whose ex-date is within 3 days of it (dated on Yahoo's
+ * ex-date); unmatched Yahoo dividends are kept and unmatched brapi events ignored (Yahoo stays
+ * authoritative for ex-dates, avoiding duplicates).
  */
 export function mergeBrapiDividends(yahoo: DividendEvent[], brapi: DividendEvent[]): DividendEvent[] {
-  const brDates = new Set(brapi.map((d) => d.date));
-  const from = yahoo[0]?.date ?? '';
-  const to = yahoo[yahoo.length - 1]?.date ?? '';
-  return [...yahoo.filter((d) => !brDates.has(d.date)), ...brapi.filter((d) => d.date >= from && d.date <= to)].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const out: DividendEvent[] = [];
+  const used = new Set<DividendEvent>();
+  for (const y of yahoo) {
+    const matches = brapi.filter((b) => !used.has(b) && Math.abs(daysBetween(y.date, b.date)) <= 3);
+    if (!matches.length) {
+      out.push(y);
+      continue;
+    }
+    for (const m of matches) {
+      used.add(m);
+      out.push({ ...m, date: y.date });
+    }
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 /**

@@ -6,11 +6,7 @@ import {
   splitFactorAfter,
   YahooProvider,
 } from '../src/index';
-import { createFakeFetch, fixture, json, NOW } from './helpers';
-
-/** Real Yahoo only returns events inside the requested range: serve the January window alone. */
-export const presplitOnly = (u: URL) =>
-  u.pathname.endsWith('/NVDA') && u.searchParams.get('interval') === '1d' ? json(fixture('yahoo/chart-NVDA-presplit-1d.json')) : undefined;
+import { createFakeFetch, NOW, presplitOnly } from './helpers';
 
 function provider(opts: Parameters<typeof createFakeFetch>[0] = {}) {
   const fetch = createFakeFetch(opts);

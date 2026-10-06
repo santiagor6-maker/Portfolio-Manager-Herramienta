@@ -1,5 +1,5 @@
 import type { CurrencyCode, ISODate } from '@pm/core';
-import { basisTotalCost, transferBasisOf, type TransferBasisMap } from '../common/basis';
+import { basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
 import { lastBrazilBusinessDayOfMonth, yearOf } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
@@ -24,6 +24,8 @@ export interface BrForeignOptions {
   initialLossCarry?: number;
   /** Original cost of securities received by TRANSFER_IN. */
   transferBasis?: TransferBasisMap;
+  /** Apply free-text cost hints found in notes; default false (proposal only). */
+  acceptNoteProposals?: boolean;
   /**
    * Portfolio base currency; when 'BRL' (default) `fxRateToBase` of foreign-currency deposits is
    * used as the cost actually paid for the currency (IN RFB 2.180/2024).
@@ -264,11 +266,22 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
       }
       case 'TRANSFER_IN': {
         const qty = tx.quantity ?? 0;
-        const basis = transferBasisOf(tx, opts.transferBasis);
+        const { basis, proposal } = resolveTransferBasis(tx, opts.transferBasis, opts.acceptNoteProposals);
         const original = basis ? basisTotalCost(basis, qty) : undefined;
         const costFx = original ?? grossAmount(tx) + fees;
         const fx = basis?.fxRate ?? rate('buy', ccy, basis?.openDate ?? tx.date);
-        if (original === undefined) {
+        if (proposal) {
+          issues.push({
+            level: 'warning',
+            code: 'TRANSFER_BASIS_PROPOSED',
+            transactionId: tx.id,
+            instrumentId: id,
+            message:
+              `A nota da transferência de ${displaySymbol(id, inst)} sugere compra em ${proposal.openDate} a ${proposal.unitCost} por unidade; ` +
+              'não aplicada automaticamente. Confirme (transferBasis, nota "[custo: AAAA-MM-DD @ preço]" ou acceptNoteProposals).',
+          });
+        }
+        if (original === undefined && !proposal) {
           issues.push({
             level: 'warning',
             code: 'TRANSFER_COST_UNKNOWN',

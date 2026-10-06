@@ -3,7 +3,7 @@
  * (business-day) prices, daily valueSeries in < 1.5 s in Node.
  */
 import { describe, expect, it } from 'vitest';
-import { monthlyPerformance, performanceSummary, valuePortfolio, valueSeries } from './api';
+import { createEngine, monthlyPerformance, performanceSummary, positionPerformance, valuePortfolio, valueSeries } from './api';
 import { dayToIso, isoToDay } from './dates';
 import { engine, inst } from './__fixtures__/helpers';
 import type { FxSeries, Instrument, PriceSeries, Transaction } from './types';
@@ -112,5 +112,19 @@ describe('performance', () => {
     expect(v.totalMarketValueBase).toBeCloseTo(rows[119]!.endValueBase, 4);
     for (const r of rows) expect(r.localReturn! + r.fxReturn!).toBeCloseTo(r.twr, 12);
     expect(ms).toBeLessThan(1500);
+  });
+
+  it('dashboard: 10 period summaries + position performance on a fresh engine < 1.5 s', () => {
+    const t0 = performance.now();
+    const eng = createEngine(input);
+    const out = (['MTD', 'QTD', 'YTD', '1M', '3M', '6M', '1Y', '3Y', '5Y', 'SI'] as const).map((p) => eng.summary(p, '2024-12-31'));
+    const pos = eng.positions('SI', '2024-12-31');
+    const ms = performance.now() - t0;
+    expect(out.every((s) => Number.isFinite(s.twr))).toBe(true);
+    expect(pos.length).toBe(40);
+    expect(ms).toBeLessThan(1500);
+    // stateless API agrees with the engine
+    expect(performanceSummary(input, '1Y', '2024-12-31').twr).toBeCloseTo(out[6]!.twr, 12);
+    expect(positionPerformance(input, 'SI', '2024-12-31').length).toBe(40);
   });
 });

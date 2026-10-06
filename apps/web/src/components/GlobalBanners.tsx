@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { useApp } from '../store/app';
 import { usePortfolios } from '../hooks/useData';
 import { Banner } from './ui';
-import { startEmptyPortfolio } from '../services/onboarding';
 
 export function GlobalBanners() {
   const { t } = useTranslation();
@@ -14,26 +13,21 @@ export function GlobalBanners() {
   const analysis = useApp((s) => s.analysis);
   const selected = useApp((s) => s.settings.selectedPortfolioId);
   const [hideOffline, setHideOffline] = useState(false);
+  const setOnboardingOpen = useApp((s) => s.setOnboardingOpen);
   const demo = portfolios.find((p) => p.isDemo);
   const showDemo = !!demo && (selected === 'all' || selected === demo.id);
 
   const engineDown = analysis && analysis.engineErrors.createMarketData;
 
   return (
-    <div className="flex flex-col gap-2 mb-4 empty:hidden">
+    <div className="flex flex-col gap-2 mb-4 empty:hidden print:hidden">
       {showDemo && (
         <div data-testid="demo-banner">
           <Banner
             tone="warn"
             action={
               <div className="flex gap-2 flex-wrap sm:justify-end">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={async () => {
-                    await startEmptyPortfolio();
-                    navigate('/movimientos');
-                  }}
-                >
+                <button className="btn btn-sm btn-primary" onClick={() => setOnboardingOpen(true)} data-testid="start-portfolio">
                   {t('demo.startEmpty')}
                 </button>
                 <button className="btn btn-sm" onClick={() => navigate('/importar')}>

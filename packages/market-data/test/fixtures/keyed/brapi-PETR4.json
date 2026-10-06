@@ -41,12 +41,12 @@
      {
       "assetIssued": "BRPETRACNPR6",
       "paymentDate": "2025-02-20T00:00:00.000Z",
-      "rate": 0.6577,
+      "rate": 1.450543,
       "relatedTo": "4º Trimestre/2024",
       "approvedOn": "2024-12-19T00:00:00.000Z",
       "isinCode": "BRPETRACNPR6",
       "label": "DIVIDENDO",
-      "lastDatePrior": "2024-12-23T00:00:00.000Z",
+      "lastDatePrior": "2024-12-11T00:00:00.000Z",
       "remarks": ""
      },
      {
@@ -57,6 +57,17 @@
       "approvedOn": "2024-12-19T00:00:00.000Z",
       "isinCode": "BRPETRACNPR6",
       "label": "JCP",
+      "lastDatePrior": "2024-12-11T00:00:00.000Z",
+      "remarks": ""
+     },
+     {
+      "assetIssued": "BRPETRACNPR6",
+      "paymentDate": "2025-05-20T00:00:00.000Z",
+      "rate": 1.356891,
+      "relatedTo": "Extraordinário",
+      "approvedOn": "2024-12-19T00:00:00.000Z",
+      "isinCode": "BRPETRACNPR6",
+      "label": "DIVIDENDO",
       "lastDatePrior": "2024-12-23T00:00:00.000Z",
       "remarks": ""
      }

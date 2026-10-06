@@ -61,6 +61,10 @@ function nvdaMerged(): unknown {
   return b;
 }
 
+/** Real Yahoo only returns events inside the requested range: serve NVDA's January window alone. */
+export const presplitOnly = (u: URL): Response | undefined =>
+  u.pathname.endsWith('/NVDA') && u.searchParams.get('interval') === '1d' ? json(fixture('yahoo/chart-NVDA-presplit-1d.json')) : undefined;
+
 const exists = (p: string) => existsSync(join(FIXTURES, p));
 
 export function createFakeFetch(opts: FakeFetchOptions = {}): FakeFetch {

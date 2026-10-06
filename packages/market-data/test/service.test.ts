@@ -64,6 +64,7 @@ describe('MarketDataService', () => {
     const h = await service.history({ symbol: 'XBOG:ECOPETROL', from: '2025-01-01', to: '2025-04-30', interval: '1mo' });
     expect(h.instrument).toMatchObject({ id: 'XBOG:ECOPETROL', currency: 'COP', isin: 'COC04PA00016' });
     expect(h.series).toEqual({
+      lastTradeDate: '2026-10-02',
       instrumentId: 'XBOG:ECOPETROL',
       currency: 'COP',
       source: 'yahoo',
@@ -75,16 +76,18 @@ describe('MarketDataService', () => {
       ],
     });
     expect(h.actions).toEqual([
-      { instrumentId: 'XBOG:ECOPETROL', date: '2025-03-31', type: 'DIVIDEND', amountPerShare: 107 },
-      { instrumentId: 'XBOG:ECOPETROL', date: '2025-04-23', type: 'DIVIDEND', amountPerShare: 107 },
+      { instrumentId: 'XBOG:ECOPETROL', date: '2025-03-31', type: 'DIVIDEND', amountPerShare: 107, exDate: '2025-03-31', source: 'yahoo' },
+      { instrumentId: 'XBOG:ECOPETROL', date: '2025-04-23', type: 'DIVIDEND', amountPerShare: 107, exDate: '2025-04-23', source: 'yahoo' },
     ]);
+    expect(h.series.stale).toBeUndefined();
+    expect(h.degraded).toBeUndefined();
   });
 
   it('history by bare Yahoo symbol resolves to the catalog instrument id', async () => {
     const { service } = createTestService();
     const h = await service.history({ symbol: 'NVDA', from: '2024-06-07', to: '2024-06-10' });
     expect(h.instrument.id).toBe('XNAS:NVDA');
-    expect(h.actions).toEqual([{ instrumentId: 'XNAS:NVDA', date: '2024-06-10', type: 'SPLIT', ratio: 10 }]);
+    expect(h.actions).toEqual([{ instrumentId: 'XNAS:NVDA', date: '2024-06-10', type: 'SPLIT', ratio: 10, priceFactor: 10, source: 'yahoo' }]);
   });
 
   it('builds the instrument from chart meta for symbols outside the catalog', async () => {
@@ -104,8 +107,13 @@ describe('MarketDataService', () => {
     const n = fetch.calls.length;
     await service.history({ symbol: 'BVMF:PETR4', from: '2024-11-01', to: '2025-02-28', interval: '1d' });
     expect(fetch.calls.length).toBe(n);
-    const persisted = [...store.data.entries()].find(([k]) => k.startsWith('hist:yahoo:PETR4.SA'));
-    expect(persisted?.[1].expiresAt).toBeNull();
+    // Canonical per-year chunks: closed years are immutable and persisted.
+    const keys = [...store.data.keys()].filter((k) => k.startsWith('hist:v2:yahoo:PETR4.SA:'));
+    expect(keys.sort()).toEqual(['hist:v2:yahoo:PETR4.SA:2024', 'hist:v2:yahoo:PETR4.SA:2025']);
+    expect(store.data.get('hist:v2:yahoo:PETR4.SA:2024')?.expiresAt).toBeNull();
+    // A different range inside the same years is served from the same chunks (bounded cache, M16).
+    await service.history({ symbol: 'PETR4.SA', from: '2024-12-02', to: '2025-01-15' });
+    expect(fetch.calls.length).toBe(n);
   });
 
   it('quote with stale flag and catalog name', async () => {

@@ -1,5 +1,5 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
-import { basisTotalCost, transferBasisOf, type TransferBasisMap } from '../common/basis';
+import { b3Root, basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
 import { monthOf } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
@@ -63,6 +63,8 @@ export interface BrLedgerOptions {
   categoryOverrides?: Record<string, BrCategory>;
   /** Original cost of securities received by TRANSFER_IN (custody transfer between brokers). */
   transferBasis?: TransferBasisMap;
+  /** Apply free-text cost hints found in notes; default false (proposal only). */
+  acceptNoteProposals?: boolean;
 }
 
 interface Side {
@@ -175,9 +177,20 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         }
         case 'TRANSFER_IN': {
           const qty = t.quantity ?? 0;
-          const basis = transferBasisOf(t, opts.transferBasis);
+          const { basis, proposal } = resolveTransferBasis(t, opts.transferBasis, opts.acceptNoteProposals);
           const original = basis ? basisTotalCost(basis, qty) : undefined;
-          if (original === undefined) {
+          if (proposal) {
+            issues.push({
+              level: 'warning',
+              code: 'TRANSFER_BASIS_PROPOSED',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `A nota da transferência de ${symbol} sugere compra em ${proposal.openDate} a ${proposal.unitCost} por unidade; ` +
+                'não aplicada automaticamente. Confirme (transferBasis, nota "[custo: AAAA-MM-DD @ preço]" ou acceptNoteProposals).',
+            });
+          }
+          if (original === undefined && !proposal) {
             issues.push({
               level: 'warning',
               code: 'TRANSFER_COST_UNKNOWN',
