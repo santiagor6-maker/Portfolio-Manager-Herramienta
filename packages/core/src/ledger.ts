@@ -130,6 +130,8 @@ export interface PositionFlow {
   incomeBase: number;
   /** Fees and taxes of the transaction (informational). */
   feesBase: number;
+  /** Restructurings (spin-off, merger, ticker change) happen at the start of the ex-date. */
+  atStart?: boolean;
 }
 
 export interface Diagnostic {
@@ -761,9 +763,13 @@ export class Ledger {
     if (tx.subtype !== 'SPINOFF' && acc) for (const a of acc.keys()) acc.set(a, 0);
     // Position flows: value leaves the parent and enters the target.
     const v = valueOf(target, qty, costBase);
-    this.positionFlow(parent.id, day).outBase += v;
+    const po = this.positionFlow(parent.id, day);
+    po.outBase += v;
+    po.atStart = true;
     this.pf = undefined;
-    this.positionFlow(target.id, day).inBase += v;
+    const ti = this.positionFlow(target.id, day);
+    ti.inBase += v;
+    ti.atStart = true;
     this.pf = undefined;
     // Cash component of a merger: treated as return of capital on the target.
     const cashPart = num(tx.amount);

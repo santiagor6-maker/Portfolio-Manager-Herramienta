@@ -41,8 +41,8 @@ describe('index construction', () => {
 });
 
 describe('real returns and % of index', () => {
-  const ipc: IndexSeries = { id: 'IPC_CO', kind: 'level', source: 't', points: [{ date: '2023-12-31', value: 100 }, { date: '2024-01-31', value: 100.9 }, { date: '2024-02-29', value: 101.91 }] };
-  const ibr: IndexSeries = { id: 'IBR', kind: 'annualRate', dayCount: 'ACT/360', source: 't', points: [{ date: '2023-12-01', value: 12 }] };
+  const ipc: IndexSeries = { id: 'IPC_CO', kind: 'level', source: 't', points: [{ date: '2023-12-31', value: 100 }, { date: '2024-01-31', value: 100.9 }, { date: '2024-02-29', value: 101.909 }] };
+  const ibr: IndexSeries = { id: 'IBR', kind: 'annualRate', dayCount: 'ACT/360', source: 't', points: ['2023-12-01', '2024-01-01', '2024-02-01', '2024-03-01'].map((date) => ({ date, value: 12 })) };
   const input: EngineInput = {
     portfolio: { id: 'p', name: 'p', baseCurrency: 'COP', costMethod: 'FIFO', createdAt: '2024-01-01' },
     instruments: [inst('X', 'COP')],
@@ -83,6 +83,6 @@ describe('real returns and % of index', () => {
   });
 
   it('MarketData.indexLevel exposes the accumulated level', () => {
-    expect(input.market.indexLevel!('IPC_CO', '2024-02-29')).toBeCloseTo(1.0191, 12);
+    expect(input.market.indexLevel!('IPC_CO', '2024-02-29')).toBeCloseTo(1.01909, 12);
   });
 });

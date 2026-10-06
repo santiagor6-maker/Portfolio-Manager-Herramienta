@@ -6,7 +6,11 @@ import {
   splitFactorAfter,
   YahooProvider,
 } from '../src/index';
-import { createFakeFetch, NOW } from './helpers';
+import { createFakeFetch, fixture, json, NOW } from './helpers';
+
+/** Real Yahoo only returns events inside the requested range: serve the January window alone. */
+export const presplitOnly = (u: URL) =>
+  u.pathname.endsWith('/NVDA') && u.searchParams.get('interval') === '1d' ? json(fixture('yahoo/chart-NVDA-presplit-1d.json')) : undefined;
 
 function provider(opts: Parameters<typeof createFakeFetch>[0] = {}) {
   const fetch = createFakeFetch(opts);
@@ -26,7 +30,8 @@ describe('Yahoo history: split un-adjustment', () => {
       { date: '2024-06-11', close: 120.91 },
       { date: '2024-06-12', close: 125.2 },
     ]);
-    expect(h.splits).toEqual([{ date: '2024-06-10', ratio: 10 }]);
+    expect(h.splits).toEqual([{ date: '2024-06-10', ratio: 10, numerator: 10, denominator: 1 }]);
+    expect(h.basis).toBe('as-traded');
     expect(h.dividends).toEqual([{ date: '2024-06-11', amount: 0.01 }]);
   });
 
@@ -39,10 +44,19 @@ describe('Yahoo history: split un-adjustment', () => {
     expect(fetch.calls.some((u) => u.includes('interval=3mo') && u.includes('events=splits'))).toBe(true);
   });
 
-  it('adjust=splits keeps Yahoo split-adjusted closes', async () => {
-    const { yahoo } = provider();
-    const h = await yahoo.dailyHistory('NVDA', '2024-01-02', '2024-01-02', { adjust: 'splits' });
-    expect(h.points).toEqual([{ date: '2024-01-02', close: 48.17 }]);
+  it('marks the result degraded (not as-traded) when the split history is unavailable (M1)', async () => {
+    const { yahoo } = provider({ failSplitHistory: true, routes: presplitOnly });
+    const h = await yahoo.dailyHistory('NVDA', '2024-01-02', '2024-01-05');
+    expect(h.points[0]).toEqual({ date: '2024-01-02', close: 48.17 }); // still Yahoo-adjusted
+    expect(h.degraded?.[0]).toMatch(/split-history-unavailable/);
+    expect(h.notes.join(' ')).toMatch(/split history unavailable/);
+  });
+
+  it('does not need the split history when the range reaches the present', async () => {
+    const { yahoo, fetch } = provider({ failSplitHistory: true });
+    const h = await yahoo.dailyHistory('PETR4.SA', '2026-09-28', '2026-10-05');
+    expect(h.degraded).toBeUndefined();
+    expect(fetch.calls.some((u) => u.includes('interval=3mo'))).toBe(false);
   });
 
   it('splitFactorAfter multiplies only later splits (incl. reverse splits)', () => {

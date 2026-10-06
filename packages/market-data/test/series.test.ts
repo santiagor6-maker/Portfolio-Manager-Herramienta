@@ -74,7 +74,7 @@ describe('series helpers', () => {
 });
 
 describe('month-end closes from daily vs Yahoo 1mo bars (PETR4.SA fixture)', () => {
-  const daily = buildHistory(chart('chart-PETR4.SA-1d.json'), 'PETR4.SA', '2024-11-01', '2025-03-14', 'none', []);
+  const daily = buildHistory(chart('chart-PETR4.SA-1d.json'), 'PETR4.SA', '2024-11-01', '2025-03-14', []);
   const monthEnd = toMonthEnd(daily.points);
 
   it('uses the last trading day of each month', () => {

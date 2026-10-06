@@ -569,7 +569,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     const hit =
       index.find(tx, day, cal, 3, (e) => !e.inFile && e.tx.source !== tx.source) ??
       index.find(tx, day, cal, 0, (e) => !e.inFile && e.tx.source === tx.source && !ref) ??
-      index.find(tx, day, cal, 0, (e) => e.inFile && !(ref && e.brokerRef && ref !== e.brokerRef) && !(ref && e.brokerRef === ref && false));
+      index.find(tx, day, cal, 0, (e) => e.inFile && !(ref && e.brokerRef && ref !== e.brokerRef));
     if (hit) {
       const inFile = hit.inFile;
       w.duplicateOf = { date: hit.tx.date, inFile, ...(hit.tx.source ? { source: hit.tx.source } : {}), ...(hit.line !== undefined ? { line: hit.line } : {}), ...(!inFile ? { transactionId: hit.tx.id } : {}) };
@@ -644,6 +644,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   stats.currencies = [...currencies].sort();
 
+  const reconciliation = ctx.reported ? reconcile(ctx, resolver, [...existingTx, ...transactions]) : undefined;
   const allIssues = [...ctx.fileIssues, ...parsed.flatMap((r) => r.issues)];
   const errors = allIssues.filter((i) => i.severity === 'error');
   const warnings = allIssues.filter((i) => i.severity !== 'error');
@@ -666,7 +667,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   if (instrumentUpdates.length) result.instrumentUpdates = instrumentUpdates;
   if (ctx.corporateActions.length) result.corporateActions = ctx.corporateActions;
-  if (ctx.reported) result.reconciliation = reconcile(ctx, resolver, [...existingTx, ...transactions]);
+  if (reconciliation) result.reconciliation = reconciliation;
   return result;
 }
 

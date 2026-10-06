@@ -54,6 +54,7 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
       e.endOutBase += f.endOutBase;
       e.incomeBase += f.incomeBase;
       e.feesBase += f.feesBase;
+      if (f.atStart) e.atStart = true;
     }
   }
   const flowDays = new Set<number>();
@@ -133,6 +134,13 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
       }
       const pre = val(keyPre(d), id);
       const close = val(keyClose(d), id);
+      if (f.atStart) {
+        // Restructuring at the start of the ex-date: value handed over before the market opens.
+        g *= 1 + subReturn(close + f.endOutBase, prev + f.inBase - f.outBase, eps, ignore);
+        prev = close;
+        last = d;
+        continue;
+      }
       const ra = subReturn(pre, prev, eps, ignore);
       const den = pre + f.inBase - f.outBase;
       let rb: number;
