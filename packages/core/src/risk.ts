@@ -5,6 +5,8 @@
  * - Sortino: (mean monthly excess * 12) / (downside deviation vs rf * sqrt(12))
  * - max drawdown on the chained month-end index (start = peak month, end = trough month)
  * - beta / correlation vs an aligned benchmark monthly series
+ * Partial months (row.partial, cut by asOf) are excluded unless `includePartial`.
+ * With `dailySeries` (valueSeries output) the max drawdown uses the daily TWR index instead.
  */
 import type { MonthlyRow, RiskMetrics, YearMonth } from './types';
 import { addMonthsYm } from './dates';
@@ -20,17 +22,25 @@ function sampleStd(xs: number[]): number {
 }
 
 /** Months where the portfolio held something (skip empty months before inception). */
-function activeRows(monthly: MonthlyRow[]): MonthlyRow[] {
+function activeRows(monthly: MonthlyRow[], includePartial: boolean): MonthlyRow[] {
   return monthly.filter(
-    (r) => Number.isFinite(r.twr) && (Math.abs(r.startValueBase) > 1e-9 || Math.abs(r.endValueBase) > 1e-9 || r.twr !== 0),
+    (r) =>
+      Number.isFinite(r.twr) &&
+      (includePartial || !r.partial) &&
+      (Math.abs(r.startValueBase) > 1e-9 || Math.abs(r.endValueBase) > 1e-9 || r.twr !== 0),
   );
 }
 
-export function riskMetricsImpl(
-  monthly: MonthlyRow[],
-  opts: { riskFreeAnnual?: number; benchmarkMonthly?: number[]; benchmarkId?: string } = {},
-): RiskMetrics {
-  const rows = activeRows(monthly ?? []);
+export interface RiskOptions {
+  riskFreeAnnual?: number;
+  benchmarkMonthly?: number[];
+  benchmarkId?: string;
+  includePartial?: boolean;
+  dailySeries?: { date: string; cumulativeTwr: number }[];
+}
+
+export function riskMetricsImpl(monthly: MonthlyRow[], opts: RiskOptions = {}): RiskMetrics {
+  const rows = activeRows(monthly ?? [], opts.includePartial ?? false);
   const r = rows.map((x) => x.twr);
   const n = r.length;
   const rfm = Math.pow(1 + (opts.riskFreeAnnual ?? 0), 1 / 12) - 1;
@@ -43,6 +53,7 @@ export function riskMetricsImpl(
     volatility,
     maxDrawdown: 0,
     positiveMonthsRatio: n ? r.filter((x) => x > 0).length / n : 0,
+    monthsUsed: n,
   };
   if (n >= 2 && sd > 0) out.sharpe = (meanExcess * 12) / volatility;
   if (n >= 2) {
@@ -70,6 +81,27 @@ export function riskMetricsImpl(
       }
     }
     out.maxDrawdown = worst;
+    if (opts.dailySeries && opts.dailySeries.length > 1) {
+      let peakD = 1 + opts.dailySeries[0]!.cumulativeTwr;
+      let peakDate = opts.dailySeries[0]!.date;
+      let worstD = 0;
+      for (const p of opts.dailySeries) {
+        const v = 1 + p.cumulativeTwr;
+        if (v > peakD) {
+          peakD = v;
+          peakDate = p.date;
+        }
+        const dd = peakD > 0 ? v / peakD - 1 : 0;
+        if (dd < worstD) {
+          worstD = dd;
+          out.maxDrawdownStartDate = peakDate;
+          out.maxDrawdownEndDate = p.date;
+        }
+      }
+      out.maxDrawdown = worstD;
+      if (out.maxDrawdownStartDate) out.maxDrawdownStart = out.maxDrawdownStartDate.slice(0, 7);
+      if (out.maxDrawdownEndDate) out.maxDrawdownEnd = out.maxDrawdownEndDate.slice(0, 7);
+    }
     let best = rows[0]!;
     let worstRow = rows[0]!;
     for (const row of rows) {

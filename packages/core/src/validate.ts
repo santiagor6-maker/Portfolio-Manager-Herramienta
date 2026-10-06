@@ -5,7 +5,10 @@
  * Error codes: INVALID_DATE, MISSING_CURRENCY, UNKNOWN_TYPE, MISSING_INSTRUMENT,
  *   UNKNOWN_INSTRUMENT, NEGATIVE_QUANTITY, MISSING_QUANTITY, MISSING_PRICE, NEGATIVE_AMOUNT,
  *   INVALID_RATIO, OVERSELL, MISSING_TO_CURRENCY, DUPLICATE_ID
- * Warning codes: FUTURE_DATE, DUPLICATE_IMPORT, CURRENCY_MISMATCH, ZERO_AMOUNT, SAME_CURRENCY_CONVERSION
+ *   MISSING_TARGET (SPLIT subtype SPINOFF/MERGER/TICKER_CHANGE without targetInstrumentId)
+ * Warning codes: FUTURE_DATE, DUPLICATE_IMPORT, CURRENCY_MISMATCH, ZERO_AMOUNT, SAME_CURRENCY_CONVERSION,
+ *   SPLIT_SAME_DAY_TRADE (trades on a split's ex-date: quantities must be post-split units),
+ *   INCOME_WITHOUT_POSITION, INVALID_ACCRUAL, INVALID_COST_FRACTION
  */
 import type { Instrument, ISODate, Transaction, TransactionType } from './types';
 import type { ValidationIssue } from './api';
@@ -91,12 +94,26 @@ export function validateTransactionsImpl(
           ok = false;
         }
         break;
-      case 'SPLIT':
-        if (!(typeof tx.ratio === 'number' && tx.ratio > 0 && Number.isFinite(tx.ratio))) {
+      case 'SPLIT': {
+        const restructure = tx.subtype === 'SPINOFF' || tx.subtype === 'MERGER' || tx.subtype === 'TICKER_CHANGE';
+        if (restructure) {
+          if (!tx.targetInstrumentId) {
+            err(tx, 'MISSING_TARGET', `${tx.subtype} requires targetInstrumentId`);
+            ok = false;
+          } else if (!byId.has(tx.targetInstrumentId)) err(tx, 'UNKNOWN_INSTRUMENT', `Unknown instrument ${tx.targetInstrumentId}`);
+          if (tx.ratio !== undefined && !(tx.ratio > 0)) {
+            err(tx, 'INVALID_RATIO', 'Ratio must be > 0');
+            ok = false;
+          }
+          if (tx.subtype === 'SPINOFF' && (tx.costFraction === undefined || tx.costFraction < 0 || tx.costFraction > 1)) {
+            warn(tx, 'INVALID_COST_FRACTION', 'Spin-off costFraction should be between 0 and 1 (0 assumed when missing)');
+          }
+        } else if (!(typeof tx.ratio === 'number' && tx.ratio > 0 && Number.isFinite(tx.ratio))) {
           err(tx, 'INVALID_RATIO', 'Split ratio must be > 0');
           ok = false;
         }
         break;
+      }
       case 'STOCK_DIVIDEND':
         if (!(tx.quantity && tx.quantity > 0) && !(typeof tx.ratio === 'number' && tx.ratio > 0)) {
           err(tx, 'INVALID_RATIO', 'Stock dividend requires a quantity or a ratio > 0');
@@ -131,6 +148,24 @@ export function validateTransactionsImpl(
     if (ok) valid.push(tx);
   }
 
+  // Accrual specs of instruments in use.
+  const used = new Set(valid.map((t) => t.instrumentId).filter(Boolean) as string[]);
+  for (const id of used) {
+    const a = byId.get(id)?.accrual;
+    if (!a) continue;
+    const bad = a.kind === 'fixed' ? !(typeof a.annualRate === 'number' && a.annualRate > -1) : !a.index && !a.spread;
+    if (bad) warnings.push({ code: 'INVALID_ACCRUAL', message: `Instrument ${id}: accrual needs annualRate (fixed) or index/spread (indexed)` });
+  }
+
+  // Trades on a split's ex-date: the engine applies the split first (post-split units).
+  const splitDays = new Map<string, Transaction>();
+  for (const tx of valid) if ((tx.type === 'SPLIT' || tx.type === 'STOCK_DIVIDEND') && tx.instrumentId) splitDays.set(`${tx.instrumentId}|${tx.date}`, tx);
+  for (const tx of valid) {
+    if (!tx.instrumentId || !['BUY', 'SELL', 'TRANSFER_IN', 'TRANSFER_OUT'].includes(tx.type)) continue;
+    const sp = splitDays.get(`${tx.instrumentId}|${tx.date}`);
+    if (sp) warn(tx, 'SPLIT_SAME_DAY_TRADE', `${tx.type} on the ex-date of a ${sp.type} of ${tx.instrumentId}: the split is applied first, so the quantity must be in post-split units`);
+  }
+
   // Oversell check: replay quantities in engine order (splits and stock dividends included).
   const held = new Map<string, number>();
   for (const { tx } of sortTransactions(valid)) {
@@ -138,6 +173,11 @@ export function validateTransactionsImpl(
     if (!id) continue;
     const q = held.get(id) ?? 0;
     switch (tx.type) {
+      case 'DIVIDEND':
+      case 'INTEREST':
+      case 'RETURN_OF_CAPITAL':
+        if (q <= 0) warn(tx, 'INCOME_WITHOUT_POSITION', `${tx.type} for ${id} on ${tx.date} while no units are held`);
+        break;
       case 'BUY':
       case 'TRANSFER_IN':
         held.set(id, roundQty(q + (tx.quantity ?? 0)));
@@ -152,7 +192,11 @@ export function validateTransactionsImpl(
         break;
       }
       case 'SPLIT':
-        held.set(id, roundQty(q * (tx.ratio ?? 1)));
+        if ((tx.subtype === 'SPINOFF' || tx.subtype === 'MERGER' || tx.subtype === 'TICKER_CHANGE') && tx.targetInstrumentId) {
+          const t = tx.targetInstrumentId;
+          held.set(t, roundQty((held.get(t) ?? 0) + q * (tx.ratio ?? 1)));
+          if (tx.subtype !== 'SPINOFF') held.set(id, 0);
+        } else held.set(id, roundQty(q * (tx.ratio ?? 1)));
         break;
       case 'STOCK_DIVIDEND':
         held.set(id, roundQty(tx.quantity && tx.quantity > 0 ? q + tx.quantity : q * (1 + (tx.ratio ?? 0))));

@@ -26,8 +26,22 @@ import type { FxProvider } from './types';
 /** Currencies with a PTAX (Banco Central publishes these against BRL). */
 export const PTAX_CURRENCIES = ['USD', 'EUR', 'GBP', 'CHF', 'JPY', 'CAD', 'AUD', 'DKK', 'NOK', 'SEK'] as const;
 
-/** SGS series codes for PTAX venda. */
+/** SGS series codes for PTAX venda (sell) and compra (buy). */
 export const SGS_SERIES: Readonly<Record<string, number>> = { USD: 1, EUR: 21619 };
+export const SGS_SERIES_BUY: Readonly<Record<string, number>> = { USD: 10813 };
+
+export type PtaxSide = 'buy' | 'sell';
+
+/** Fetch any SGS series in 5-year chunks (daily series accept at most 10 years per request). */
+export async function fetchSgs(http: HttpClient, code: number, from: ISODate, to: ISODate, baseUrl = 'https://api.bcb.gov.br/dados/serie'): Promise<FxPoint[]> {
+  const out: FxPoint[] = [];
+  for (const [a, b] of chunkRange(from, to, 5)) {
+    const url = `${baseUrl}/bcdata.sgs.${code}/dados?formato=json&dataInicial=${toDMY(a)}&dataFinal=${toDMY(b)}`;
+    const rows = await http.getJson<{ data: string; valor: string }[]>(url);
+    out.push(...parseSgsRows(rows));
+  }
+  return dedupeByDate(out);
+}
 
 interface PtaxRow {
   cotacaoCompra: number;
@@ -84,7 +98,7 @@ export class BcbPtaxProvider implements FxProvider {
     return `${this.base}/CotacaoMoedaPeriodo(moeda=@moeda,dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@moeda='${foreign}'&${common}&$select=cotacaoCompra,cotacaoVenda,dataHoraCotacao,tipoBoletim`;
   }
 
-  async daily(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
+  async daily(base: string, quote: string, from: ISODate, to: ISODate, opts: { side?: PtaxSide } = {}): Promise<FxPoint[]> {
     const p = brlPair(base, quote);
     if (!p || !this.supports(base, quote)) throw new MarketDataError('UNSUPPORTED', `PTAX does not cover ${base}/${quote}`);
     // USD: 1 row/day -> 10000 rows ≈ 40 years. Others: 4 rows/day -> chunk by 5 years.
@@ -94,19 +108,19 @@ export class BcbPtaxProvider implements FxProvider {
       const body = await this.opts.http.getJson<{ value?: PtaxRow[] }>(this.url(p.foreign, a, b));
       rows.push(...(body.value ?? []));
     }
-    const points = parsePtaxRows(rows);
+    const points = parsePtaxRows(rows, opts.side ?? 'sell');
     if (!points.length) throw new MarketDataError('NOT_FOUND', `No PTAX for ${p.foreign}/BRL in ${from}..${to}`);
     return p.invert ? points.map((x) => ({ date: x.date, rate: 1 / x.rate })) : points;
   }
 }
 
-/** PTAX rows -> BRL per unit of foreign currency (closing bulletin, selling rate). */
-export function parsePtaxRows(rows: readonly PtaxRow[]): FxPoint[] {
+/** PTAX rows -> BRL per unit of foreign currency (closing bulletin; selling rate by default). */
+export function parsePtaxRows(rows: readonly PtaxRow[], side: PtaxSide = 'sell'): FxPoint[] {
   const closing = rows.filter((r) => !r.tipoBoletim || /^fechamento/i.test(r.tipoBoletim));
   return dedupeByDate(
     closing
-      .filter((r) => Number.isFinite(r.cotacaoVenda) && r.cotacaoVenda > 0)
-      .map((r) => ({ date: r.dataHoraCotacao.slice(0, 10), rate: r.cotacaoVenda })),
+      .map((r) => ({ date: r.dataHoraCotacao.slice(0, 10), rate: side === 'buy' ? r.cotacaoCompra : r.cotacaoVenda }))
+      .filter((r) => Number.isFinite(r.rate) && r.rate > 0),
   );
 }
 
@@ -124,17 +138,11 @@ export class BcbSgsProvider implements FxProvider {
     return !!p && SGS_SERIES[p.foreign] !== undefined;
   }
 
-  async daily(base: string, quote: string, from: ISODate, to: ISODate): Promise<FxPoint[]> {
+  async daily(base: string, quote: string, from: ISODate, to: ISODate, opts: { side?: PtaxSide } = {}): Promise<FxPoint[]> {
     const p = brlPair(base, quote);
-    const code = p ? SGS_SERIES[p.foreign] : undefined;
-    if (!p || code === undefined) throw new MarketDataError('UNSUPPORTED', `SGS does not cover ${base}/${quote}`);
-    const out: FxPoint[] = [];
-    for (const [a, b] of chunkRange(from, to, 5)) {
-      const url = `${this.base}/bcdata.sgs.${code}/dados?formato=json&dataInicial=${toDMY(a)}&dataFinal=${toDMY(b)}`;
-      const rows = await this.opts.http.getJson<{ data: string; valor: string }[]>(url);
-      out.push(...parseSgsRows(rows));
-    }
-    const points = dedupeByDate(out);
+    const code = p ? (opts.side === 'buy' ? SGS_SERIES_BUY : SGS_SERIES)[p.foreign] : undefined;
+    if (!p || code === undefined) throw new MarketDataError('UNSUPPORTED', `SGS does not cover ${base}/${quote}${opts.side === 'buy' ? ' (buy side)' : ''}`);
+    const points = await fetchSgs(this.opts.http, code, from, to, this.base);
     if (!points.length) throw new MarketDataError('NOT_FOUND', `No SGS ${code} data in ${from}..${to}`);
     return p.invert ? points.map((x) => ({ date: x.date, rate: 1 / x.rate })) : points;
   }

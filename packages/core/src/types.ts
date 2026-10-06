@@ -562,6 +562,12 @@ export interface RiskMetrics {
   bestMonth?: { month: YearMonth; twr: number };
   worstMonth?: { month: YearMonth; twr: number };
   positiveMonthsRatio: number;
+  // ---- additive (round 2) ----
+  /** Months used (partial months are excluded unless includePartial). */
+  monthsUsed?: number;
+  /** Drawdown dates when computed on a daily series. */
+  maxDrawdownStartDate?: ISODate;
+  maxDrawdownEndDate?: ISODate;
 }
 
 export type AllocationDimension =
