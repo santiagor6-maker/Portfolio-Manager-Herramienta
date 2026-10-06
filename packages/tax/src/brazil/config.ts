@@ -25,6 +25,11 @@ export interface BrazilTaxYearConfig {
   jcpRate: number;
   /** Lei 15.270/2025: IRRF on dividends from the same company above a monthly amount (from 2026). */
   dividendWithholding?: { monthlyThresholdPerPayer: number; rate: number };
+  /**
+   * Lei 15.270/2025 IRPFM (tributação mínima anual, from calendar year 2026): rate grows linearly from
+   * 0% at `lowerLimit` to `maxRate` at `upperLimit` of total annual income, then stays at maxRate.
+   */
+  irpfm?: { lowerLimit: number; upperLimit: number; maxRate: number };
   /** Lei 14.754/2023: annual rate on foreign financial applications (from 2024). */
   foreignApplicationsRate?: number;
   meta: Record<string, ParamMeta>;
@@ -84,6 +89,7 @@ export const BRAZIL_TAX_YEARS: Record<number, BrazilTaxYearConfig> = {
     ...BASE,
     year: 2026,
     jcpRate: 0.175,
+    irpfm: { lowerLimit: 600_000, upperLimit: 1_200_000, maxRate: 0.1 },
     foreignApplicationsRate: 0.15,
     dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
     meta: {
@@ -103,6 +109,7 @@ export const BRAZIL_TAX_YEARS: Record<number, BrazilTaxYearConfig> = {
     ...BASE,
     year: 2027,
     jcpRate: 0.175,
+    irpfm: { lowerLimit: 600_000, upperLimit: 1_200_000, maxRate: 0.1 },
     foreignApplicationsRate: 0.15,
     dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
     meta: {
@@ -116,6 +123,7 @@ export const BRAZIL_TAX_YEARS: Record<number, BrazilTaxYearConfig> = {
     ...BASE,
     year: 2028,
     jcpRate: 0.175,
+    irpfm: { lowerLimit: 600_000, upperLimit: 1_200_000, maxRate: 0.1 },
     foreignApplicationsRate: 0.15,
     dividendWithholding: { monthlyThresholdPerPayer: 50_000, rate: 0.1 },
     meta: {

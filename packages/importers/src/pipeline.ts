@@ -7,6 +7,7 @@ import type { Instrument, Transaction, TransactionType } from '@pm/core';
 import { businessDaysBetween, calendarFor, dayNumber, type CalendarId } from './calendars';
 import { makeIssue } from './i18n';
 import { InstrumentResolver } from './instruments';
+import { getBrokerProfile } from './profiles';
 import { suggestMapping } from './mapping';
 import { exchangeCurrency } from './markets';
 import { extractPdf, pdfToTable } from './pdf/extract';
@@ -148,6 +149,14 @@ async function importPdf(read: ReadResult, options: ImportOptions, detection: De
 /** Import a file (CSV/XLSX/XLS/HTML/PDF) into transactions + suggested instruments. */
 export async function importFile(input: ImportInput, options: ImportOptions): Promise<ImportResult> {
   const locale: Locale = options.locale ?? 'es';
+  const profile = getBrokerProfile(options.brokerProfile);
+  if (profile) {
+    options = {
+      ...options,
+      account: options.account ?? profile.defaults.account,
+      defaultCurrency: options.defaultCurrency ?? profile.defaults.currency,
+    };
+  }
   const read = await readTables(input.data, input.fileName, options.encoding);
   const detection: DetectionInfo = {
     fileKind: read.kind, presetId: 'none', presetLabel: '', presetConfidence: 'low', score: 0,
@@ -208,7 +217,12 @@ export async function importFile(input: ImportInput, options: ImportOptions): Pr
     preset = genericPreset;
     table = best.t;
     autoGeneric = true;
-    options = { ...options, mapping: best.s.mapping };
+    const mapping = { ...best.s.mapping };
+    if (profile?.defaults.exchange) mapping.defaultExchange = profile.defaults.exchange;
+    if (profile?.defaults.currency) mapping.defaultCurrency = profile.defaults.currency;
+    if (profile?.defaults.dateFormat && !options.dateFormat) mapping.dateFormat = profile.defaults.dateFormat;
+    if (profile?.defaults.numberFormat && !options.numberFormat) mapping.numberFormat = profile.defaults.numberFormat;
+    options = { ...options, mapping };
   }
 
   if (preset.multiSheet && !forced) {
