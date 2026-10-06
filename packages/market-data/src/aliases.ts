@@ -37,6 +37,8 @@ const byKey = new Map<string, TickerAlias>();
 for (const a of TICKER_ALIASES) {
   byKey.set(a.fromId.toUpperCase(), a);
   byKey.set(a.fromYahoo.toUpperCase(), a);
+  // Bare old ticker as typed from a broker statement (PFBCOLOM, ELET3).
+  byKey.set(a.fromId.split(':')[1]!.toUpperCase(), a);
 }
 
 /** Alias for an old id or old Yahoo symbol (case-insensitive). */

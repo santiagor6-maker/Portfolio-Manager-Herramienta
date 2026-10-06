@@ -14,9 +14,9 @@
  * - "Splits" also encode bonificações (ITUB4 11:10) and spin-offs (GE 1253:1000); see corporate.ts.
  * - London equities quote in GBp (pence), dividends too: divided by 100 -> GBP. LSE ETFs
  *   often quote in USD/GBP; we always trust `meta.currency`. Occasional 100x glitches repaired.
- * - Suspended stocks keep getting zero-volume bars after the last trade (CNEC.CL: last trade
- *   2025-11-14 at 5000, then months of 6240 with volume 0): bars after the last trade date with
- *   no volume are dropped.
+ * - Suspended stocks keep getting bars after the last trade (CNEC.CL: last trade 2025-11-14 at
+ *   5000, then zero-volume 5000s and months of 6240, one of them a duplicate of an old bar with
+ *   its volume): bars dated after the last trade date (meta.regularMarketTime) are dropped.
  * - Holidays can come as null closes; the last daily bar can be a live bar.
  * - BVC (`.CL`) is reported with time zone America/New_York; bars still map to the right
  *   local date because they are stamped at the session open.
@@ -343,22 +343,22 @@ export function buildHistory(
   const ts = r.timestamp ?? [];
   const q = r.indicators?.quote?.[0];
   const closes = q?.close ?? [];
-  const volumes = q?.volume;
   let raw: PricePoint[] = [];
   let phantom = 0;
   for (let i = 0; i < ts.length; i++) {
     const c = closes[i];
     if (c == null || !Number.isFinite(c) || c <= 0) continue;
     const date = dateInZone(ts[i]!, tz, off);
-    const vol = volumes?.[i];
-    // Zero-volume bars after the last real trade are carried-forward phantom closes.
-    if (lastTradeDate && date > lastTradeDate && volumes && !vol) {
+    // Bars after the last real trade (meta.regularMarketTime) are carried-forward or duplicated
+    // phantom closes: CNEC.CL repeats a 6240 bar (copy of 2025-11-04, even with its volume)
+    // weeks after its last trade at 5000 on 2025-11-14.
+    if (lastTradeDate && date > lastTradeDate) {
       phantom++;
       continue;
     }
     raw.push({ date, close: c });
   }
-  if (phantom) notes.push(`dropped ${phantom} zero-volume bar(s) after the last trade on ${lastTradeDate}`);
+  if (phantom) notes.push(`dropped ${phantom} phantom bar(s) dated after the last trade on ${lastTradeDate}`);
   raw = dedupeByDate(raw);
 
   if (cur.divisor !== 1) {

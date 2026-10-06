@@ -126,3 +126,68 @@ export function addWeekdays(date: ISODate, n: number): ISODate {
   }
   return d;
 }
+
+function nthWeekday(year: number, month: number, weekday: number, n: number): ISODate {
+  // weekday: 0=Sun..6=Sat; n>=1, or n=-1 for the last one
+  if (n > 0) {
+    const first = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const day = 1 + ((weekday - first + 7) % 7) + (n - 1) * 7;
+    return `${year}-${pad(month)}-${pad(day)}`;
+  }
+  const lastDay = daysInMonth(year, month);
+  const lastDow = new Date(Date.UTC(year, month - 1, lastDay)).getUTCDay();
+  return `${year}-${pad(month)}-${pad(lastDay - ((lastDow - weekday + 7) % 7))}`;
+}
+
+/** Third Friday of a month (B3 option expiry convention). */
+export function thirdFriday(year: number, month: number): ISODate {
+  return nthWeekday(year, month, 5, 3);
+}
+
+function nextMonday(date: ISODate): ISODate {
+  const dow = new Date(toUtc(date)).getUTCDay();
+  return dow === 1 ? date : addDays(date, (8 - dow) % 7);
+}
+
+/**
+ * Colombian public holidays (Ley 51 de 1983 "Ley Emiliani": several move to the next Monday).
+ */
+export function colombiaHolidays(year: number): Set<ISODate> {
+  const fixed = ['01-01', '05-01', '07-20', '08-07', '12-08', '12-25'].map((md) => `${year}-${md}`);
+  const emiliani = ['01-06', '03-19', '06-29', '08-15', '10-12', '11-01', '11-11'].map((md) => nextMonday(`${year}-${md}`));
+  const e = easterSunday(year);
+  const easterBased = [addDays(e, -3), addDays(e, -2), nextMonday(addDays(e, 39)), nextMonday(addDays(e, 60)), nextMonday(addDays(e, 68))];
+  return new Set([...fixed, ...emiliani, ...easterBased]);
+}
+
+/** NYSE holidays (observed on Friday/Monday when on a weekend). */
+export function usMarketHolidays(year: number): Set<ISODate> {
+  const observed = (d: ISODate) => {
+    const dow = new Date(toUtc(d)).getUTCDay();
+    return dow === 6 ? addDays(d, -1) : dow === 0 ? addDays(d, 1) : d;
+  };
+  const days = [
+    observed(`${year}-01-01`),
+    nthWeekday(year, 1, 1, 3),
+    nthWeekday(year, 2, 1, 3),
+    addDays(easterSunday(year), -2),
+    nthWeekday(year, 5, 1, -1),
+    observed(`${year}-07-04`),
+    nthWeekday(year, 9, 1, 1),
+    nthWeekday(year, 11, 4, 4),
+    observed(`${year}-12-25`),
+  ];
+  if (year >= 2022) days.push(observed(`${year}-06-19`));
+  return new Set(days);
+}
+
+/** Adds N business days given a holiday calendar (weekends always skipped). */
+export function addBusinessDays(date: ISODate, n: number, holidays: (year: number) => Set<ISODate>): ISODate {
+  let d = date;
+  let left = n;
+  while (left > 0) {
+    d = addDays(d, 1);
+    if (!isWeekend(d) && !holidays(yearOf(d)).has(d)) left--;
+  }
+  return d;
+}

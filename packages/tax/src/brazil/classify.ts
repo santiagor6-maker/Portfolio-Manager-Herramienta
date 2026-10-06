@@ -30,7 +30,7 @@ export type BrCategory =
 
 const BDR_SUFFIX = /(3[2345]|39)$/;
 /** B3 option tickers: 4-letter root + series letter (A-L calls, M-X puts) + strike code. */
-const OPTION_RE = /^[A-Z]{4}[A-X]\d{1,3}[A-Z]?$/;
+export const OPTION_RE = /^[A-Z]{4}[A-X]\d{1,4}[A-Z]?$/;
 /** Subscription rights (1, 2) and receipts (9, 10) of B3 shares. */
 const RIGHTS_RE = /^[A-Z]{4}(1|2|9|10)$/;
 /** Known B3 fixed-income ETFs (Lei 13.043/2014). Extend via categoryOverrides. */
@@ -39,13 +39,41 @@ const ETF_RF_SYMBOLS = new Set([
 ]);
 const ETF_RF_NAME = /renda fixa|ima-?b|irf-?m|tesouro|treasury|\blft\b|\bntn|deb[eê]ntures|crédito privado|credito privado/i;
 
-export function classifyForBrazil(inst: Instrument | undefined, overrides?: Record<string, BrCategory>): BrCategory {
+export type CryptoCustody = 'brasil' | 'exterior' | 'desconhecida';
+
+/** Exchanges with Brazilian entity/CNPJ (custody in Brazil → GCAP monthly). Extend via cryptoCustody. */
+const BR_CRYPTO_EXCHANGES = new Set(['MERCADOBITCOIN', 'MB', 'FOXBIT', 'NOVADAX', 'BITPRECO', 'BITYPRECO', 'BRASILBITCOIN', 'RIPIO_BR', 'XP_CRIPTO', 'NUBANK_CRIPTO', 'BTG_MYNT', 'MYNT', 'HASHDEX_BR']);
+/** Foreign exchanges/custodians (Lei 14.754/2023 annual regime). */
+const FOREIGN_CRYPTO_EXCHANGES = new Set(['BINANCE', 'COINBASE', 'KRAKEN', 'BYBIT', 'OKX', 'KUCOIN', 'BITFINEX', 'GEMINI', 'BITSTAMP', 'CRYPTOCOM', 'GATEIO', 'HTX', 'HUOBI', 'BITGET', 'MEXC', 'NEXO']);
+
+/**
+ * Where a crypto-asset is custodied, which defines its regime for a Brazilian resident:
+ * 'brasil' → GCAP monthly (R$ 35k exemption, DARF 4600); 'exterior' → Lei 14.754/2023 annual 15%;
+ * 'desconhecida' → never generates a DARF until the user confirms (self-custody wallets, MANUAL...).
+ */
+export function cryptoCustodyOf(inst: Instrument, overrides?: Record<string, CryptoCustody>): CryptoCustody {
+  const o = overrides?.[inst.id];
+  if (o) return o;
+  const ex = inst.exchange.toUpperCase().replace(/[\s.-]/g, '');
+  if (BR_CRYPTO_EXCHANGES.has(ex)) return 'brasil';
+  if (FOREIGN_CRYPTO_EXCHANGES.has(ex)) return 'exterior';
+  if (inst.currency !== 'BRL') return 'exterior';
+  return 'desconhecida';
+}
+
+export function classifyForBrazil(
+  inst: Instrument | undefined,
+  overrides?: Record<string, BrCategory>,
+  cryptoCustody?: Record<string, CryptoCustody>,
+): BrCategory {
   if (!inst) return 'OTHER';
   const o = overrides?.[inst.id];
   if (o) return o;
   const sym = inst.symbol.toUpperCase();
-  if (inst.assetClass === 'crypto') return 'CRYPTO';
+  if (inst.assetClass === 'crypto') return cryptoCustodyOf(inst, cryptoCustody) === 'exterior' ? 'FOREIGN' : 'CRYPTO';
   if (inst.exchange === 'BVMF') {
+    // Options first: a share ticker never has a letter in the 5th position (T25).
+    if (OPTION_RE.test(sym)) return 'OPCAO';
     if (inst.assetClass === 'reit') return 'FII';
     if (inst.assetClass === 'fund' && /fiagro/i.test(inst.name)) return 'FII';
     if (inst.assetClass === 'etf') return ETF_RF_SYMBOLS.has(sym) || ETF_RF_NAME.test(inst.name) ? 'ETF_RF' : 'ETF';
@@ -54,13 +82,12 @@ export function classifyForBrazil(inst: Instrument | undefined, overrides?: Reco
       if (RIGHTS_RE.test(sym)) return 'DIREITO';
       return inst.country !== 'BR' || BDR_SUFFIX.test(sym) ? 'BDR' : 'ACAO';
     }
-    if ((inst.assetClass === 'other' || inst.assetClass === 'commodity') && OPTION_RE.test(sym)) return 'OPCAO';
     return 'OTHER';
   }
   if (inst.country === 'BR' && inst.currency === 'BRL') {
     return inst.assetClass === 'fixed_income' || inst.assetClass === 'bond' ? 'RENDA_FIXA' : 'OTHER';
   }
-  if (['equity', 'etf', 'reit', 'fund', 'bond', 'fixed_income'].includes(inst.assetClass)) return 'FOREIGN';
+  if (['equity', 'etf', 'reit', 'fund', 'bond', 'fixed_income', 'crypto'].includes(inst.assetClass)) return 'FOREIGN';
   return 'OTHER';
 }
 
