@@ -3,11 +3,13 @@
  * unrealized, with the currency part), time-weighted return and IRR, for any period.
  *
  * Position cash flows (base currency at the day's market FX):
+ *   START IN/OUT = value handed over by spin-offs/mergers/ticker changes and merger cash (start of day)
  *   IN  = buys including fees, transfers in at market value (at the trade)
  *   OUT = net sale proceeds, transfers out, redemptions (at the trade)
  *   END = dividends / interest / return of capital, net of withholding (end of day)
  * Position TWR uses the same flow-day split as the portfolio:
- *   r_a = P(f) / V(f-1) - 1       P = units held before the trades x first trade price
+ *   r_a = P(f) / (V(f-1) + START IN - START OUT) - 1
+ *         P = units held before the trades (after start-of-day corporate actions) x first trade price
  *   r_b = (V(f) + END) / (P + IN - OUT) - 1     (full exit: (V + END + OUT) / (P + IN) - 1)
  * IRR = XIRR of -V(start), -IN, +OUT, +END, +V(end) with ACT/ACT years.
  */
@@ -54,7 +56,8 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
       e.endOutBase += f.endOutBase;
       e.incomeBase += f.incomeBase;
       e.feesBase += f.feesBase;
-      if (f.atStart) e.atStart = true;
+      e.startInBase += f.startInBase;
+      e.startOutBase += f.startOutBase;
     }
   }
   const flowDays = new Set<number>();
@@ -119,7 +122,7 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
     const startV = val(keyClose(baseDay), id);
     const endV = val(keyClose(toDay), id);
     let scale = Math.max(Math.abs(startV), Math.abs(endV));
-    for (const f of flows) scale = Math.max(scale, f.inBase, f.outBase, Math.abs(f.endOutBase));
+    for (const f of flows) scale = Math.max(scale, f.inBase, f.outBase, Math.abs(f.endOutBase), f.startInBase, f.startOutBase);
     const eps = Math.max(1e-12, 1e-9 * scale);
     const ignore = () => undefined;
 
@@ -135,14 +138,8 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
       }
       const pre = val(keyPre(d), id);
       const close = val(keyClose(d), id);
-      if (f.atStart) {
-        // Restructuring at the start of the ex-date: value handed over before the market opens.
-        g *= 1 + subReturn(close + f.endOutBase, prev + f.inBase - f.outBase, eps, ignore);
-        prev = close;
-        last = d;
-        continue;
-      }
-      const ra = subReturn(pre, prev, eps, ignore);
+      // Restructurings move value at the start of the day; P already includes them (C22).
+      const ra = subReturn(pre, prev + f.startInBase - f.startOutBase, eps, ignore);
       const den = pre + f.inBase - f.outBase;
       let rb: number;
       if (den > eps) rb = (close + f.endOutBase) / den - 1;
@@ -155,9 +152,9 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
     if (toDay > last) g *= 1 + subReturn(endV, prev, eps, ignore);
     const twr = g - 1;
 
-    const invested = flows.reduce((s, f) => s + f.inBase, 0);
+    const invested = flows.reduce((s, f) => s + f.inBase + f.startInBase, 0);
     const income = flows.reduce((s, f) => s + f.incomeBase, 0);
-    const proceeds = flows.reduce((s, f) => s + f.outBase + (f.endOutBase - f.incomeBase), 0);
+    const proceeds = flows.reduce((s, f) => s + f.outBase + f.startOutBase + (f.endOutBase - f.incomeBase), 0);
     const fees = flows.reduce((s, f) => s + f.feesBase, 0);
     const realizedRows = full.realized.filter((r) => r.instrumentId === id && r.day > baseDay && r.day <= toDay);
     const realized = realizedRows.reduce((s, r) => s + r.gainBase, 0);
@@ -168,7 +165,7 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
 
     const cf: { date: ISODate; amount: number }[] = [];
     if (Math.abs(startV) > eps) cf.push({ date: dayToIso(baseDay), amount: -startV });
-    for (const f of flows) cf.push({ date: dayToIso(f.day), amount: -f.inBase + f.outBase + f.endOutBase });
+    for (const f of flows) cf.push({ date: dayToIso(f.day), amount: -f.inBase - f.startInBase + f.outBase + f.startOutBase + f.endOutBase });
     if (Math.abs(endV) > eps) cf.push({ date: to, amount: endV });
     const x = xirrDetailed(cf, 0.1, 'ACT/ACT');
 

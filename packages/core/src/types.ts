@@ -113,6 +113,16 @@ export interface AccrualSpec {
   maturity?: ISODate;
   /** Accrual never starts before the issue date. */
   issueDate?: ISODate;
+  /**
+   * Tax on the yield for the net value and estimated withholding at maturity (round 3).
+   * Default by tax residence: BR + BRL -> BR_IR_REGRESSIVE (IOF + IR 22.5..15 %), CO + COP ->
+   * CO_RETENCION (4 %). Use EXEMPT for LCI/LCA/CRI/CRA/incentivadas.
+   */
+  taxRegime?: 'BR_IR_REGRESSIVE' | 'CO_RETENCION' | 'EXEMPT' | 'NONE';
+  /** CO_RETENCION rate override (default 0.04). */
+  withholdingRate?: number;
+  /** Business days after maturity in which a recorded redemption replaces the automatic one (default 5). */
+  settlementWindowDays?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +361,11 @@ export interface Holding {
   priceSource?: 'market' | 'trade' | 'accrual' | 'cost';
   /** Price older than the staleness threshold (additive). */
   stale?: boolean;
+  /** Fixed income: estimated tax on the accrued yield (IR/IOF, retención) and value net of it (round 3). */
+  accruedTaxBase?: number;
+  netMarketValueBase?: number;
+  /** Value uses a projected index (unpublished inflation / rates) (round 3). */
+  estimated?: boolean;
 }
 
 export interface CashBalance {
@@ -375,6 +390,10 @@ export interface Valuation {
   stalePrices?: string[];
   /** Fixed-income holdings whose index data is missing (valued at cost) (additive). */
   missingIndex?: IndexId[];
+  /** Indices projected beyond their last published value for accrual (round 3). */
+  estimatedIndex?: IndexId[];
+  /** Total value net of the estimated tax on fixed-income yield (round 3). */
+  totalNetMarketValueBase?: number;
 }
 
 export interface RealizedGain {
@@ -392,6 +411,8 @@ export interface RealizedGain {
   /** gainBase split (additive): price effect at historical FX + currency effect on proceeds. Sum = gainBase. */
   priceGainBase?: number;
   fxGainBase?: number;
+  /** Automatic redemption at maturity with estimated withholding (no recorded payment) (round 3). */
+  estimated?: boolean;
 }
 
 export interface IncomeEvent {
@@ -442,6 +463,8 @@ export interface MonthlyRow {
   fxSpreadBase?: number;
   /** Inflation of the month (inflation index of the base currency) and the deflated TWR. */
   inflation?: number;
+  /** Inflation projected with the last published variation (CPI not yet published) (round 3). */
+  inflationEstimated?: boolean;
   realTwr?: number;
   cumulativeRealTwr?: number;
   /** Return of rate indices (CDI, SELIC, IBR...) over the month, and twr / index return. */
@@ -494,6 +517,10 @@ export interface PerformanceSummary {
   priceGainBase?: number;
   /** Inflation over the period and the deflated (real) TWR. */
   inflation?: number;
+  /** Part of the inflation is projected with the last published variation (round 3). */
+  inflationEstimated?: boolean;
+  /** Last date covered by published inflation data (round 3). */
+  inflationThrough?: ISODate;
   realTwr?: number;
   realTwrAnnualized?: number;
   /** Return of rate indices over the period and twr / index return ("% do CDI"). */

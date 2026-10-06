@@ -1,0 +1,25 @@
+<FlexQueryResponse queryName="Portafolio Pro" type="AF">
+<FlexStatements count="1">
+<FlexStatement accountId="U1234567" fromDate="20240101" toDate="20240630" period="LastBusinessDay" whenGenerated="20240701;083000">
+<Trades>
+<Trade accountId="U1234567" currency="USD" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" listingExchange="NASDAQ" tradeID="7001" transactionID="9001" tradeDate="20240103" quantity="10" tradePrice="185.1" proceeds="-1851" ibCommission="-1" ibCommissionCurrency="USD" buySell="BUY" />
+<Trade accountId="U1234567" currency="EUR" assetCategory="STK" symbol="SAP" description="SAP SE" isin="DE0007164600" listingExchange="IBIS" tradeID="7002" transactionID="9002" tradeDate="20240315" quantity="5" tradePrice="171.2" proceeds="-856" ibCommission="-3" ibCommissionCurrency="EUR" buySell="BUY" />
+<Trade accountId="U1234567" currency="USD" assetCategory="CASH" symbol="EUR.USD" description="EUR.USD" isin="" listingExchange="IDEALFX" tradeID="7003" transactionID="9003" tradeDate="20240314" quantity="-1000" tradePrice="1.09" proceeds="1090" ibCommission="-2" ibCommissionCurrency="USD" buySell="SELL" />
+<Trade accountId="U1234567" currency="USD" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" listingExchange="NASDAQ" tradeID="7004" transactionID="9004" tradeDate="20240620" quantity="-4" tradePrice="210.5" proceeds="842" ibCommission="-1.01" ibCommissionCurrency="USD" buySell="SELL" />
+</Trades>
+<CashTransactions>
+<CashTransaction accountId="U1234567" currency="USD" assetCategory="STK" symbol="AAPL" description="AAPL(US0378331005) CASH DIVIDEND USD 0.24 PER SHARE (Ordinary Dividend)" isin="US0378331005" dateTime="20240516;202000" settleDate="20240516" amount="2.4" type="Dividends" transactionID="9101" />
+<CashTransaction accountId="U1234567" currency="USD" assetCategory="STK" symbol="AAPL" description="AAPL(US0378331005) CASH DIVIDEND USD 0.24 PER SHARE - US TAX" isin="US0378331005" dateTime="20240516;202000" settleDate="20240516" amount="-0.72" type="Withholding Tax" transactionID="9102" />
+<CashTransaction accountId="U1234567" currency="USD" assetCategory="" symbol="" description="CASH RECEIPTS / ELECTRONIC FUND TRANSFERS" isin="" dateTime="20240102" settleDate="20240102" amount="5000" type="Deposits/Withdrawals" transactionID="9103" />
+</CashTransactions>
+<Transfers>
+<Transfer accountId="U1234567" currency="USD" assetCategory="STK" symbol="MSFT" description="MICROSOFT CORP" isin="US5949181045" date="20240201" type="ACATS" direction="IN" company="Charles Schwab" quantity="20" transferPrice="0" positionAmount="8120" transactionID="9201" />
+</Transfers>
+<OpenPositions>
+<OpenPosition accountId="U1234567" currency="USD" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" listingExchange="NASDAQ" reportDate="20240628" position="6" markPrice="210.62" positionValue="1263.72" costBasisMoney="1110.6" levelOfDetail="SUMMARY" />
+<OpenPosition accountId="U1234567" currency="USD" assetCategory="STK" symbol="MSFT" description="MICROSOFT CORP" isin="US5949181045" listingExchange="NASDAQ" reportDate="20240628" position="20" markPrice="446.95" positionValue="8939" costBasisMoney="8120" levelOfDetail="SUMMARY" />
+<OpenPosition accountId="U1234567" currency="EUR" assetCategory="STK" symbol="SAP" description="SAP SE" isin="DE0007164600" listingExchange="IBIS" reportDate="20240628" position="5" markPrice="189.6" positionValue="948" costBasisMoney="859" levelOfDetail="SUMMARY" />
+</OpenPositions>
+</FlexStatement>
+</FlexStatements>
+</FlexQueryResponse>

@@ -1,0 +1,33 @@
+Statement,Header,Field Name,Field Value
+Statement,Data,BrokerName,Interactive Brokers LLC
+Statement,Data,Title,Activity Statement
+Statement,Data,Period,"January 1, 2024 - June 30, 2024"
+Account Information,Header,Field Name,Field Value
+Account Information,Data,Base Currency,USD
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code
+Trades,Data,Order,Stocks,GBP,VOD,"2024-03-20, 10:00:00",100,0.7,0.7,-70,-3,73,0,0,O
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,,Proceeds,Comm in USD,,,MTM in USD,Code
+Trades,Data,Order,Forex,USD,EUR.USD,"2024-03-14, 08:00:00",-5000,1.09,,5450,-2,,,0,
+Trades,Data,Order,Forex,MXN,USD.MXN,"2024-03-15, 08:00:00",1000,17.0,,-17000,-2,,,0,
+Transfers,Header,Asset Category,Currency,Symbol,Date,Type,Direction,Xfer Company,Xfer Account,Qty,Xfer Price,Market Value,Realized P/L,Cash Amount,Code
+Transfers,Data,Stocks,USD,AAPL,2024-02-01,ACATS,In,Schwab,123,50,0,9000,0,0,
+Transfers,Data,Stocks,USD,AAPL,2024-05-01,FOP,Out,Other,999,10,0,1900,0,0,
+Transfers,Data,Total,,,,,,,,,,,,,
+Transaction Fees,Header,Asset Category,Currency,Date/Time,Symbol,Description,Quantity,Trade Price,Amount,Code
+Transaction Fees,Data,Stocks,GBP,"2024-03-20, 10:00:00",VOD,UK Stamp Duty,100,0.7,-0.35,
+Interest Accruals,Header,Currency,Field Name,Field Value
+Interest Accruals,Data,USD,Starting Accrual Balance,0
+Interest Accruals,Data,USD,Ending Accrual Balance,1.2
+Forex Balances,Header,Asset Category,Currency,Description,Quantity,Cost Price,Cost Basis in USD,Close Price,Value in USD,Unrealized P/L in USD,Code
+Forex Balances,Data,Forex,USD,EUR,1000,1.09,1090,1.07,1070,-20,
+Open Positions,Header,DataDiscriminator,Asset Category,Currency,Symbol,Quantity,Mult,Cost Price,Cost Basis,Close Price,Value,Unrealized P/L,Code
+Open Positions,Data,Summary,Stocks,USD,AAPL,40,1,180,7200,210.6,8424,1224,
+Open Positions,Data,Summary,Stocks,GBP,VOD,100,1,0.73,73,0.69,69,-4,
+Open Positions,Data,Total,,USD,,,,,7273,,8493,1220,
+Cash Report,Header,Currency Summary,Currency,Total,Securities,Futures,Month to Date,Year to Date,
+Cash Report,Data,Starting Cash,Base Currency Summary,0,0,0,0,0,
+Cash Report,Data,Ending Cash,USD,6446,6446,0,0,0,
+Cash Report,Data,Ending Cash,GBP,-73.35,-73.35,0,0,0,
+Financial Instrument Information,Header,Asset Category,Symbol,Description,Conid,Security ID,Listing Exch,Multiplier,Type,Code
+Financial Instrument Information,Data,Stocks,AAPL,APPLE INC,265598,US0378331005,NASDAQ,1,COMMON,
+Financial Instrument Information,Data,Stocks,VOD,VODAFONE GROUP PLC,1,GB00BH4HKS39,LSE,1,COMMON,

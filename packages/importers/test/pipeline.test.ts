@@ -1,4 +1,5 @@
 import type { Instrument, Transaction } from '@pm/core';
+import type { Resolution } from '../src/instruments';
 import { describe, expect, it } from 'vitest';
 import {
   canonicalTemplateCsv,
@@ -165,12 +166,14 @@ describe('instrument resolution', () => {
   ];
   it('reuses existing instruments by ISIN, id or unique symbol', () => {
     const r = new InstrumentResolver(existing);
-    expect(r.resolve({ isin: 'US2791581091', name: 'ECOPETROL SA' })!).toMatchObject({ isNew: false, instrument: { id: 'XNYS:EC' } });
-    expect(r.resolve({ symbol: 'ZZZ', currency: 'USD' })!).toMatchObject({ isNew: false, instrument: { id: 'XNAS:ZZZ' } });
+    const res = (h: Parameters<InstrumentResolver['resolve']>[0]) => r.resolve(h) as Resolution;
+    expect(res({ isin: 'US2791581091', name: 'ECOPETROL SA' })).toMatchObject({ isNew: false, instrument: { id: 'XNYS:EC' } });
+    expect(res({ symbol: 'ZZZ', currency: 'USD' })).toMatchObject({ isNew: false, instrument: { id: 'XNAS:ZZZ' } });
     expect(r.newInstruments()).toEqual([]);
   });
   it('infers markets for BVC, B3, US, Europe and yahoo-suffixed symbols', () => {
-    const r = new InstrumentResolver([], { defaultUsExchange: 'XNYS' });
+    const resolver = new InstrumentResolver([], { defaultUsExchange: 'XNYS' });
+    const r = { resolve: (h: Parameters<InstrumentResolver['resolve']>[0]) => resolver.resolve(h) as Resolution };
     expect(r.resolve({ symbol: 'ECOPETROL' })!.instrument).toMatchObject({ id: 'XBOG:ECOPETROL', currency: 'COP', providerSymbols: { yahoo: 'ECOPETROL.CL' } });
     expect(r.resolve({ symbol: 'ICOLCAP' })!.instrument.assetClass).toBe('etf');
     expect(r.resolve({ symbol: 'PETR4' })!.instrument).toMatchObject({ id: 'BVMF:PETR4', currency: 'BRL' });

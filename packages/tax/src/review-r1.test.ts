@@ -473,7 +473,7 @@ describe('T14 — tax packs', () => {
   });
   it('Brazil: one CSV per report', () => {
     const pack = brazilTaxPack(br([tx({ date: '2025-01-05', type: 'BUY', instrumentId: I.PETR4.id, quantity: 10, price: 30, currency: B })]), { year: 2025 });
-    expect(Object.keys(pack.files)).toHaveLength(7);
+    expect(Object.keys(pack.files)).toHaveLength(9);
     expect(pack.files['brasil-2025-bens-e-direitos.csv']).toContain('PETR4');
   });
 });

@@ -178,7 +178,18 @@ export const B3_CNPJ: Record<string, { cnpj: string; nome: string; meta: ParamMe
   ITUB: { cnpj: '60.872.504/0001-23', nome: 'Itaú Unibanco Holding S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
   BBDC: { cnpj: '60.746.948/0001-12', nome: 'Banco Bradesco S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
   BBAS: { cnpj: '00.000.000/0001-91', nome: 'Banco do Brasil S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  ABEV: { cnpj: '07.526.557/0001-00', nome: 'Ambev S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  ITSA: { cnpj: '61.532.644/0001-15', nome: 'Itaúsa S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
+  B3SA: { cnpj: '09.346.601/0001-25', nome: 'B3 S.A. - Brasil, Bolsa, Balcão', meta: NV('Cadastro CNPJ / RI da companhia') },
+  WEGE: { cnpj: '84.429.695/0001-11', nome: 'WEG S.A.', meta: NV('Cadastro CNPJ / RI da companhia') },
 };
+
+/**
+ * Version of the built-in CNPJ table. For the remaining issuers (FIIs, ETFs, BDRs, other shares) the
+ * CNPJ is imported from the brokers' informes de rendimentos (`reconcileBrazil(...).cnpjByIssuer`)
+ * and passed as `cnpjByIssuer` (T34).
+ */
+export const B3_CNPJ_VERSION = '2026-10-06';
 
 /** DIRPF income lines for proventos. */
 export const DIRPF_INCOME_LINES = {

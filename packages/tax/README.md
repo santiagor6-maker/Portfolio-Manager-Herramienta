@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 100 pruebas con escenarios calculados a mano (46 de regresión de la revisión)
+npx vitest run packages/tax      # 135 pruebas con escenarios calculados a mano (46 de regresión ronda 1 + 35 ronda 2)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -116,16 +116,17 @@ MX, JP y CN al 10%. Marca `over_withheld` (por ejemplo, falta el W-8BEN), `under
 ## Pendientes / limitaciones
 
 - Colombia: el impuesto del Art. 241 es una estimación incremental (requiere `otherCedulaGeneralIncomeCop`)
-  que no aplica los límites de los Arts. 336 y 259. El componente inflacionario solo se aplica si se
-  indica el porcentaje del decreto (`config.componenteInflacionario`). No se calculan el descuento
-  indirecto del Art. 254 ni los reajustes de los Arts. 70 y 73.
-- Brasil: falta el régimen del exterior anterior a 2024 (GCAP con exención de R$ 35 mil y carnê-leão).
-  Tampoco se calculan futuros/BM&F, aluguel (el pago al prestador), el ejercicio de opciones (ajuste
-  de la prima al costo del activo), el come-cotas de fondos abiertos, el IRPFM, el carnê-leão de
-  dividendos de BDR, ni las criptomonedas en exchanges del exterior (solo se avisa).
-- No se genera el código de barras del DARF: lo emite el Sicalc de la Receita con los datos exportados.
-- Exportación en CSV; no hay PDF ni XLSX (sin dependencias nuevas).
-- Los feriados locales no se consideran para el vencimiento del DARF.
+  que no aplica los límites de los Arts. 336 y 259. Tampoco se calcula el descuento indirecto del Art. 254
+  ni los reajustes de los Arts. 70 y 73. De las casillas del Formulario 210 solo se incluyen las
+  verificadas (29, 112–115, 127, 132).
+- Brasil:
+  - No se modelan los ajustes diarios de futuros con posición abierta de un día para otro.
+  - En opciones, el ejercicio requiere registrar la operación del activo el mismo día.
+  - El IRPFM no aplica el redutor (lucros ya tributados en la empresa).
+  - En el régimen anterior a 2024, el carnê-leão de dividendos del exterior solo se informa, no se calcula.
+- No se genera el código de barras del DARF: lo emite el Sicalc con los datos exportados.
+- No hay PDF en el paquete: la app lo renderiza a partir de `document` (`TaxDocument`). Sí hay XLSX y CSV.
+- Los feriados locales (estatales o municipales en Brasil) no se consideran.
 
 ---
 
@@ -191,3 +192,42 @@ Parámetros nuevos que requieren verificación: tabla interna de CNPJ, casillas 
 JCP 2027/2028, exención de cripto (R$ 35 mil, IN 1.888), lista de ETF de renta fija, códigos 04-02,
 04-03, 07-08 y 08-0x de la DIRPF, y el tratamiento conservador de la venta en corto (sin exención de
 R$ 20 mil).
+
+---
+
+## Respuesta a la revisión ronda 2
+
+Revisión: `reviews/tax-r2.md`. Las pruebas de regresión están en `src/review-r2.test.ts`
+(escenarios R1–R11 y C1–C8 del revisor). Los scripts `r2-*.ts` del revisor dan ahora los valores
+esperados.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T22 | alta | **La custodia de cada criptoactivo define su régimen** (`cryptoCustodyOf`). Un exchange brasileño (Mercado Bitcoin, Foxbit, NovaDAX…) sigue el GCAP mensual con DARF 4600. Un exchange extranjero (Binance, Coinbase, Kraken…) o una moneda distinta de BRL pasa a la categoría `FOREIGN`: Lei 14.754, 15% anual con PTAX y pérdidas, y Bens e Direitos 08-xx con país. Con custodia desconocida se muestra el impuesto pero **no se genera el DARF 4600** (`darfBlockedUnknownCustody` y aviso `CRYPTO_CUSTODY_UNKNOWN`). La opción `cryptoCustody` llega a todos los reportes. R10 → sin DARF mensual; Lei 14.754 da R$ 15.000 |
+| T23 | media | La venta en corto genera un registro `shortOpen` en el mes de la venta, cuyo valor bruto cuenta para los R$ 20 mil y para la base del IRRF. La recompra no lo vuelve a contar. r2-short20k → ventas R$ 75.000, no exento, impuesto R$ 450 |
+| T24 | media | El vencimiento de opciones sale de la letra de la serie (A–L call, M–X put, tercer viernes) o de `optionExpiries`. Sin ejercicio, la posición se cierra en 0: la prima del lanzador tributa y la prima del titular es pérdida. Ejercicio y asignación (`TRANSFER_OUT`/`TRANSFER_IN` con nota "exercício") ajustan la prima al costo o precio del activo el mismo día. Las opciones lanzadas que todavía no vencen se reportan como `info` |
+| T25 | media | El patrón de ticker de opción B3 (letra en la 5.ª posición) se aplica antes que `assetClass`. R4 → `OPCAO`, R$ 1.500 |
+| T26 | media | `DarfPayment.code` se lee de la nota (6015, 4600, 0211, 0190) y la conciliación exige que coincida. R7 → el DARF 6015 queda `vencida` |
+| T27 | media | El Art. 153 se aplica solo a acciones y, por decisión conservadora y documentada, a ETF (`art153AssetClasses` por defecto `['equity','etf']`). Bonos, cripto y fondos compensan pérdidas. C3 → renta 22.000.000 |
+| T28 | media | Formulario 210: las ventas del Art. 36-1 de menos de 2 años van a ingresos brutos, INCRNGO y costos (rentas no laborales). Las de 2 años o más van a las casillas 112, 113 y 114 de ganancias ocasionales. C2 → 250M / 50M / 200M, cuadra con la exógena |
+| T29 | media | `parseLocaleNumber` entiende los separadores según su posición (1,000.50 y 1.000,50 dan 1000,5). El texto libre solo genera una **propuesta** (`TRANSFER_BASIS_PROPOSED`) que se aplica con `acceptNoteProposals`; los porcentajes se rechazan |
+| T30 | baja | `snapRatio` lleva los ratios redondeados a la fracción simple (0,3333 → 1/3), además de ajustar cantidades a menos de 0,01 de un entero. R1 → 100 acciones sin fracción |
+| T31 | baja | El JCP usa la tarifa del año de crédito: `jcpCreditDates` o una nota como "declarado/creditado em 12/2025". R8 → 15%, sin aviso |
+| T32 | media | `brazilIrpfmEstimate`: base con dividendos, JCP, renta fija gravable, ganancias en bolsa (incluidas las exentas), exterior y otros ingresos; exclusiones de la ley; tarifa lineal de 0% a 10% entre R$ 600 mil y R$ 1,2 millones; deducción de IRRF, DARF, Lei 14.754 e impuesto sobre otros ingresos. Incluido en `brazilTaxPack` (CSV). Sin redutor; `needs-verification` |
+| T33 | baja | `brazilTaxPack` reenvía `issuers`, `preLei15270Dividends`, `jcpCreditDates`, `initialLossCarry`, `portfolioBaseCurrency`, `cryptoCustody`, `acceptNoteProposals`, `fundTerms` y los datos del IRPFM |
+| T34 | baja | Tabla de CNPJ versionada (`B3_CNPJ_VERSION`) con 9 emisores (todos `needs-verification`), e importación desde el informe de rendimentos con `reconcileBrazil(...).cnpjByIssuer`, que alimenta `cnpjByIssuer` |
+| T35 | baja | `SELIC_MONTHLY` incluida: 2024-01 a 2026-09, sin enero de 2026. Se usa por defecto en multa e intereses y `selicMonthly` la sobrescribe. Marcada `needs-verification` (fuentes secundarias) |
+| T36 | media | Conciliación con documentos oficiales: `reconcileBrazil` (informe de rendimentos por empresa y tipo, posiciones al 31/12, renta fija, IRRF de bolsa y la pré-preenchida con DARF pagados y rendimientos), `reconcileColombia` (exógena de la DIAN, certificados de dividendos y retención, Deceval) y `reconcileUs1042S`. Importación genérica por CSV con `parseOfficialDocCsv`, `informeFromRows` y `exogenaFromRows` |
+| T37 | baja | Escritor XLSX sin dependencias (`toXlsx`: ZIP stored, una hoja por tabla, validado con ZIP y XML) en `colombiaTaxPack.xlsx` y `brazilTaxPack.xlsx`. Modelo de documento `TaxDocument` (resumen con cifras clave, tablas, supuestos y alertas) para que la app genere el PDF |
+| T12 | media (persistía) | **Futuros** (WIN, WDO, IND, DOL…, con valor del punto), **aluguel de ações** (tipo `ALUGUEL`, IRRF por tabla regresiva, línea 06), **come-cotas** (`brazilComeCotasReport`, mayo y noviembre, 15%/20%, fondos de acciones exentos), **ejercicio y vencimiento de opciones** (T24), **IRPFM** (T32) y **régimen del exterior anterior a 2024** (`gcapPre2024`: GCAP mensual con exención de R$ 35 mil) |
+| T14 | media (persistía) | Casillas verificadas del Formulario 210 (`FORMULARIO_210_CASILLAS` para AG 2024 y 2025: 29, 112–115, 127, 132; las demás se pueden configurar), dividendos separados en primera y segunda subcédula (`dividendosGravados`, Art. 49 par. 2), XLSX y `TaxDocument` |
+| T20 | baja (persistía) | Componente inflacionario por año: AG 2023 66,71%, AG 2024 50,88% (Decreto 771/2025), AG 2025 55,43% (Decreto 898/2026). `settlementDate` usa los feriados de Colombia (Ley Emiliani) y de la NYSE |
+
+Parámetros nuevos que requieren verificación:
+- tabla Selic mensual;
+- casillas no confirmadas del Formulario 210;
+- IRPFM (redutor y reglamentación);
+- lista de exchanges de cripto brasileños y extranjeros;
+- valor del punto de futuros;
+- CNPJ;
+- componente inflacionario de 2025 (verificado en fuentes secundarias).

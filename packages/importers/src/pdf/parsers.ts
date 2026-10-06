@@ -159,7 +159,7 @@ export function parseCdt(doc: PdfDocument): CdtInfo {
     if (info.issueDate) info.accrual.issueDate = info.issueDate;
     if (info.maturity) info.accrual.maturity = info.maturity;
   }
-  const pay = after(text, /(periodicidad|pago de intereses|modalidad de pago|forma de pago)\s*(de intereses)?\s*:?/i, /([A-Za-záéíóú ]{4,30})/);
+  const pay = after(text, /(periodicidad(\s+de\s+(pago|intereses))?|pago de intereses|modalidad de pago|forma de pago)(\s+de intereses)?\s*:?/i, /([A-Za-záéíóú][A-Za-záéíóú ]{3,29})/);
   if (pay) info.payment = pay[1]!.trim();
   return info;
 }

@@ -245,7 +245,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
             p.shortGross -= (p.shortGross * q) / p.shortQty;
             p.shortQty -= q;
             const type = b3OptionType(symbol);
-            const k = `${date}|${b3Root(symbol)}`;
+            const k = `${date}|${symbol.slice(0, 4).toUpperCase()}`;
             const a = exerciseAdj.get(k) ?? { buyAdj: 0, sellAdj: 0, used: false, optionId: id };
             if (type === 'call') a.sellAdj += premium; // writer sells the underlying: premium raises the sale value
             else a.buyAdj -= premium; // put writer buys the underlying: premium lowers the cost
@@ -505,7 +505,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         p.qty -= q;
         p.cost -= premium;
         const type = b3OptionType(symbol);
-        const k = `${date}|${b3Root(symbol)}`;
+        const k = `${date}|${symbol.slice(0, 4).toUpperCase()}`;
         const a = exerciseAdj.get(k) ?? { buyAdj: 0, sellAdj: 0, used: false, optionId: id };
         if (type === 'call') a.buyAdj += premium; // call holder buys the underlying: premium adds to cost
         else a.sellAdj -= premium; // put holder sells the underlying: premium reduces the sale value

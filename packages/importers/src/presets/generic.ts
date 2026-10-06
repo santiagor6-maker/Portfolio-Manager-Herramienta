@@ -78,7 +78,7 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       [c.quantity, c.price, c.amount, c.netAmount, c.toAmount, c.fxRateToBase, ...c.fees, ...c.taxes],
       first,
       gopts.numberHint ?? 'dot',
-      { headerRow, triple: { q: c.quantity, p: c.price, a: c.amount ?? c.netAmount }, fixed: gopts.fixedNumberFormat },
+      { headerRow, triple: { q: c.quantity, p: c.price, a: c.amount ?? c.netAmount }, fixed: gopts.fixedNumberFormat, symbolCol: c.symbol, dateCol: c.date },
     );
   }
   const cashSymbols = new Set((gopts.cashSymbols ?? []).map((s) => s.toUpperCase()));

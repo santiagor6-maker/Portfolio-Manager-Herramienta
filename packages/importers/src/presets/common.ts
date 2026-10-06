@@ -173,7 +173,7 @@ export class ParseContext {
     cols: (number | undefined)[],
     from: number,
     hint: NumberFormat,
-    opts: { fixed?: boolean; triple?: { q?: number; p?: number; a?: number }; headerRow?: number } = {},
+    opts: { fixed?: boolean; triple?: { q?: number; p?: number; a?: number }; headerRow?: number; symbolCol?: number; dateCol?: number } = {},
   ): NumberFormat {
     if (this.options.numberFormat) return (this.numberFormat = this.options.numberFormat);
     if (opts.fixed) return (this.numberFormat = hint);
@@ -201,6 +201,26 @@ export class ParseContext {
         const fc = fits('comma');
         if (fd && !fc) dot += 5;
         if (fc && !fd) comma += 5;
+      }
+    }
+    // Price plausibility against a reference price supplied by the app (market data), if any.
+    const ref = this.options.referencePrice;
+    if (ref && t?.p !== undefined && opts.symbolCol !== undefined && opts.dateCol !== undefined) {
+      for (let r = from; r < this.table.rows.length; r++) {
+        const row = this.table.rows[r]!;
+        const pc = row[t.p] ?? null;
+        if (!isAmbiguousNumber(pc)) continue;
+        const date = parseDate(row[opts.dateCol] ?? null, this.dateFormat);
+        const symbol = cellToString(row[opts.symbolCol] ?? null);
+        if (!date || !symbol) continue;
+        const rp = ref({ symbol }, date);
+        if (!rp) continue;
+        const close = (f: NumberFormat) => {
+          const v = parseNumber(pc, f);
+          return v !== undefined && !Number.isNaN(v) && Math.abs(v - rp) <= 0.5 * rp;
+        };
+        if (close('dot') && !close('comma')) dot += 5;
+        if (close('comma') && !close('dot')) comma += 5;
       }
     }
     if (comma !== dot) {

@@ -1,0 +1,15 @@
+{
+  "name": "Portafolio Pro",
+  "short_name": "Portafolio",
+  "description": "Seguimiento mensual de portafolios multi-mercado y multi-divisa (local-first).",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

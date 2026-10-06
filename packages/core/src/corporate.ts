@@ -5,11 +5,19 @@
  *
  * - DIVIDEND: amount = units held at the close before the ex-date x amountPerShare, dated on the
  *   payment date (or the ex-date), in the action's currency (or the instrument's). Subtype kept
- *   (JCP...). Withholding is left empty (it depends on the investor).
+ *   (JCP...). A suggested withholding is filled in (editable): JCP 15 %, US-source dividends 30 %
+ *   (no treaty for CO/BR residents); `withholding: 'none'` or a custom table overrides it.
  * - SPLIT: plain split, or SPINOFF / MERGER / TICKER_CHANGE with targetInstrumentId/costFraction.
  * - STOCK_DIVIDEND: bonus shares by ratio (new shares per share held).
- * A recorded transaction of the same instrument and kind within the tolerance window
- * (dividends 10 days around ex/pay date, splits 3 days) marks the action as already recorded.
+ *
+ * De-duplication (C26): a recorded transaction matches an action when it is the same instrument
+ * and kind, dated within the tolerance window of the ex/pay date, AND (same subtype, or amount
+ * within 2 % of units x amountPerShare, or same price per share). Each recorded row matches at
+ * most one action, so a JCP and a dividend with the same ex-date are both handled. Duplicate
+ * provider rows (same instrument, kind, ex-date, subtype and amount) are reported once.
+ *
+ * Complexity (C27): one sort of the transactions and the actions and a single chronological
+ * sweep of the holdings: O((n + m) log n).
  */
 import type { CorporateAction, Instrument, ISODate, Transaction } from './types';
 import { isoToDay, isStrictIsoDate } from './dates';
@@ -17,126 +25,217 @@ import { sortTransactions } from './ledger';
 
 export interface CorporateActionResult {
   suggested: Transaction[];
-  /** Actions skipped with the reason: ALREADY_RECORDED, NO_POSITION, INVALID. */
+  /** Actions skipped with the reason: ALREADY_RECORDED, NO_POSITION, DUPLICATE_ACTION, INVALID. */
   skipped: { action: CorporateAction; reason: string }[];
   /** Actions flagged reviewRequired by the provider (heuristic classification). */
   review: CorporateAction[];
 }
 
-function heldBefore(txs: Transaction[], instrumentId: string, day: number): number {
-  let q = 0;
-  for (const { tx, day: d } of sortTransactions(txs)) {
-    if (d >= day) break;
-    if (tx.instrumentId === instrumentId) {
-      switch (tx.type) {
-        case 'BUY':
-        case 'TRANSFER_IN':
-          q += tx.quantity ?? 0;
-          break;
-        case 'SELL':
-        case 'TRANSFER_OUT':
-          q -= tx.quantity ?? 0;
-          break;
-        case 'SPLIT':
-          if (!tx.subtype || tx.subtype === 'SPLIT') q *= tx.ratio ?? 1;
-          else if (tx.subtype === 'MERGER' || tx.subtype === 'TICKER_CHANGE') q = 0;
-          break;
-        case 'STOCK_DIVIDEND':
-          q = tx.quantity && tx.quantity > 0 ? q + tx.quantity : q * (1 + (tx.ratio ?? 0));
-          break;
-        default:
-          break;
-      }
-    } else if (tx.type === 'SPLIT' && tx.targetInstrumentId === instrumentId && tx.instrumentId) {
-      // units received from a merger / ticker change / spin-off
-      const parent = heldBefore(txs.filter((t) => t !== tx), tx.instrumentId, d);
-      q += parent * (tx.ratio ?? 1);
-    }
-  }
-  return Math.max(0, Math.round(q * 1e9) / 1e9);
+export interface CorporateActionOptions {
+  portfolioId?: string;
+  dividendToleranceDays?: number;
+  splitToleranceDays?: number;
+  /** 'auto' (default): JCP 15 %, US dividends 30 %; 'none'; or rates by subtype / 'US' / 'DEFAULT'. */
+  withholding?: 'auto' | 'none' | Record<string, number>;
 }
+
+interface Recorded {
+  day: number;
+  tx: Transaction;
+  used: boolean;
+}
+
+function lowerBound(arr: Recorded[], day: number): number {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((arr[mid] as Recorded).day < day) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+const near = (a: number, b: number, rel: number, abs = 1e-9) => Math.abs(a - b) <= Math.max(abs, rel * Math.max(Math.abs(a), Math.abs(b)));
 
 export function applyCorporateActions(
   transactions: Transaction[],
   actions: CorporateAction[],
   instruments: Instrument[],
-  opts: { portfolioId?: string; dividendToleranceDays?: number; splitToleranceDays?: number } = {},
+  opts: CorporateActionOptions = {},
 ): CorporateActionResult {
   const byId = new Map(instruments.map((i) => [i.id, i]));
   const out: CorporateActionResult = { suggested: [], skipped: [], review: [] };
   const divTol = opts.dividendToleranceDays ?? 10;
   const splitTol = opts.splitToleranceDays ?? 3;
   const portfolioId = opts.portfolioId ?? transactions[0]?.portfolioId ?? '';
-  const sortedActions = actions
-    .filter((a) => a && a.instrumentId && isStrictIsoDate(a.exDate ?? a.date))
-    .slice()
-    .sort((a, b) => ((a.exDate ?? a.date) < (b.exDate ?? b.date) ? -1 : 1));
-  for (const a of actions) if (!a || !a.instrumentId || !isStrictIsoDate(a.exDate ?? a.date)) out.skipped.push({ action: a, reason: 'INVALID' });
 
-  for (const a of sortedActions) {
+  // Recorded income / split rows per instrument, sorted by day.
+  const incomeRec = new Map<string, Recorded[]>();
+  const splitRec = new Map<string, Recorded[]>();
+  const sorted = sortTransactions(transactions);
+  for (const { tx, day } of sorted) {
+    if (!tx.instrumentId) continue;
+    const map = tx.type === 'DIVIDEND' || tx.type === 'INTEREST' ? incomeRec : tx.type === 'SPLIT' || tx.type === 'STOCK_DIVIDEND' ? splitRec : undefined;
+    if (!map) continue;
+    let arr = map.get(tx.instrumentId);
+    if (!arr) map.set(tx.instrumentId, (arr = []));
+    arr.push({ day, tx, used: false });
+  }
+
+  const valid: { a: CorporateAction; ex: number }[] = [];
+  for (const a of actions ?? []) {
+    if (!a || !a.instrumentId || !isStrictIsoDate(a.exDate ?? a.date)) {
+      out.skipped.push({ action: a, reason: 'INVALID' });
+      continue;
+    }
     if (a.reviewRequired) {
       out.review.push(a);
       continue;
     }
-    const ex = (a.exDate ?? a.date) as ISODate;
-    const exDay = isoToDay(ex);
-    const all = [...transactions, ...out.suggested];
-    const near = (t: Transaction, dates: ISODate[], tol: number) => dates.some((d) => Math.abs(isoToDay(t.date) - isoToDay(d)) <= tol);
+    valid.push({ a, ex: isoToDay((a.exDate ?? a.date) as ISODate) });
+  }
+  valid.sort((x, y) => x.ex - y.ex);
+
+  // Chronological sweep of holdings.
+  const qty = new Map<string, number>();
+  const get = (id: string) => qty.get(id) ?? 0;
+  const applyTx = (tx: Transaction) => {
+    const id = tx.instrumentId;
+    if (!id) return;
+    const q = get(id);
+    switch (tx.type) {
+      case 'BUY':
+      case 'TRANSFER_IN':
+        qty.set(id, q + (tx.quantity ?? 0));
+        break;
+      case 'SELL':
+      case 'TRANSFER_OUT':
+        qty.set(id, Math.max(0, q - (tx.quantity ?? 0)));
+        break;
+      case 'SPLIT': {
+        const r = tx.ratio && tx.ratio > 0 ? tx.ratio : 1;
+        if ((tx.subtype === 'SPINOFF' || tx.subtype === 'MERGER' || tx.subtype === 'TICKER_CHANGE') && tx.targetInstrumentId) {
+          qty.set(tx.targetInstrumentId, get(tx.targetInstrumentId) + q * r);
+          if (tx.subtype !== 'SPINOFF') qty.set(id, 0);
+        } else qty.set(id, q * r);
+        break;
+      }
+      case 'STOCK_DIVIDEND':
+        qty.set(id, tx.quantity && tx.quantity > 0 ? q + tx.quantity : q * (1 + (tx.ratio ?? 0)));
+        break;
+      default:
+        break;
+    }
+  };
+  let ti = 0;
+  const seenActions = new Set<string>();
+  const rates = opts.withholding ?? 'auto';
+  const withholdingFor = (a: CorporateAction, inst: Instrument | undefined): number => {
+    if (rates === 'none') return 0;
+    const table: Record<string, number> = rates === 'auto' ? { JCP: 0.15, US: 0.3 } : rates;
+    if (a.subtype && table[a.subtype] !== undefined) return table[a.subtype] as number;
+    if (inst?.country && table[inst.country] !== undefined) return table[inst.country] as number;
+    return table.DEFAULT ?? 0;
+  };
+
+  for (const { a, ex } of valid) {
+    while (ti < sorted.length && (sorted[ti] as { day: number }).day < ex) applyTx(sorted[ti++]!.tx);
     const inst = byId.get(a.instrumentId);
-    const id = `ca:${a.instrumentId}:${a.type}:${ex}${a.subtype ? `:${a.subtype}` : ''}`;
+    const key = `${a.instrumentId}|${a.type}|${ex}|${a.subtype ?? ''}|${a.amountPerShare ?? a.ratio ?? ''}|${a.targetInstrumentId ?? ''}`;
+    if (seenActions.has(key)) {
+      out.skipped.push({ action: a, reason: 'DUPLICATE_ACTION' });
+      continue;
+    }
+    seenActions.add(key);
+    const id = `ca:${a.instrumentId}:${a.type}:${a.exDate ?? a.date}${a.subtype ? `:${a.subtype}` : ''}${a.type === 'DIVIDEND' ? `:${a.amountPerShare}` : ''}`;
     const base = { id, portfolioId, importHash: id, source: `corporate-action${a.source ? `:${a.source}` : ''}`, note: a.note };
+    const q = get(a.instrumentId);
+
     if (a.type === 'DIVIDEND') {
-      if (!(a.amountPerShare && a.amountPerShare > 0)) {
+      const aps = a.amountPerShare ?? 0;
+      if (!(aps > 0)) {
         out.skipped.push({ action: a, reason: 'INVALID' });
         continue;
       }
-      const dates = [ex, a.payDate ?? ex];
-      if (all.some((t) => t.instrumentId === a.instrumentId && (t.type === 'DIVIDEND' || t.type === 'INTEREST') && near(t, dates, divTol))) {
+      const pay = a.payDate && isStrictIsoDate(a.payDate) ? isoToDay(a.payDate) : ex;
+      const rec = incomeRec.get(a.instrumentId) ?? [];
+      let matched: Recorded | undefined;
+      for (let k = lowerBound(rec, Math.min(ex, pay) - divTol); k < rec.length; k++) {
+        const r = rec[k] as Recorded;
+        if (r.day > Math.max(ex, pay) + divTol) break;
+        if (r.used) continue;
+        const t = r.tx;
+        if (t.subtype && a.subtype && t.subtype !== a.subtype) continue;
+        const sameSubtype = !!t.subtype && t.subtype === a.subtype;
+        const sameAmount = t.amount !== undefined && q > 0 && near(t.amount, q * aps, 0.02, 0.01);
+        const samePrice = t.price !== undefined && near(t.price, aps, 0.01);
+        if (sameSubtype || sameAmount || samePrice) {
+          matched = r;
+          break;
+        }
+      }
+      if (matched) {
+        matched.used = true;
         out.skipped.push({ action: a, reason: 'ALREADY_RECORDED' });
         continue;
       }
-      const q = heldBefore(all, a.instrumentId, exDay);
       if (q <= 0) {
         out.skipped.push({ action: a, reason: 'NO_POSITION' });
         continue;
       }
+      const amount = Math.round(q * aps * 1e6) / 1e6;
       const t: Transaction = {
         ...base,
-        date: a.payDate && isStrictIsoDate(a.payDate) ? a.payDate : ex,
+        date: a.payDate && isStrictIsoDate(a.payDate) ? a.payDate : (a.exDate ?? a.date),
         type: 'DIVIDEND',
         instrumentId: a.instrumentId,
         quantity: q,
-        price: a.amountPerShare,
-        amount: q * a.amountPerShare,
+        price: aps,
+        amount,
         currency: a.currency ?? inst?.currency ?? 'USD',
       };
+      const w = withholdingFor(a, inst);
+      if (w > 0) {
+        t.taxes = Math.round(amount * w * 100) / 100;
+        t.note = `${a.note ? `${a.note} · ` : ''}retención sugerida ${(w * 100).toFixed(1)} % (editable)`;
+      }
       if (a.subtype) t.subtype = a.subtype;
       out.suggested.push(t);
+      const arr = incomeRec.get(a.instrumentId) ?? [];
+      arr.splice(lowerBound(arr, isoToDay(t.date)), 0, { day: isoToDay(t.date), tx: t, used: true });
+      incomeRec.set(a.instrumentId, arr);
       continue;
     }
+
     // SPLIT (incl. restructurings) and STOCK_DIVIDEND
-    const kindMatch = (t: Transaction) =>
-      t.instrumentId === a.instrumentId && (t.type === 'SPLIT' || t.type === 'STOCK_DIVIDEND') && near(t, [ex], splitTol);
-    if (all.some(kindMatch)) {
+    const rec = splitRec.get(a.instrumentId) ?? [];
+    let dup = false;
+    for (let k = lowerBound(rec, ex - splitTol); k < rec.length; k++) {
+      const r = rec[k] as Recorded;
+      if (r.day > ex + splitTol) break;
+      if (!r.used) {
+        r.used = true;
+        dup = true;
+        break;
+      }
+    }
+    if (dup) {
       out.skipped.push({ action: a, reason: 'ALREADY_RECORDED' });
       continue;
     }
     const restructure = a.subtype === 'SPINOFF' || a.subtype === 'MERGER' || a.subtype === 'TICKER_CHANGE';
-    if (restructure && !a.targetInstrumentId) {
+    if ((restructure && !a.targetInstrumentId) || (!restructure && !(a.ratio && a.ratio > 0))) {
       out.skipped.push({ action: a, reason: 'INVALID' });
       continue;
     }
-    if (!restructure && !(a.ratio && a.ratio > 0)) {
-      out.skipped.push({ action: a, reason: 'INVALID' });
-      continue;
-    }
-    if (heldBefore(all, a.instrumentId, exDay) <= 0) {
+    if (q <= 0) {
       out.skipped.push({ action: a, reason: 'NO_POSITION' });
       continue;
     }
     const t: Transaction = {
       ...base,
-      date: ex,
+      date: (a.exDate ?? a.date) as ISODate,
       type: a.type === 'STOCK_DIVIDEND' ? 'STOCK_DIVIDEND' : 'SPLIT',
       instrumentId: a.instrumentId,
       currency: inst?.currency ?? a.currency ?? 'USD',
@@ -146,6 +245,8 @@ export function applyCorporateActions(
     if (a.targetInstrumentId) t.targetInstrumentId = a.targetInstrumentId;
     if (a.costFraction !== undefined) t.costFraction = a.costFraction;
     out.suggested.push(t);
+    applyTx(t); // the suggested event changes the holdings for later actions
   }
+  out.suggested.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
   return out;
 }

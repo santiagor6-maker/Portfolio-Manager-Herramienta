@@ -70,7 +70,11 @@ export default function DashboardPage() {
             ) : day ? (
               <span className="flex items-center gap-1.5">
                 <Delta amount={day.gainBase} pct={day.twr} size="sm" />
-                <span className="text-muted text-xs">{t('dashboard.today')}</span>
+                <span className="text-muted text-xs">
+                  {a?.latestPriceDate && a.latestPriceDate < a.asOf
+                    ? t('dashboard.sinceClose', { date: formatDate(a.movers[0]?.prevDate ?? previousBusinessDay(a.latestPriceDate), f.locale) })
+                    : t('dashboard.today')}
+                </span>
               </span>
             ) : (
               <span className="text-muted text-xs">—</span>

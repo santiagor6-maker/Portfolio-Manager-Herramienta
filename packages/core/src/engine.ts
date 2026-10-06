@@ -2,9 +2,17 @@
  * Memoized engine (C20). One ledger pass and one daily valuation chain serve every period
  * summary, chart series and position report for the same input:
  *   const eng = createEngine(input); eng.summary('YTD', asOf); eng.summary('1Y', asOf); ...
- * The public API functions use a cached engine per input object (WeakMap), so repeated calls
- * with the same input object reuse the work. Treat inputs as immutable (create a new input
- * object, or call createEngine again, after changing transactions or prices).
+ *
+ * Cache safety (C23):
+ * - An Engine takes a SNAPSHOT of its input (transactions, instruments, portfolio and options are
+ *   copied), so later edits to the caller's objects never leak into it. Call createEngine again
+ *   (or use the stateless API) after editing data.
+ * - The stateless API functions look engines up by a structural CONTENT HASH of the input
+ *   (every transaction field, instruments, portfolio, options, reporting currency) plus the
+ *   identity of the market-data object: in-place edits, a changed options.asOf or a changed
+ *   portfolio.baseCurrency produce a new engine. Market data built by createMarketData is
+ *   immutable; pass a new MarketData object when prices change.
+ * - Every value returned is a fresh copy: callers may sort/reverse/mutate results freely.
  *
  * Daily chain: for every day d in the grid, V(d) (close) and, on days with external flows, the
  * pre-flow value P(d) (see performance.ts). Index I(d) = prod of daily growth; the TWR between
@@ -20,8 +28,8 @@ import type {
   Valuation,
 } from './types';
 import type { EngineInput, PeriodKey } from './api';
-import { addDays, addMonths, dayToIso, isoToDay, yearFraction } from './dates';
-import { type EngineContext, type ExternalFlow, Ledger, createContext, runLedger } from './ledger';
+import { addDays, addMonths, dayToIso, isoToDay, todayIso, yearFraction } from './dates';
+import { type Diagnostic, type EngineContext, type ExternalFlow, Ledger, createContext, runLedger } from './ledger';
 import {
   type MonthlyOptions,
   flowDayReturn,
@@ -103,8 +111,11 @@ export class Engine {
   private readonly monthlyCache = new Map<string, MonthlyRow[]>();
   private readonly flowsSorted: ExternalFlow[];
 
-  constructor(readonly input: EngineInput) {
-    this.ctx = createContext(input);
+  readonly input: EngineInput;
+
+  constructor(input: EngineInput) {
+    this.input = snapshotInput(input);
+    this.ctx = createContext(this.input);
     this.ledger = runLedger(this.ctx);
     this.flowsSorted = this.ledger.flows.slice().sort((a, b) => a.day - b.day);
   }
@@ -114,12 +125,17 @@ export class Engine {
   }
 
   get asOf(): ISODate {
-    return this.input.options?.asOf ?? dayToIso(Math.max(this.ledger.lastDay, isoToDay(new Date().toISOString().slice(0, 10))));
+    return this.input.options?.asOf ?? todayIso();
   }
 
   // ---- data -----------------------------------------------------------------------------
 
   valuation(date: ISODate): Valuation {
+    return structuredClone(this.valuationShared(date));
+  }
+
+  /** Cached valuation (internal, do not mutate). */
+  private valuationShared(date: ISODate): Valuation {
     const day = isoToDay(date);
     let v = this.valuations.get(day);
     if (!v) {
@@ -149,7 +165,11 @@ export class Engine {
       rows = monthlyFromContext(this.ctx, this.input, opts, this.ledger);
       this.monthlyCache.set(key, rows);
     }
-    return rows;
+    return structuredClone(rows);
+  }
+
+  diagnostics(): Diagnostic[] {
+    return this.ledger.diagnostics.map((d) => ({ ...d }));
   }
 
   // ---- daily chain ----------------------------------------------------------------------
@@ -326,7 +346,7 @@ export class Engine {
     if (x.multipleRoots) ws.add('MWR_MULTIPLE_ROOTS');
     if (mfx.size) s.missingFx = Array.from(mfx).sort();
     if (mp.size) s.missingPrices = Array.from(mp).sort();
-    const st = this.valuation(to).stalePrices;
+    const st = this.valuationShared(to).stalePrices;
     if (st?.length) s.stalePrices = st;
     if (ws.size) s.warnings = Array.from(ws);
     return s;
@@ -382,23 +402,86 @@ export function seriesDays(from: ISODate, to: ISODate, step: 'day' | 'week' | 'm
   return out;
 }
 
-const cache = new WeakMap<EngineInput, { sig: unknown[]; engine: Engine }>();
+// ---------------------------------------------------------------------------
+// Snapshots and content-addressed cache (C23)
+// ---------------------------------------------------------------------------
 
-function signature(input: EngineInput): unknown[] {
-  return [input.transactions, input.transactions?.length, input.market, input.instruments, input.portfolio, input.baseCurrency, input.options];
+function clonePlain<T>(v: T): T {
+  return v === undefined || v === null ? v : (JSON.parse(JSON.stringify(v)) as T);
 }
 
-/** Create a memoized engine for an input (C20). */
+/** Copy everything the engine reads, except the (immutable) market data object. */
+export function snapshotInput(input: EngineInput): EngineInput {
+  return {
+    portfolio: clonePlain(input.portfolio),
+    transactions: (input.transactions ?? []).map((t) => ({ ...t })),
+    instruments: (input.instruments ?? []).map((i) => clonePlain(i)),
+    market: input.market,
+    baseCurrency: input.baseCurrency,
+    options: clonePlain(input.options),
+  };
+}
+
+const marketIds = new WeakMap<object, number>();
+let nextMarketId = 1;
+
+function fnv(h: number, s: string): number {
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+const TX_FIELDS = [
+  'id', 'date', 'type', 'instrumentId', 'quantity', 'price', 'currency', 'amount', 'fees', 'taxes', 'ratio', 'toCurrency',
+  'toAmount', 'fxRateToBase', 'account', 'subtype', 'targetInstrumentId', 'costFraction', 'portfolioId',
+] as const;
+
+/** Structural hash of everything that affects results (two 32-bit FNV lanes). */
+export function inputHash(input: EngineInput): string {
+  let a = 2166136261;
+  let b = 0x811c9dc5 ^ 0x5bd1e995;
+  const mix = (s: string) => {
+    a = fnv(a, s);
+    b = fnv(b, s + '\u0001');
+  };
+  const m = input.market as unknown as object;
+  let mid = marketIds.get(m);
+  if (mid === undefined) marketIds.set(m, (mid = nextMarketId++));
+  mix(`m${mid}|${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
+  mix(JSON.stringify(input.instruments ?? []));
+  for (const t of input.transactions ?? []) {
+    let row = '';
+    for (const f of TX_FIELDS) {
+      const v = (t as unknown as Record<string, unknown>)[f];
+      row += v === undefined ? '~' : String(v);
+      row += '|';
+    }
+    mix(row);
+  }
+  return `${a.toString(36)}.${b.toString(36)}.${input.transactions?.length ?? 0}`;
+}
+
+const engineCache = new Map<string, Engine>();
+const MAX_CACHED_ENGINES = 8;
+
+/** Create an engine (snapshot of the input) (C20). */
 export function createEngine(input: EngineInput): Engine {
   return new Engine(input);
 }
 
-/** Cached engine for the API functions. */
+/** Engine for the stateless API: reused only when the input CONTENT is identical. */
 export function engineFor(input: EngineInput): Engine {
-  const sig = signature(input);
-  const hit = cache.get(input);
-  if (hit && hit.sig.length === sig.length && hit.sig.every((v, i) => v === sig[i])) return hit.engine;
+  const key = inputHash(input);
+  const hit = engineCache.get(key);
+  if (hit) {
+    engineCache.delete(key); // refresh LRU position
+    engineCache.set(key, hit);
+    return hit;
+  }
   const engine = new Engine(input);
-  cache.set(input, { sig, engine });
+  engineCache.set(key, engine);
+  while (engineCache.size > MAX_CACHED_ENGINES) engineCache.delete(engineCache.keys().next().value as string);
   return engine;
 }

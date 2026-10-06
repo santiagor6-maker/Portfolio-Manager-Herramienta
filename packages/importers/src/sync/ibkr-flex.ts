@@ -158,7 +158,7 @@ export function flexXmlToTable(xml: string): RawTable {
     if (!records.length) continue;
     const keys = [...new Set(records.flatMap((r) => Object.keys(r)))];
     if (!keys.includes('accountId')) keys.unshift('accountId');
-    rows.push(keys.map((k) => ATTR_TO_COLUMN[k] ?? k));
+    rows.push(keys.map((k) => ATTR_TO_COLUMN[k] ?? k.charAt(0).toUpperCase() + k.slice(1)));
     lines.push(++line);
     for (const r of records) {
       rows.push(keys.map((k) => r[k] ?? ''));

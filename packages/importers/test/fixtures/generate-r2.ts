@@ -18,7 +18,7 @@ const out = (name: string, data: Uint8Array) => writeFileSync(join(dir, name), d
 // ---------------------------------------------------------------------------
 type Trade = [side: string, market: string, prazo: string, spec: string, obs: string, qty: string, price: string, value: string, dc: string];
 
-function notePage(nr: string, date: string, broker: string, trades: Trade[], left: [string, string][], right: [string, string, string?][]): PdfText[] {
+function notePage(nr: string, date: string, broker: string, trades: Trade[], left: [string, string][], right: [string, string?, string?][]): PdfText[] {
   const t: PdfText[] = [
     [230, 815, 'NOTA DE CORRETAGEM', 11],
     [380, 795, 'Nr. nota'], [450, 795, 'Folha'], [500, 795, 'Data pregão'],

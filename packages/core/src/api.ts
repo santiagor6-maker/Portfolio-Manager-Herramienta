@@ -251,7 +251,7 @@ export function goalProjection(opts: GoalProjectionOptions): GoalProjectionResul
  * income without position, maturity redemptions, rejected rows (invalid dates).
  */
 export function ledgerDiagnostics(input: EngineInput, to?: ISODate): Diagnostic[] {
-  if (!to) return engineFor(input).ledger.diagnostics;
+  if (!to) return engineFor(input).diagnostics();
   return runLedger(createContext(input), isoToDay(to)).diagnostics;
 }
 

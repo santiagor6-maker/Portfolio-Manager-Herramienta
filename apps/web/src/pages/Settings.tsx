@@ -14,12 +14,14 @@ import {
   exportBackup,
   parseBackup,
   removeDemoData,
+  setMeta,
   restoreBackup,
   updatePortfolio,
   wipeAll,
   type ThemePref,
 } from '../db/repo';
 import { downloadText } from '../lib/export';
+import { decryptText, encryptText, isEncrypted } from '../lib/crypto';
 import { seedDemo } from '../services/onboarding';
 import { getMarketClient, refreshMarketData } from '../services/marketData';
 import { parseDecimal } from '../lib/parse';
@@ -279,6 +281,7 @@ function Backup() {
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [mode, setMode] = useState<'replace' | 'merge'>('merge');
   const [wipeOpen, setWipeOpen] = useState(false);
+  const [pass, setPass] = useState('');
   const [wipeText, setWipeText] = useState('');
   const portfolios = usePortfolios();
   const hasDemo = portfolios.some((p) => p.isDemo);
@@ -289,13 +292,22 @@ function Backup() {
     <Card title={t('settings.backup')} subtitle={t('settings.backupSub')}>
       <div className="flex flex-col gap-3">
         {msg && <Banner tone={msg.tone}>{msg.text}</Banner>}
+        <Field label={t('settings.passphrase')} htmlFor="s-pass" hint={t('settings.passphraseHint')}>
+          <input id="s-pass" type="password" autoComplete="new-password" className="input" value={pass} onChange={(e) => setPass(e.target.value)} />
+        </Field>
         <div className="flex flex-wrap gap-2">
           <button
             className="btn"
             onClick={async () => {
               const b = await exportBackup(true);
-              downloadText(`portafolio-pro-respaldo-${todayIso()}.json`, JSON.stringify(b), 'application/json');
+              const text = JSON.stringify(b);
+              if (pass.trim()) {
+                const enc = await encryptText(text, pass.trim());
+                downloadText(`portafolio-pro-respaldo-cifrado-${todayIso()}.json`, JSON.stringify(enc), 'application/json');
+              } else downloadText(`portafolio-pro-respaldo-${todayIso()}.json`, text, 'application/json');
+              await setMeta('lastBackup', Date.now());
             }}
+            data-testid="backup-export"
           >
             <Download size={15} /> {t('settings.exportJson')}
           </button>
@@ -322,7 +334,26 @@ function Backup() {
               e.target.value = '';
               if (!file) return;
               try {
-                const b = parseBackup(await file.text());
+                let text = await file.text();
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(text);
+                } catch {
+                  parsed = undefined;
+                }
+                if (isEncrypted(parsed)) {
+                  if (!pass.trim()) {
+                    setMsg({ tone: 'error', text: t('settings.backupError.needs_passphrase') });
+                    return;
+                  }
+                  try {
+                    text = await decryptText(parsed, pass.trim());
+                  } catch {
+                    setMsg({ tone: 'error', text: t('settings.backupError.wrong_passphrase') });
+                    return;
+                  }
+                }
+                const b = parseBackup(text);
                 await restoreBackup(b, mode);
                 setMsg({ tone: 'success', text: t('settings.restored', { tx: b.transactions.length, pf: b.portfolios.length }) });
               } catch (err) {

@@ -130,8 +130,9 @@ export interface PositionFlow {
   incomeBase: number;
   /** Fees and taxes of the transaction (informational). */
   feesBase: number;
-  /** Restructurings (spin-off, merger, ticker change) happen at the start of the ex-date. */
-  atStart?: boolean;
+  /** Restructurings (spin-off, merger, ticker change, merger cash) at the START of the ex-date. */
+  startInBase: number;
+  startOutBase: number;
 }
 
 export interface Diagnostic {
@@ -450,31 +451,59 @@ export class Ledger {
     if (amount !== 0) this.moveCash(ccy, tx.account ?? NO_ACCOUNT, amount);
   }
 
+  private acctCash(ccy: CurrencyCode, acct: string): number {
+    return this.cashByAccount.get(ccy)?.get(acct) ?? 0;
+  }
+
   /**
-   * Debit cash. With implicit cash flows enabled, a shortfall (amount above the available
-   * positive balance) is first covered by converting base-currency cash at the market rate
-   * (implicitFx 'fromBaseCash', when the debit is in another currency), then by an implicit
-   * external deposit.
+   * Cash usable by a transaction of account `acct` (C30): its own balance plus cash recorded
+   * without an account. Rows without an account may use the whole balance of the currency.
+   */
+  private availableFor(ccy: CurrencyCode, acct: string): number {
+    if (acct === NO_ACCOUNT) return Math.max(this.cash.get(ccy) ?? 0, 0);
+    return Math.max(this.acctCash(ccy, acct), 0) + Math.max(this.acctCash(ccy, NO_ACCOUNT), 0);
+  }
+
+  /** Move unassigned cash ('' account) into `acct` (bookkeeping only; totals unchanged). */
+  private pullUnassigned(ccy: CurrencyCode, acct: string, need: number): void {
+    if (acct === NO_ACCOUNT || need <= 0) return;
+    const free = Math.max(this.acctCash(ccy, NO_ACCOUNT), 0);
+    const take = Math.min(free, need);
+    if (take <= 0) return;
+    const m = this.cashByAccount.get(ccy)!;
+    m.set(NO_ACCOUNT, (m.get(NO_ACCOUNT) ?? 0) - take);
+    m.set(acct, (m.get(acct) ?? 0) + take);
+  }
+
+  /**
+   * Debit cash. With implicit cash flows enabled, a shortfall (amount above the cash available
+   * to the transaction's account) is first covered by converting base-currency cash of the SAME
+   * account at the market rate (implicitFx 'fromBaseCash', when the debit is in another
+   * currency), then by an implicit external deposit.
    */
   private debit(tx: Transaction, day: number, ccy: CurrencyCode, amount: number, opts: { implicit?: boolean; fx?: boolean } = {}): void {
     if (amount === 0 || !Number.isFinite(amount)) return;
     const acct = tx.account ?? NO_ACCOUNT;
     const implicit = (opts.implicit ?? true) && this.ctx.options.implicitCashFlows;
+    if (amount > 0) this.pullUnassigned(ccy, acct, amount - Math.max(this.acctCash(ccy, acct), 0));
     if (amount > 0 && implicit) {
-      let shortfall = amount - Math.max(this.cash.get(ccy) ?? 0, 0);
+      let shortfall = amount - this.availableFor(ccy, acct);
       const pb = this.ctx.portfolioBase;
       if (shortfall > CASH_EPS && (opts.fx ?? true) && this.ctx.options.implicitFx === 'fromBaseCash' && ccy !== pb) {
-        const avail = Math.max(this.cash.get(pb) ?? 0, 0);
+        const avail = this.availableFor(pb, acct);
         const r = this.ctx.market.fxAt(ccy, pb, day) ?? this.ctx.market.fxNearest(ccy, pb, day); // pb per ccy
         if (avail > CASH_EPS && r !== undefined && r > 0) {
           const usePb = Math.min(avail, shortfall * r);
           const got = usePb / r;
+          this.pullUnassigned(pb, acct, usePb - Math.max(this.acctCash(pb, acct), 0));
           const before = this.txCash;
           this.moveCash(pb, acct, -usePb);
           this.moveCash(ccy, acct, got);
           this.bk.fxConversion += this.txCash - before;
           shortfall -= got;
           this.diag(tx, day, 'IMPLICIT_FX_CONVERSION', `Converted ${usePb.toFixed(2)} ${pb} to ${got.toFixed(2)} ${ccy} at market rate to fund ${tx.type}`, 'info');
+        } else if ((this.cash.get(pb) ?? 0) > CASH_EPS && acct !== NO_ACCOUNT) {
+          this.diag(tx, day, 'IMPLICIT_FX_OTHER_ACCOUNT', `${pb} cash exists only in other accounts; not used to fund ${tx.type} in '${acct}' (implicit deposit booked instead)`, 'info');
         }
       }
       if (shortfall > CASH_EPS) {
@@ -522,7 +551,7 @@ export class Ledger {
 
   private positionFlow(instrumentId: string, day: number): PositionFlow {
     if (!this.pf || this.pf.instrumentId !== instrumentId) {
-      this.pf = { day, instrumentId, inBase: 0, outBase: 0, endOutBase: 0, incomeBase: 0, feesBase: 0 };
+      this.pf = { day, instrumentId, inBase: 0, outBase: 0, endOutBase: 0, incomeBase: 0, feesBase: 0, startInBase: 0, startOutBase: 0 };
       this.positionFlows.push(this.pf);
     }
     return this.pf;
@@ -752,7 +781,13 @@ export class Ledger {
     }
   }
 
-  /** Spin-off, merger, ticker change: move lots / cost between instruments. */
+  /**
+   * Spin-off, merger, ticker change: move lots / cost between instruments at the start of the
+   * ex-date. Merger cash ("boot", C28) is a partial disposal of the PARENT: a fraction
+   * f = cash / (cash + value of the new shares) of each parent lot's cost is realized against
+   * the cash (fallback without a target price: f = cash / parent cost); the rest of the cost
+   * moves to the target. Position flows are start-of-day (value handed from parent to target).
+   */
   private restructure(tx: Transaction, day: number, parent: Instrument): void {
     const targetId = tx.targetInstrumentId;
     if (!targetId) return this.diag(tx, day, 'MISSING_TARGET', `${tx.subtype} requires targetInstrumentId`, 'error');
@@ -764,41 +799,48 @@ export class Ledger {
       const p = this.marketPrice(inst, day);
       return p !== undefined ? ((qty * p) / mult(inst)) * this.X(inst.currency, day) : fallback;
     };
-    let moved: LotState[];
-    if (tx.subtype === 'SPINOFF') {
-      const f = tx.costFraction ?? 0;
-      moved = pb.carveOutCost(f);
-    } else {
-      moved = pb.extractAll();
+    const parentQty = pb.lots.reduce((acc, l) => acc + l.quantity, 0);
+    const cashPart = tx.subtype !== 'SPINOFF' ? num(tx.amount) : 0;
+    if (cashPart > 0 && parentQty > 0) {
+      const k = this.convert(tx, day, tx.currency, parent.currency);
+      const rate = this.txRate(tx, day);
+      const pT = this.marketPrice(target, day);
+      const sharesValueTx = pT !== undefined ? ((parentQty * r * pT) / mult(target)) * this.convert(tx, day, target.currency, tx.currency) : undefined;
+      const f =
+        sharesValueTx !== undefined && cashPart + sharesValueTx > 0
+          ? cashPart / (cashPart + sharesValueTx)
+          : pb.costBasis > 0
+            ? Math.min(1, (cashPart * k) / pb.costBasis)
+            : 0;
+      const carved = pb.carveOutCost(f);
+      for (const l of carved) {
+        const share = l.quantity / parentQty;
+        const proceeds = cashPart * k * share;
+        const proceedsBase = cashPart * rate * share;
+        const cost = l.quantity * l.unitCost;
+        const costBase = l.quantity * l.unitCostBase;
+        this.pushRealized({ day, instrumentId: parent.id, sellDate: tx.date, openDate: dayToIso(l.openDay), quantity: 0, proceeds, cost, gain: proceeds - cost, proceedsBase, costBase, gainBase: proceedsBase - costBase, holdingDays: day - l.openDay });
+      }
+      this.credit(tx, tx.currency, cashPart);
+      this.positionFlow(parent.id, day).startOutBase += cashPart * this.X(tx.currency, day, this.hintFor(tx.currency));
+      this.pf = undefined;
     }
+    let moved: LotState[];
+    if (tx.subtype === 'SPINOFF') moved = pb.carveOutCost(tx.costFraction ?? 0);
+    else moved = pb.extractAll();
     const scaled = moved.map((l) => ({ ...l, quantity: l.quantity * r, unitCost: l.unitCost / r, unitCostBase: l.unitCostBase / r, unitValue: l.unitValue / r }));
-    const qty = scaled.reduce((s, l) => s + l.quantity, 0);
-    const costBase = scaled.reduce((s, l) => s + l.quantity * l.unitCostBase, 0);
+    const qty = scaled.reduce((acc, l) => acc + l.quantity, 0);
+    const costBase = scaled.reduce((acc, l) => acc + l.quantity * l.unitCostBase, 0);
     tb.insert(scaled);
     const acc = this.accountQty.get(parent.id);
     if (acc) for (const [a, v] of acc) this.moveAccountQty(target.id, a, v * r);
     if (tx.subtype !== 'SPINOFF' && acc) for (const a of acc.keys()) acc.set(a, 0);
-    // Position flows: value leaves the parent and enters the target.
+    // Position flows: value leaves the parent and enters the target at the start of the day.
     const v = valueOf(target, qty, costBase);
-    const po = this.positionFlow(parent.id, day);
-    po.outBase += v;
-    po.atStart = true;
+    this.positionFlow(parent.id, day).startOutBase += v;
     this.pf = undefined;
-    const ti = this.positionFlow(target.id, day);
-    ti.inBase += v;
-    ti.atStart = true;
+    this.positionFlow(target.id, day).startInBase += v;
     this.pf = undefined;
-    // Cash component of a merger: treated as return of capital on the target.
-    const cashPart = num(tx.amount);
-    if (cashPart > 0 && tx.subtype !== 'SPINOFF') {
-      this.credit(tx, tx.currency, cashPart);
-      const k = this.convert(tx, day, tx.currency, target.currency);
-      const { excess, excessBase } = tb.reduceCost(cashPart * k, cashPart * this.txRate(tx, day));
-      if (excess > 1e-9 || excessBase > 1e-9) {
-        this.pushRealized({ day, instrumentId: target.id, sellDate: tx.date, openDate: tx.date, quantity: 0, proceeds: excess, cost: 0, gain: excess, proceedsBase: excessBase, costBase: 0, gainBase: excessBase, holdingDays: 0 });
-      }
-      this.positionFlow(target.id, day).endOutBase += cashPart * this.X(tx.currency, day, this.hintFor(tx.currency));
-    }
   }
 
   private stockDividend(tx: Transaction, day: number): void {
