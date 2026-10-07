@@ -1,0 +1,67 @@
+[
+ {
+  "NC": "Nível Territorial (Código)",
+  "NN": "Nível Territorial",
+  "MC": "Unidade de Medida (Código)",
+  "MN": "Unidade de Medida",
+  "V": "Valor",
+  "D1C": "Brasil (Código)",
+  "D1N": "Brasil",
+  "D2C": "Variável (Código)",
+  "D2N": "Variável",
+  "D3C": "Mês (Código)",
+  "D3N": "Mês"
+ },
+ {
+  "NC": "1",
+  "NN": "Brasil",
+  "MC": "2",
+  "MN": "%",
+  "V": "0.42",
+  "D1C": "1",
+  "D1N": "Brasil",
+  "D2C": "63",
+  "D2N": "IPCA - Variação mensal",
+  "D3C": "202401",
+  "D3N": "janeiro 2024"
+ },
+ {
+  "NC": "1",
+  "NN": "Brasil",
+  "MC": "2",
+  "MN": "%",
+  "V": "0.83",
+  "D1C": "1",
+  "D1N": "Brasil",
+  "D2C": "63",
+  "D2N": "IPCA - Variação mensal",
+  "D3C": "202402",
+  "D3N": "fevereiro 2024"
+ },
+ {
+  "NC": "1",
+  "NN": "Brasil",
+  "MC": "2",
+  "MN": "%",
+  "V": "0.16",
+  "D1C": "1",
+  "D1N": "Brasil",
+  "D2C": "63",
+  "D2N": "IPCA - Variação mensal",
+  "D3C": "202403",
+  "D3N": "março 2024"
+ },
+ {
+  "NC": "1",
+  "NN": "Brasil",
+  "MC": "2",
+  "MN": "%",
+  "V": "...",
+  "D1C": "1",
+  "D1N": "Brasil",
+  "D2C": "63",
+  "D2N": "IPCA - Variação mensal",
+  "D3C": "202404",
+  "D3N": "abril 2024"
+ }
+]

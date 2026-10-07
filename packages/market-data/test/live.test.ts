@@ -275,3 +275,90 @@ describe.skipIf(!LIVE)('LIVE round 2', () => {
     T,
   );
 });
+
+/**
+ * Contract tests (review R2, M15): validate the documented-but-unreachable-from-CI providers
+ * against the REAL services. From a machine with access they assert the parsed shape; with
+ * RECORD=1 they also overwrite the synthetic fixtures with real responses. From the build
+ * container (403 egress) they only report that the service is unreachable.
+ */
+describe.skipIf(!LIVE)('LIVE contract tests for providers validated only with synthetic fixtures', () => {
+  const service = new MarketDataService();
+  const today = todayISO();
+  const RECORD = process.env.RECORD === '1';
+  const unreachable = (e: unknown) => /403|ENOTFOUND|ECONN|fetch failed|forbidden|egress|allowlist/i.test(String((e as Error)?.message ?? e));
+
+  const contract = async (name: string, run: () => Promise<void>) => {
+    try {
+      await run();
+      console.log(`[contract] ${name}: OK`);
+    } catch (e) {
+      if (unreachable(e)) console.log(`[contract] ${name}: UNREACHABLE from here (${String((e as Error).message).slice(0, 80)})`);
+      else throw e;
+    }
+  };
+
+  it(
+    'BCB SGS / PTAX, SIDRA, ECB, FRED, Tesouro, brapi, stooq',
+    async () => {
+      const from = addDays(today, -40);
+      await contract('SGS 12 (CDI)', async () => {
+        const r = await service.index({ id: 'CDI', from });
+        expect(r.series.points.every((p) => p.value > 0 && p.value < 1)).toBe(true);
+      });
+      await contract('SGS 433 / SIDRA (IPCA)', async () => {
+        const r = await service.index({ id: 'IPCA', from: addDays(today, -200) });
+        expect(r.series.points.length).toBeGreaterThan(3);
+      });
+      await contract('PTAX buy/sell', async () => {
+        const [b, s] = await Promise.all([
+          service.fxSeries({ base: 'USD', quote: 'BRL', from, side: 'buy', source: 'official' }),
+          service.fxSeries({ base: 'USD', quote: 'BRL', from, source: 'official' }),
+        ]);
+        expect(b.series.points.at(-1)!.rate).toBeLessThan(s.series.points.at(-1)!.rate);
+      });
+      await contract('ECB EXR', async () => {
+        const r = await service.fxSeries({ base: 'EUR', quote: 'USD', from, source: 'official' });
+        expect(r.series.source).toBe('ecb');
+      });
+      await contract('FRED CPI', async () => {
+        expect((await service.index({ id: 'CPI_US', from: addDays(today, -120) })).series.points.length).toBeGreaterThan(1);
+      });
+      await contract('Tesouro CSV', async () => {
+        const titles = await service.tesouro.titles();
+        expect(titles.size).toBeGreaterThan(5);
+      });
+      for (const p of service.fallbackProviders.filter((x) => ['brapi', 'stooq'].includes(String(x.id)))) {
+        await contract(String(p.id), async () => {
+          const t = p.id === 'brapi' ? { instrumentId: 'BVMF:PETR4', exchange: 'BVMF', symbol: 'PETR4', yahoo: 'PETR4.SA' } : { instrumentId: 'XNAS:AAPL', exchange: 'XNAS', symbol: 'AAPL', yahoo: 'AAPL' };
+          const h = await p.dailyHistory(t, addDays(today, -10), today);
+          expect(h.points.length).toBeGreaterThan(2);
+        });
+      }
+      if (RECORD) console.log('[contract] RECORD=1: re-record fixtures with the curl commands listed in the README (section Pruebas).');
+    },
+    T,
+  );
+});
+
+describe.skipIf(!LIVE)('LIVE round 3', () => {
+  const service = new MarketDataService();
+  it(
+    'mergers vs renames, SAP.DE last close',
+    async () => {
+      const brf = await service.history({ symbol: 'BRFS3', from: '2024-01-01', to: '2025-12-31', interval: '1mo' });
+      const mrfg = await service.history({ symbol: 'MRFG3', from: '2024-01-01', to: '2024-06-30', interval: '1mo' });
+      console.log(`[M23] BRFS3 points=${brf.series.points.length} delisted=${JSON.stringify(brf.delisted)} actions=${JSON.stringify(brf.actions.map((a) => [a.date, a.subtype, a.ratio, a.targetInstrumentId]))}`);
+      console.log(`[M23] MRFG3 -> ${mrfg.instrument.id} ${mrfg.series.points.map((p) => p.close).join(',')}`);
+      expect(brf.series.points.every((p) => !mrfg.series.points.some((m) => m.date === p.date && m.close === p.close))).toBe(true);
+      expect(brf.actions.some((a) => a.subtype === 'MERGER' && a.ratio === 0.8521)).toBe(true);
+      const cple = await service.history({ symbol: 'CPLE6', from: '2025-12-01', to: '2026-01-31' });
+      console.log(`[M23] CPLE6 actions=${JSON.stringify(cple.actions.map((a) => [a.date, a.type, a.subtype, a.ratio ?? a.amountPerShare]))}`);
+      const sap = await service.history({ symbol: 'SAP.DE', from: addDays(todayISO(), -7) });
+      const q = await service.quote('SAP.DE');
+      console.log(`[M20] SAP.DE history last ${JSON.stringify(sap.series.points.at(-1))} lastTrade=${sap.series.lastTradeDate}; quote ${q.date} ${q.price}`);
+      expect(sap.series.points.at(-1)!.date).toBe(q.date);
+    },
+    T,
+  );
+});

@@ -10,7 +10,7 @@
  *   "feed": {
  *     "type": "json",
  *     "url": "https://www.datos.gov.co/resource/qhpu-8ixx.json?codigo_negocio=2852&$where=fecha_corte between '{FROM}T00:00:00' and '{TO}T00:00:00'",
- *     "datePath": "$[*].fecha_corte", "closePath": "$[*].valor_unidad_operaciones"
+ *     "rowsPath": "$[*]", "dateField": "fecha_corte", "closeField": "valor_unidad_operaciones"
  *   }
  * }
  * URL placeholders: {SYMBOL} {FROM} {TO} {FROM_DMY} {TO_DMY} {FROM_EPOCH} {TO_EPOCH}.
@@ -29,7 +29,15 @@ export interface CustomFeed {
   type: 'json' | 'csv';
   url: string;
   headers?: Record<string, string>;
-  /** JSON: paths to the date and close arrays, e.g. `$.data[*].date`, `$[*].valor`. */
+  /**
+   * JSON, preferred: path to the rows plus fields relative to each row, so a row that omits a field
+   * (datos.gov.co drops null fields) is skipped instead of shifting every later value.
+   * e.g. rowsPath `$[*]`, dateField `fecha_corte`, closeField `valor_unidad_operaciones`.
+   */
+  rowsPath?: string;
+  dateField?: string;
+  closeField?: string;
+  /** JSON, alternative: paths to parallel date and close arrays, e.g. `$.data[*].date`, `$[*].valor`. */
   datePath?: string;
   closePath?: string;
   /** CSV: column names (or 0-based indexes) and format. */
@@ -52,15 +60,21 @@ export interface CustomFeedInstrument {
   feed: CustomFeed;
 }
 
-/** Tiny JSONPath subset: `$`, `.key`, `['key']`, `[n]`, `[*]`. Returns all matches. */
-export function jsonPath(root: unknown, path: string): unknown[] {
+/**
+ * Tiny JSONPath subset: `$`, `.key`, `['key']`, `[n]`, `[*]`. Returns all matches. With
+ * `keepMissing`, a missing key yields `undefined` in place (positions stay aligned).
+ */
+export function jsonPath(root: unknown, path: string, opts: { keepMissing?: boolean } = {}): unknown[] {
   if (!path.startsWith('$')) throw new MarketDataError('BAD_REQUEST', `JSONPath must start with $: ${path}`);
   const tokens = [...path.slice(1).matchAll(/\.([A-Za-z_$][\w$-]*)|\[(\*|\d+|'[^']*'|"[^"]*")\]/g)].map((m) => m[1] ?? m[2]!);
   let cur: unknown[] = [root];
   for (const t of tokens) {
     const next: unknown[] = [];
     for (const v of cur) {
-      if (v == null || typeof v !== 'object') continue;
+      if (v == null || typeof v !== 'object') {
+        if (opts.keepMissing) next.push(undefined);
+        continue;
+      }
       if (t === '*') next.push(...(Array.isArray(v) ? v : Object.values(v)));
       else if (/^\d+$/.test(t)) {
         if (Array.isArray(v)) next.push(v[Number(t)]);
@@ -69,7 +83,7 @@ export function jsonPath(root: unknown, path: string): unknown[] {
         next.push((v as Record<string, unknown>)[key]);
       }
     }
-    cur = next.filter((x) => x !== undefined);
+    cur = opts.keepMissing ? next : next.filter((x) => x !== undefined);
   }
   return cur;
 }
@@ -153,9 +167,21 @@ export class CustomFeedProvider implements PriceProvider {
     try {
       if (f.type === 'json') {
         const body = await this.opts.http.getJson(url, f.headers);
-        const dates = jsonPath(body, f.datePath ?? '$[*].date');
-        const closes = jsonPath(body, f.closePath ?? '$[*].close');
-        pairs = dates.map((d, i) => ({ date: parseFeedDate(d, f.dateFormat), close: parseNumber(closes[i], f.decimal) }));
+        const num = (v: unknown) => (v == null || v === '' ? Number.NaN : parseNumber(v, f.decimal));
+        if (f.rowsPath || f.dateField || f.closeField) {
+          pairs = jsonPath(body, f.rowsPath ?? '$[*]').map((row) => {
+            const r = (row ?? {}) as Record<string, unknown>;
+            return { date: parseFeedDate(r[f.dateField ?? 'date'], f.dateFormat), close: num(r[f.closeField ?? 'close']) };
+          });
+        } else {
+          // Parallel arrays: keep holes so a row without a value cannot shift the following ones.
+          const dates = jsonPath(body, f.datePath ?? '$[*].date', { keepMissing: true });
+          const closes = jsonPath(body, f.closePath ?? '$[*].close', { keepMissing: true });
+          if (dates.length !== closes.length) {
+            throw new MarketDataError('UPSTREAM_ERROR', `custom feed ${cfg.id}: ${dates.length} dates vs ${closes.length} closes; use rowsPath/dateField/closeField`);
+          }
+          pairs = dates.map((d, i) => ({ date: parseFeedDate(d, f.dateFormat), close: num(closes[i]) }));
+        }
       } else {
         const rows = parseCsv(f.delimiter && f.delimiter !== ',' ? (await this.opts.http.getText(url, f.headers)).replaceAll(f.delimiter, ',') : await this.opts.http.getText(url, f.headers));
         const header = rows[0] ?? [];

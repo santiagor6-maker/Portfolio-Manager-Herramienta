@@ -4,7 +4,9 @@ export type MarketDataErrorCode =
   | 'UNSUPPORTED'
   | 'UPSTREAM_ERROR'
   | 'RATE_LIMITED'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  /** The security no longer trades (merged / converted into another one). */
+  | 'DELISTED';
 
 const STATUS: Record<MarketDataErrorCode, number> = {
   BAD_REQUEST: 400,
@@ -13,6 +15,7 @@ const STATUS: Record<MarketDataErrorCode, number> = {
   UPSTREAM_ERROR: 502,
   RATE_LIMITED: 503,
   TIMEOUT: 504,
+  DELISTED: 410,
 };
 
 export class MarketDataError extends Error {

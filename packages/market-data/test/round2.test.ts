@@ -25,7 +25,7 @@ import {
 import { createFakeFetch, createTestService, fixture, fixtureJson, json, NOW, presplitOnly } from './helpers';
 
 const chart = (f: string): YahooChartResult => fixtureJson(`yahoo/${f}`).chart.result[0];
-const YAHOO_DOWN = { failingHosts: ['query2.finance.yahoo.com'] };
+const YAHOO_DOWN = { failingHosts: ['query2.finance.yahoo.com', 'query1.finance.yahoo.com'] };
 
 // ------------------------------------------------------------------------------------------ M1
 describe('M1 a failed split-history lookup never poisons the cache', () => {
@@ -303,8 +303,7 @@ describe('M5 renamed tickers resolve transparently (reviewer renames.mts)', () =
     ['EMBR3.SA', 'BVMF:EMBJ3'],
     ['CCRO3.SA', 'BVMF:MOTV3'],
     ['BVMF:NTCO3', 'BVMF:NATU3'],
-    ['BRFS3.SA', 'BVMF:MBRF3'],
-    ['CPLE6.SA', 'BVMF:CPLE3'],
+    ['MRFG3.SA', 'BVMF:MBRF3'],
   ])('%s -> %s', (old, id) => {
     const { service } = createTestService();
     const r = service.resolve(old);

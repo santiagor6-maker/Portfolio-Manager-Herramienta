@@ -126,6 +126,8 @@ export interface Analysis {
   suggestions: Suggestion[];
   reviewActions: CorporateAction[];
   pendingCloses: PendingClose[];
+  /** Engine diagnostics from replaying the ledger (negative cash, oversells, implicit FX...). */
+  diagnostics: core.Diagnostic[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
   issues: { errors: ValidationIssue[]; warnings: ValidationIssue[] };
@@ -232,6 +234,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     suggestions: [],
     reviewActions: [],
     pendingCloses: [],
+    diagnostics: [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
@@ -329,6 +332,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     out.suggestions = sug.suggestions;
     out.reviewActions = sug.review;
   }
+  out.diagnostics = attempt('ledgerDiagnostics', () => core.ledgerDiagnostics(E)) ?? [];
   out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
 
   return finish(out, t0);

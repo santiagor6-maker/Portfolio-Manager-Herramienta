@@ -62,14 +62,25 @@ export type MarketCorporateAction = CorporateAction & {
 };
 
 export interface RenameInfo {
+  /**
+   * 'rename': same company/security under a new ticker (history continues, 1:1).
+   * 'merger' / 'conversion': the old security ceased to exist and holders received `ratio` new
+   * shares (+ `cashPerShare`). The new ticker's history is NOT the old company's history.
+   */
+  kind: 'rename' | 'merger' | 'conversion';
   /** Old instrument id, e.g. XBOG:PFBCOLOM. */
   fromId: string;
   /** New instrument id, e.g. XBOG:PFCIBEST. */
   toId: string;
   /** New shares per old share. */
   ratio: number;
-  /** Date of the change when known. */
+  /** First day of trading under the new ticker / of holding the new shares. */
   effective?: ISODate;
+  /** Last trading day of the old ticker. */
+  lastTradingDay?: ISODate;
+  /** Cash paid per old share (Copel PNB conversion: R$0.7749). */
+  cashPerShare?: number;
+  cashPayDate?: ISODate;
   note?: string;
 }
 
@@ -129,6 +140,8 @@ export interface HistoryResponse {
   /** 'open' while the instrument's regular session is running: the last point is intraday. */
   marketState?: 'open' | 'closed';
   renamedFrom?: RenameInfo;
+  /** Set when the requested security no longer trades (merger / conversion): see actions MERGER. */
+  delisted?: RenameInfo;
   /** Diagnostic notes, e.g. 'currency GBp normalized to GBP'. */
   notes?: string[];
 }
@@ -175,6 +188,10 @@ export interface IndexResponse {
   info: IndexInfo;
   /** Last observation date available from the source. */
   lastObservation?: ISODate;
+  /** True when every source failed and cached observations are served. */
+  stale?: boolean;
+  /** Sources that failed before the answer. */
+  fallbacks?: { source: string; error: string }[];
   notes?: string[];
 }
 

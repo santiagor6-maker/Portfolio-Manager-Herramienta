@@ -6,10 +6,13 @@ export interface DividendEvent {
   date: ISODate;
   amount: number;
   payDate?: ISODate;
-  /** 'JCP' (juros sobre capital próprio) or 'ORDINARY' when the provider says so. */
-  kind?: 'JCP' | 'ORDINARY';
+  /** 'JCP' (juros sobre capital próprio), 'ORDINARY', or 'COUPON' (bond interest, e.g. Tesouro NTN-B/NTN-F). */
+  kind?: 'JCP' | 'ORDINARY' | 'COUPON';
   /** Set when the amount is NOT in the instrument currency (e.g. VUSA.L pays USD, quotes GBP). */
   currency?: CurrencyCode;
+  /** Estimated or unknown amount: confirm before booking. */
+  reviewRequired?: boolean;
+  note?: string;
 }
 
 export interface SplitEvent {
@@ -43,6 +46,8 @@ export interface ProviderHistory {
   lastTradeDate?: ISODate;
   /** Regular session of the latest trading day (epoch seconds), for provisional detection. */
   session?: { start: number; end: number };
+  /** Dates whose bar had no close and could not be completed (holidays or not-yet-final days). */
+  missingCloseDates?: ISODate[];
   /** Reasons the data is incomplete; degraded data is never cached long. */
   degraded?: string[];
   source: ProviderId;

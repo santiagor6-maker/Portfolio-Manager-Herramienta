@@ -15,21 +15,26 @@
 import type { IndexId, IndexPoint, IndexSeries, ISODate } from '@pm/core';
 import { HOUR, MINUTE, TieredCache, TTL } from './cache';
 import { addDays, endOfMonth, startOfMonth, todayISO } from './dates';
-import { MarketDataError } from './errors';
+import { MarketDataError, errorMessage } from './errors';
 import type { HttpClient } from './http';
 import { BanrepSdmx } from './providers/banrep-sdmx';
 import { fetchSgs } from './providers/bcb';
+import { mapHttpError } from './providers/common';
 import { parseCsv } from './providers/ecb';
 import { sliceRange } from './series';
 import type { IndexInfo, IndexResponse } from './types';
 
 type Shape = Omit<IndexSeries, 'points' | 'source' | 'id'>;
 
+type Loader = (ctx: IndexContext, from: ISODate, to: ISODate) => Promise<IndexPoint[]>;
+
 interface IndexDef {
   info: Omit<IndexInfo, 'id'>;
   shape: Shape;
   source: string;
-  load: (ctx: IndexContext, from: ISODate, to: ISODate) => Promise<IndexPoint[]>;
+  load: Loader;
+  /** Second source tried when the first fails (e.g. IBGE SIDRA for the IPCA). */
+  fallback?: { source: string; load: Loader };
 }
 
 interface IndexContext {
@@ -38,6 +43,24 @@ interface IndexContext {
   sgsBaseUrl?: string;
   fredBaseUrl?: string;
   ecbBaseUrl?: string;
+  sidraBaseUrl?: string;
+}
+
+/**
+ * IBGE SIDRA (second source for the IPCA): table 1737, variable 63 = IPCA monthly % change.
+ *   GET https://apisidra.ibge.gov.br/values/t/1737/n1/all/v/63/p/202401-202503
+ *   -> [ {header row: "V":"Valor","D3C":"Mês (Código)"...}, {"V":"0.42","D3C":"202401",...}, ... ]
+ * Values '...' / '-' mean not available. Not reachable from the build container (fixture).
+ */
+export async function fetchSidraIpca(ctx: IndexContext, from: ISODate, to: ISODate): Promise<IndexPoint[]> {
+  const p = `${from.slice(0, 4)}${from.slice(5, 7)}-${to.slice(0, 4)}${to.slice(5, 7)}`;
+  const rows = await ctx.http.getJson<Record<string, string>[]>(`${ctx.sidraBaseUrl ?? 'https://apisidra.ibge.gov.br/values'}/t/1737/n1/all/v/63/p/${p}`);
+  if (!Array.isArray(rows)) throw new MarketDataError('UPSTREAM_ERROR', 'SIDRA: unexpected response');
+  return rows
+    .slice(1)
+    .map((r) => ({ code: String(r.D3C ?? ''), v: Number(String(r.V ?? '').replace(',', '.')) }))
+    .filter((r) => /^\d{6}$/.test(r.code) && Number.isFinite(r.v))
+    .map((r) => ({ date: `${r.code.slice(0, 4)}-${r.code.slice(4, 6)}-01`, value: r.v }));
 }
 
 const sgs = (code: number) => async (ctx: IndexContext, from: ISODate, to: ISODate) =>
@@ -96,6 +119,7 @@ export const INDEX_DEFS: Readonly<Record<string, IndexDef>> = {
     shape: { kind: 'periodRate', period: 'month', unit: 'percent', currency: 'BRL' },
     source: 'bcb-sgs',
     load: sgs(433),
+    fallback: { source: 'ibge-sidra', load: fetchSidraIpca },
   },
   IGPM: {
     info: { name: 'IGP-M', country: 'BR', description: 'variação mensal %', sourceDetail: 'BCB SGS 189 (FGV)', frequency: 'monthly' },
@@ -223,9 +247,21 @@ export class IndexService {
       sgsBaseUrl?: string;
       fredBaseUrl?: string;
       ecbBaseUrl?: string;
+      sidraBaseUrl?: string;
     },
   ) {
-    this.ctx = { http: opts.http, sdmx: opts.sdmx, sgsBaseUrl: opts.sgsBaseUrl, fredBaseUrl: opts.fredBaseUrl, ecbBaseUrl: opts.ecbBaseUrl };
+    this.ctx = { http: opts.http, sdmx: opts.sdmx, sgsBaseUrl: opts.sgsBaseUrl, fredBaseUrl: opts.fredBaseUrl, ecbBaseUrl: opts.ecbBaseUrl, sidraBaseUrl: opts.sidraBaseUrl };
+  }
+
+  /** Run a loader mapping HTTP failures to MarketDataError codes (never a 500 INTERNAL). */
+  private async run(source: string, load: Loader, from: ISODate, to: ISODate): Promise<IndexPoint[]> {
+    try {
+      const pts = await load(this.ctx, from, to);
+      if (!pts.length) throw new MarketDataError('NOT_FOUND', `${source}: no observations in ${from}..${to}`);
+      return pts;
+    } catch (e) {
+      return mapHttpError(source, e);
+    }
   }
 
   list(): IndexInfo[] {
@@ -241,15 +277,46 @@ export class IndexService {
     // ending within the last two months stay mutable.
     const twoMonthsAgo = startOfMonth(addDays(startOfMonth(addDays(startOfMonth(today), -1)), -1));
     const ttl = to < twoMonthsAgo ? TTL.IMMUTABLE : def.info.frequency === 'monthly' ? 6 * HOUR : 30 * MINUTE;
-    const { value: points } = await this.opts.cache.getOrLoad(`index:${id}:${from}:${to}`, ttl, async () => {
-      const pts = await def.load(this.ctx, from, to);
-      if (!pts.length) throw new MarketDataError('NOT_FOUND', `${id}: no observations in ${from}..${to}`);
-      return pts;
-    });
-    const series: IndexSeries = { id, ...def.shape, points, source: def.source };
+    const fallbacks: { source: string; error: string }[] = [];
     const notes: string[] = [];
+    let stale = false;
+    const lastKey = `index:last:${id}`;
+    let loaded: { points: IndexPoint[]; source: string };
+    try {
+      loaded = (
+        await this.opts.cache.getOrLoad(`index:${id}:${from}:${to}`, ttl, async () => {
+          try {
+            return { points: await this.run(def.source, def.load, from, to), source: def.source };
+          } catch (e) {
+            if (!def.fallback) throw e;
+            fallbacks.push({ source: def.source, error: errorMessage(e) });
+            return { points: await this.run(def.fallback.source, def.fallback.load, from, to), source: def.fallback.source };
+          }
+        })
+      ).value;
+      // Remember the widest series seen, to serve it (flagged) if every source fails later.
+      const prev = (await this.opts.cache.get<IndexPoint[]>(lastKey)) ?? [];
+      const merged = new Map([...prev, ...loaded.points].map((p) => [p.date, p]));
+      await this.opts.cache.set(lastKey, [...merged.values()].sort((a, b) => (a.date < b.date ? -1 : 1)), 30 * 24 * HOUR);
+    } catch (e) {
+      const last = sliceRange((await this.opts.cache.get<IndexPoint[]>(lastKey)) ?? [], from, to);
+      if (!last.length) throw e;
+      if (!fallbacks.length || fallbacks[fallbacks.length - 1]!.error !== errorMessage(e)) fallbacks.push({ source: def.fallback?.source ?? def.source, error: errorMessage(e) });
+      loaded = { points: last, source: `${def.source} (cache)` };
+      stale = true;
+      notes.push(`all sources failed; serving the last cached observations (last ${last[last.length - 1]!.date})`);
+    }
+    const points = loaded.points;
+    const series: IndexSeries = { id, ...def.shape, points, source: loaded.source };
     if (id === 'IPC_CO') notes.push('derivado de la UVR: la variación del mes m se conoce cuando BanRep publica la UVR del 15 de m+2');
     if (id === 'COLCAP_AVG') notes.push('promedio mensual del índice, no cierre de mes; para comparación mensual punto a punto use el benchmark COLCAP_TR (ICOLCAP con dividendos)');
-    return { series, info: { id, ...def.info }, lastObservation: points[points.length - 1]?.date, ...(notes.length ? { notes } : {}) };
+    return {
+      series,
+      info: { id, ...def.info },
+      lastObservation: points[points.length - 1]?.date,
+      ...(stale ? { stale } : {}),
+      ...(fallbacks.length ? { fallbacks } : {}),
+      ...(notes.length ? { notes } : {}),
+    };
   }
 }

@@ -4,7 +4,10 @@
  *   PORT (8787), HOST (127.0.0.1 — set 0.0.0.0 only behind a firewall/proxy),
  *   CORS_ORIGIN (comma-separated allowlist; default local web dev origins; '*' = any),
  *   API_TOKEN (optional bearer token), TRUST_PROXY=1 (use X-Forwarded-For for rate limiting),
- *   RATE_LIMIT_PER_MIN (default 120), CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
+ *   RATE_LIMIT_PER_MIN (default 120; a batch costs one token per item), ALLOWED_HOSTS (Host header
+ *   allowlist; default localhost/127.0.0.1/[::1] when HOST is loopback), ALLOW_LOCAL_ADMIN=1
+ *   (DELETE /api/cache without token from a direct loopback socket),
+ *   CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
  *   MD_CUSTOM_FEEDS_FILE (JSON array of user-defined feeds),
  *   provider keys: BRAPI_TOKEN, TWELVEDATA_API_KEY, FMP_API_KEY, EODHD_API_TOKEN,
  *   ALPHAVANTAGE_API_KEY (+ALPHAVANTAGE_PREMIUM=1), STOOQ_API_KEY, COINGECKO_API_KEY, SOCRATA_APP_TOKEN.
@@ -22,6 +25,12 @@ const hostname = env.HOST ?? '127.0.0.1';
 const cacheDir = resolve(env.CACHE_DIR ?? '.cache/market-data');
 const corsOrigin = env.CORS_ORIGIN ? env.CORS_ORIGIN.split(',').map((s) => s.trim()) : DEFAULT_CORS_ORIGINS;
 const perMin = Number(env.RATE_LIMIT_PER_MIN ?? 120);
+const loopbackHost = ['127.0.0.1', 'localhost', '::1'].includes(hostname);
+const allowedHosts = env.ALLOWED_HOSTS
+  ? env.ALLOWED_HOSTS.split(',').map((s) => s.trim())
+  : loopbackHost
+    ? ['localhost', '127.0.0.1', '[::1]']
+    : undefined;
 
 let customFeeds: CustomFeedInstrument[] = [];
 if (env.MD_CUSTOM_FEEDS_FILE) {
@@ -48,6 +57,8 @@ const app = createApp({
   apiToken: env.API_TOKEN || undefined,
   trustProxy: env.TRUST_PROXY === '1',
   rateLimit: perMin > 0 ? { capacity: perMin, refillPerSecond: perMin / 60 } : false,
+  allowedHosts,
+  allowLocalAdmin: env.ALLOW_LOCAL_ADMIN === '1',
 });
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {

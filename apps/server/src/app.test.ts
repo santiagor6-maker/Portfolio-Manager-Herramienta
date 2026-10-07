@@ -308,10 +308,12 @@ describe('round 2: server hardening and new routes', () => {
     expect(((await d.json()) as any).degraded).toBe(true);
   });
 
-  it('M16 DELETE /api/cache invalidates a symbol (loopback client)', async () => {
-    const { app } = setup();
-    await app.request('/api/history?symbol=PETR4.SA&from=2024-11-01&to=2025-02-28');
-    const r = await app.request('/api/cache?symbol=BVMF:PETR4', { method: 'DELETE' });
+  it('M16 DELETE /api/cache invalidates a symbol (with API token)', async () => {
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, apiToken: 't' });
+    const auth = { Authorization: 'Bearer t' };
+    await app.request('/api/history?symbol=PETR4.SA&from=2024-11-01&to=2025-02-28', { headers: auth });
+    const r = await app.request('/api/cache?symbol=BVMF:PETR4', { method: 'DELETE', headers: auth });
     expect(r.status).toBe(200);
     expect(((await r.json()) as any).removed).toBeGreaterThan(0);
   });
@@ -346,7 +348,8 @@ describe('M16 FileStore is bounded and supports prefix invalidation', () => {
 
 describe('client chunking over the server caps', () => {
   function counted(opts: { failNthBatch?: number } = {}) {
-    const { app } = setup();
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, rateLimit: { capacity: 1000, refillPerSecond: 10 } });
     const stats = { quote: 0, batch: 0, inFlight: 0, peak: 0 };
     const client = new MarketDataClient({
       baseUrl: 'http://test',
@@ -415,5 +418,66 @@ describe('client chunking over the server caps', () => {
     const { client, stats } = counted();
     await client.batch({ quotes: ['AAPL'] });
     expect(stats.batch).toBe(1);
+  });
+});
+
+describe('round 3 (review R2): server', () => {
+  const loopEnv = (addr: string) => ({ incoming: { socket: { remoteAddress: addr } } });
+
+  it('M21 DELETE /api/cache: no token -> 403 without socket, with forged XFF, or behind a proxy', async () => {
+    const { service } = createTestService();
+    const plain = createApp({ service, log: null });
+    expect((await plain.request('/api/cache?symbol=AAPL', { method: 'DELETE' })).status).toBe(403);
+    const admin = createApp({ service, log: null, allowLocalAdmin: true });
+    expect((await admin.request('/api/cache?symbol=AAPL', { method: 'DELETE' })).status).toBe(403); // no socket (serverless)
+    expect((await admin.request('/api/cache?symbol=AAPL', { method: 'DELETE' }, loopEnv('203.0.113.9'))).status).toBe(403);
+    expect((await admin.request('/api/cache?symbol=AAPL', { method: 'DELETE' }, loopEnv('127.0.0.1'))).status).toBe(200);
+    const proxied = createApp({ service, log: null, allowLocalAdmin: true, trustProxy: true });
+    const forged = await proxied.request('/api/cache?symbol=AAPL', { method: 'DELETE', headers: { 'X-Forwarded-For': '127.0.0.1' } }, loopEnv('127.0.0.1'));
+    expect(forged.status).toBe(403);
+  });
+
+  it('M21 rate-limit buckets: per socket / trusted proxy client, shared only when unknown', async () => {
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, trustProxy: true, rateLimit: { capacity: 1, refillPerSecond: 0.001 } });
+    const as = (ip: string) => app.request('/api/catalog', { headers: { 'X-Forwarded-For': ip } });
+    expect((await as('198.51.100.1')).status).toBe(200);
+    expect((await as('198.51.100.2')).status).toBe(200);
+    expect((await as('198.51.100.1')).status).toBe(429);
+  });
+
+  it('M27 health is never rate limited; a batch costs one token per item', async () => {
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, rateLimit: { capacity: 5, refillPerSecond: 0.001 } });
+    const batch = (n: number) =>
+      app.request('/api/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quotes: Array.from({ length: n }, () => 'AAPL') }) });
+    expect((await batch(5)).status).toBe(200); // 5 tokens
+    expect((await batch(1)).status).toBe(429);
+    for (let i = 0; i < 5; i++) expect((await app.request('/api/health')).status).toBe(200);
+  });
+
+  it('M27 Host allowlist blocks DNS rebinding', async () => {
+    const { service } = createTestService();
+    const app = createApp({ service, log: null, allowedHosts: ['localhost', '127.0.0.1'] });
+    expect((await app.request('http://localhost:8787/api/catalog')).status).toBe(200);
+    expect((await app.request('http://127.0.0.1:8787/api/catalog')).status).toBe(200);
+    expect((await app.request('http://rebind.attacker.example/api/catalog')).status).toBe(403);
+  });
+
+  it('M23 routes: merged ticker quote is a per-item DELISTED error; history is the delisted security', async () => {
+    const { app } = setup();
+    const q = await getJson(app, '/api/quote?ids=BRFS3,MRFG3.SA');
+    expect(q.body.quotes[0]).toMatchObject({ ok: false, error: { code: 'DELISTED', details: { suggest: 'BVMF:MBRF3' } } });
+    const h = await getJson(app, '/api/history?symbol=BRFS3&from=2025-01-01&to=2025-12-31');
+    expect(h.status).toBe(200);
+    expect(h.body).toMatchObject({ instrument: { id: 'BVMF:BRFS3' }, delisted: { kind: 'merger', ratio: 0.8521 }, series: { points: [] } });
+  });
+
+  it('M25 index provider failures are 502, not 500', async () => {
+    const { service } = createTestService({ blockedHosts: ['api.bcb.gov.br'] });
+    const app = createApp({ service, log: null });
+    const r = await getJson(app, '/api/index?id=CDI&from=2025-01-02&to=2025-01-10');
+    expect(r.status).toBe(502);
+    expect(r.body.error.code).toBe('UPSTREAM_ERROR');
   });
 });

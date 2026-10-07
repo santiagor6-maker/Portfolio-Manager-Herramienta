@@ -48,6 +48,16 @@ export interface AppOptions {
   trustProxy?: boolean;
   /** Max request body in bytes (default 64 KiB), enforced on the streamed bytes. */
   maxBodyBytes?: number;
+  /**
+   * Accepted `Host` header names (DNS-rebinding protection), e.g. ['localhost', '127.0.0.1'].
+   * Undefined = no check (serverless / reverse-proxy deployments set their own).
+   */
+  allowedHosts?: string[];
+  /**
+   * Allow DELETE /api/cache without API_TOKEN from a REAL loopback socket (never behind a proxy,
+   * never when the socket is unknown). Default false.
+   */
+  allowLocalAdmin?: boolean;
   /** Request log sink (default console.log). Pass null to silence. */
   log?: ((line: string) => void) | null;
   now?: () => number;
@@ -106,13 +116,27 @@ export class RateLimiter {
   }
 }
 
+/** Remote address of the TCP socket (Node server), or undefined (serverless, app.request). */
+function socketAddress(c: Context): string | undefined {
+  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
+  return env?.incoming?.socket?.remoteAddress;
+}
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/** Rate-limit key: proxy-reported client (only if trusted), else the socket, else a shared bucket. */
 function clientId(c: Context, trustProxy: boolean): string {
   if (trustProxy) {
-    const xff = c.req.header('x-forwarded-for');
-    if (xff) return xff.split(',')[0]!.trim();
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip') || c.req.header('cf-connecting-ip');
+    if (ip) return ip;
   }
-  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
-  return env?.incoming?.socket?.remoteAddress ?? 'local';
+  return socketAddress(c) ?? 'anonymous';
+}
+
+function hostName(host: string | undefined): string {
+  if (!host) return '';
+  if (host.startsWith('[')) return host.slice(0, host.indexOf(']') + 1).toLowerCase();
+  return host.split(':')[0]!.toLowerCase();
 }
 
 export function createApp(opts: AppOptions = {}): Hono {
@@ -123,6 +147,8 @@ export function createApp(opts: AppOptions = {}): Hono {
   const allowed = new Set(Array.isArray(origins) ? origins : [origins]);
   const limiter = opts.rateLimit === false ? undefined : new RateLimiter(opts.rateLimit ?? { capacity: 120, refillPerSecond: 2 }, opts.now);
   const maxBody = opts.maxBodyBytes ?? 64 * 1024;
+  const allowedHosts = opts.allowedHosts ? new Set(opts.allowedHosts.map((h) => h.toLowerCase())) : undefined;
+  let warnedShared = false;
   const app = new Hono();
 
   // Timing + request log (outermost, so it also logs rejected requests).
@@ -144,6 +170,17 @@ export function createApp(opts: AppOptions = {}): Hono {
     }),
   );
 
+  // DNS-rebinding protection: a same-origin GET carries no Origin, but it carries the attacker's Host.
+  if (allowedHosts) {
+    app.use('*', async (c, next) => {
+      // The Node adapter builds c.req.url from the Host header; fetch-style requests carry it in the URL.
+      if (!allowedHosts.has(hostName(c.req.header('host') ?? new URL(c.req.url).host))) {
+        return c.json({ error: { code: 'FORBIDDEN_HOST', message: 'Host not allowed (set ALLOWED_HOSTS)' } }, 403);
+      }
+      return next();
+    });
+  }
+
   // Server-side Origin check: CORS only hides responses, it does not stop a foreign page from
   // making the server call providers on its behalf.
   app.use('/api/*', async (c, next) => {
@@ -160,9 +197,13 @@ export function createApp(opts: AppOptions = {}): Hono {
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : c.req.header('x-api-key');
       if (token !== opts.apiToken) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API token' } }, 401);
     }
-    if (limiter && c.req.method !== 'OPTIONS') {
-      const cost = c.req.path === '/api/batch' ? 10 : 1;
-      const r = limiter.take(clientId(c, !!opts.trustProxy), cost);
+    if (limiter && c.req.method !== 'OPTIONS' && c.req.path !== '/api/health') {
+      const id = clientId(c, !!opts.trustProxy);
+      if (id === 'anonymous' && !warnedShared) {
+        warnedShared = true;
+        log?.('WARNING: no client address (serverless?): all clients share one rate-limit bucket; set TRUST_PROXY=1 behind a trusted proxy');
+      }
+      const r = limiter.take(id, 1);
       if (!r.ok) {
         c.header('Retry-After', String(r.retryAfterS));
         return c.json({ error: { code: 'RATE_LIMITED', message: `Too many requests; retry in ${r.retryAfterS}s` } }, 429);
@@ -289,15 +330,30 @@ export function createApp(opts: AppOptions = {}): Hono {
         bad('Body must be JSON: { "histories": [{symbol, from, to?, interval?}], "fx": [{base, quote, from, ...}], "quotes": ["id"], "indices": [{id, from, to?}] }');
       }
       if (!body || typeof body !== 'object' || Array.isArray(body)) bad('Body must be a JSON object');
+      // Charge one token per item (the request itself already paid one).
+      if (limiter) {
+        const b = body as Record<string, unknown>;
+        const items = ['histories', 'fx', 'quotes', 'indices'].reduce((n, k) => n + (Array.isArray(b[k]) ? (b[k] as unknown[]).length : 0), 0);
+        const r = items > 1 ? limiter.take(clientId(c, !!opts.trustProxy), items - 1) : { ok: true, retryAfterS: 0 };
+        if (!r.ok) {
+          c.header('Retry-After', String(r.retryAfterS));
+          return c.json({ error: { code: 'RATE_LIMITED', message: `Batch of ${items} items exceeds your rate limit; retry in ${r.retryAfterS}s` } }, 429);
+        }
+      }
       return c.json(await service.batch(body as BatchRequest));
     },
   );
 
   /** Invalidate cached data for a symbol (fix a provider correction). Token or loopback only. */
   app.delete('/api/cache', async (c) => {
-    const id = clientId(c, !!opts.trustProxy);
-    if (!opts.apiToken && !['local', '127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(id)) {
-      return c.json({ error: { code: 'FORBIDDEN', message: 'Cache invalidation requires API_TOKEN or a loopback client' } }, 403);
+    // With API_TOKEN the auth middleware already checked it. Without it, only an explicit opt-in
+    // for a REAL loopback socket, never behind a proxy (X-Forwarded-For can be forged and a local
+    // reverse proxy makes every client look like 127.0.0.1) and never without a socket.
+    if (!opts.apiToken) {
+      const addr = socketAddress(c);
+      if (!opts.allowLocalAdmin || opts.trustProxy || !addr || !LOOPBACK.has(addr)) {
+        return c.json({ error: { code: 'FORBIDDEN', message: 'Cache invalidation requires API_TOKEN (or ALLOW_LOCAL_ADMIN=1 on a direct loopback connection)' } }, 403);
+      }
     }
     const symbol = required(c, 'symbol', 'instrument id or provider symbol');
     return c.json(await service.invalidate(symbol));

@@ -350,7 +350,8 @@ function WarningsCard() {
   const pending = a?.pendingCloses ?? [];
   const pendingIds = new Set(pending.map((p) => p.instrumentId));
   const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
-  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length;
+  const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error');
+  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0);
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -368,6 +369,17 @@ function WarningsCard() {
               </span>
             </li>
           ))}
+          {diagErrors.length > 0 && (
+            <li className="flex items-start gap-2">
+              <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('diag.dashboard', { count: diagErrors.length })}{' '}
+                <Link className="text-accent hover:underline" to="/movimientos">
+                  {t('diag.review')}
+                </Link>
+              </span>
+            </li>
+          )}
           {pending.map((p) => (
             <li key={p.instrumentId} className="flex items-start gap-2" data-testid="pending-close-warning">
               <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />

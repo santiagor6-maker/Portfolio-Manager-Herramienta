@@ -29,7 +29,7 @@ import { AlphaVantageProvider, EodhdProvider, FmpProvider, TwelveDataProvider } 
 import { StooqProvider } from './providers/stooq';
 import { SuperfinProvider } from './providers/superfin';
 import { TesouroProvider } from './providers/tesouro';
-import type { DividendEvent, FxProvider, PriceProvider, PriceTarget, ProviderHistory } from './providers/types';
+import type { DividendEvent, FxProvider, PriceProvider, PriceTarget, ProviderHistory, SplitEvent } from './providers/types';
 import { splitFactorAfter, YahooFxProvider, YahooProvider } from './providers/yahoo';
 import { toMonthEnd } from './series';
 import {
@@ -113,14 +113,14 @@ export interface MarketDataServiceOptions {
   quoteTtlMs?: number;
   limits?: { maxBatchItems?: number; maxRangeDays?: number; maxBatchPoints?: number };
   /** Base URL overrides (tests, mirrors). */
-  urls?: { tesouro?: string; sgs?: string; fred?: string; ecb?: string; banrepSdmx?: string; superfin?: string };
+  urls?: { tesouro?: string; sgs?: string; fred?: string; ecb?: string; banrepSdmx?: string; superfin?: string; sidra?: string };
 }
 
 export const BATCH_LIMIT = 100;
 export const BATCH_POINTS_LIMIT = 100_000;
 
 interface Resolved {
-  kind: 'market' | 'tesouro' | 'superfin' | 'custom';
+  kind: 'market' | 'tesouro' | 'superfin' | 'custom' | 'delisted';
   target: PriceTarget;
   instrument?: Instrument;
   alias?: TickerAlias;
@@ -181,7 +181,14 @@ export class MarketDataService {
     const sdmx = new BanrepSdmx({ http, cache: this.cache, baseUrl: opts.urls?.banrepSdmx });
     const coingecko = new CoinGeckoProvider({ http, apiKey: keys.coingecko, now: this.now });
     this.brapi = new BrapiProvider({ http, token: keys.brapi, now: this.now });
-    this.tesouro = new TesouroProvider({ http, cache: this.cache, url: opts.urls?.tesouro, now: this.now });
+    this.tesouro = new TesouroProvider({
+      http,
+      cache: this.cache,
+      url: opts.urls?.tesouro,
+      now: this.now,
+      // NTN-B coupons need the VNA, built from the IPCA since July 2000 (resolved lazily).
+      ipca: async (from, to) => (await this.indices.get('IPCA', from, to)).series.points,
+    });
     this.superfin = new SuperfinProvider({ http, cache: this.cache, baseUrl: opts.urls?.superfin, appToken: keys.socrata, now: this.now });
     this.custom = new CustomFeedProvider({ http, feeds: opts.customFeeds ?? [] });
 
@@ -211,6 +218,7 @@ export class MarketDataService {
       sgsBaseUrl: opts.urls?.sgs,
       fredBaseUrl: opts.urls?.fred,
       ecbBaseUrl: opts.urls?.ecb,
+      sidraBaseUrl: opts.urls?.sidra,
     });
     this.quoteTtlMs = opts.quoteTtlMs ?? TTL.QUOTE;
     this.maxBatch = opts.limits?.maxBatchItems ?? BATCH_LIMIT;
@@ -241,6 +249,12 @@ export class MarketDataService {
     if (!key) throw new MarketDataError('BAD_REQUEST', 'Empty symbol');
     if (key.length > 64) throw new MarketDataError('BAD_REQUEST', 'Symbol too long (max 64 chars)');
     const alias = findAlias(key);
+    if (alias && alias.kind !== 'rename') {
+      // Merger / conversion: the old security is a different one. Never resolve it to the
+      // acquirer's prices (review R2, M23).
+      const t = this.target(alias.fromYahoo);
+      return { kind: 'delisted', alias, target: { ...t, instrumentId: alias.fromId } };
+    }
     if (alias) key = alias.toId;
 
     const feed = this.custom.feedFor(key);
@@ -335,7 +349,16 @@ export class MarketDataService {
     const alias = findAlias(q);
     if (alias) {
       const inst = this.catalog.get(alias.toId);
-      if (inst) push({ ...inst, origin: 'alias', renamedFrom: renameInfo(alias) });
+      if (inst) {
+        push({
+          ...inst,
+          origin: 'alias',
+          renamedFrom: renameInfo(alias),
+          ...(alias.kind !== 'rename'
+            ? { note: `${alias.fromId} ya no cotiza: cada acción se convirtió en ${alias.ratio} ${alias.toId}${alias.cashPerShare ? ` + ${alias.cashPerShare} en efectivo` : ''}. Su historia no es la de ${alias.toId}.` }
+            : {}),
+        });
+      }
     }
     const local = this.catalog.search(q, limit);
     for (const r of local) push(r);
@@ -395,6 +418,14 @@ export class MarketDataService {
 
   async quote(input: string): Promise<Quote> {
     const r = this.resolve(input);
+    if (r.kind === 'delisted') {
+      const a = r.alias!;
+      throw new MarketDataError(
+        'DELISTED',
+        `${a.fromId} no longer trades: ${a.note}. Holders received ${a.ratio} ${a.toId}${a.cashPerShare ? ` + ${a.cashPerShare} cash` : ''} per share${a.effective ? ` on ${a.effective}` : ''}.`,
+        { delisted: renameInfo(a), suggest: a.toId },
+      );
+    }
     const renamedFrom = r.alias ? renameInfo(r.alias) : undefined;
     if (r.kind === 'market') {
       try {
@@ -480,8 +511,7 @@ export class MarketDataService {
       const h = await this.yahoo.dailyHistory(symbol, gStart, gEnd);
       for (let yy = y; yy <= yb; yy++) {
         const chunk = sliceHistory(h, `${yy}-01-01`, `${yy}-12-31`);
-        const closedYear = `${yy}-12-31` < today;
-        const ttl = h.degraded ? 5 * MINUTE : closedYear ? TTL.IMMUTABLE : historyTtlMs(gEnd, today);
+        const ttl = h.degraded ? 5 * MINUTE : chunkTtl(chunk, yy, today, gEnd);
         await this.cache.set(key(yy), chunk, ttl, { persist: !h.degraded });
         chunks.set(yy, chunk);
       }
@@ -510,10 +540,24 @@ export class MarketDataService {
     for (const p of this.fallbackProviders.filter((x) => x.supports(r.target))) {
       try {
         const ttl = Math.min(HOUR, historyTtlMs(to, this.today()));
-        const { value: h } = await this.cache.getOrLoad(`hist:alt:${p.id}:${r.target.instrumentId}:${from}:${to}`, ttl, () => p.dailyHistory(r.target, from, to), {
+        const { value: alt } = await this.cache.getOrLoad(`hist:alt:${p.id}:${r.target.instrumentId}:${from}:${to}`, ttl, () => p.dailyHistory(r.target, from, to), {
           persist: false,
         });
-        return { h: { ...h, notes: [...h.notes, `served by ${p.id} (fallback after: ${fallbacks.map((f) => f.source).join(', ')})`] }, fallbacks };
+        let h = { ...alt, notes: [...alt.notes, `served by ${p.id} (fallback after: ${fallbacks.map((f) => f.source).join(', ')})`] };
+        // Split-adjusted backups (stooq, FMP) become as-traded when the split history is cached.
+        if (h.basis === 'split-adjusted' && r.target.yahoo) {
+          const splits = await this.cache.get<SplitEvent[]>(`yahoo:splits:${r.target.yahoo}`);
+          if (splits) {
+            h = {
+              ...h,
+              basis: 'as-traded',
+              points: h.points.map((pt) => ({ date: pt.date, close: roundTo(pt.close * splitFactorAfter(splits, pt.date), 8) })),
+              splits: splits.filter((s) => s.date >= from && s.date <= to),
+              notes: [...h.notes.filter((n) => !/split-adjusted/.test(n)), `${p.id} closes un-adjusted with the cached split history`],
+            };
+          }
+        }
+        return { h, fallbacks };
       } catch (e) {
         fallbacks.push({ source: String(p.id), error: errorMessage(e) });
       }
@@ -575,6 +619,7 @@ export class MarketDataService {
     if (typeof req.symbol !== 'string') throw new MarketDataError('BAD_REQUEST', 'Missing "symbol"');
     const r = this.resolve(req.symbol);
     const asOf = this.now().toISOString();
+    if (r.kind === 'delisted') return this.delistedHistory(req, r, from, to, interval, asOf);
     const { h: raw, fallbacks } = r.kind === 'market' ? await this.marketDaily(r, from, to) : await this.otherDaily(r, from, to);
     const inst = this.instrumentFor(r, raw);
     const stitched = await this.stitchRenames(r, raw, from, inst.id);
@@ -621,7 +666,10 @@ export class MarketDataService {
       if (intradayLast || currentMonth) points = [...points.slice(0, -1), { ...last, provisional: true }];
     }
     const lastTradeDate = h.lastTradeDate;
-    const stale = !!lastTradeDate && daysBetween(lastTradeDate, today) > 7;
+    // Yahoo's lastTradeDate is global (chart meta); other providers only know the last date of the
+    // requested range, so a closed historical range must not be read as "suspended" (R2, M24).
+    const globalLastTrade = h.source === 'yahoo' || to >= addDays(today, -7);
+    const stale = globalLastTrade && !!lastTradeDate && daysBetween(lastTradeDate, today) > 7;
     if (stale) notes.push(`no trades since ${lastTradeDate}: instrument suspended, delisted or illiquid`);
     if (h.basis === 'split-adjusted' && adjust === 'none') notes.push('closes from a split-adjusted source: not guaranteed as traded');
 
@@ -646,6 +694,82 @@ export class MarketDataService {
       ...(h.session ? { marketState: open ? ('open' as const) : ('closed' as const) } : {}),
       ...(renamedFrom ? { renamedFrom } : {}),
       ...(notes.length ? { notes: [...new Set(notes)] } : {}),
+    };
+  }
+
+  /**
+   * History of a security that ceased to exist in a merger / conversion: only its OWN prices up to
+   * its last trading day (when a provider still has them), plus the MERGER action and the cash
+   * component. The acquirer's history is never served in its place.
+   */
+  private async delistedHistory(req: HistoryRequest, r: Resolved, from: ISODate, to: ISODate, interval: Interval, asOf: string): Promise<HistoryResponse> {
+    const a = r.alias!;
+    const cutoff = a.lastTradingDay ?? (a.effective ? addDays(a.effective, -1) : to);
+    const end = to < cutoff ? to : cutoff;
+    const notes = [`${a.fromId} deixou de negociar: ${a.note}`];
+    let h: ProviderHistory | undefined;
+    let fallbacks: MarketResult['fallbacks'] = [];
+    if (from <= end) {
+      try {
+        const m = await this.marketDaily({ ...r, kind: 'market' }, from, end);
+        h = m.h;
+        fallbacks = m.fallbacks;
+      } catch (e) {
+        notes.push(`no provider still has prices for ${a.fromYahoo} (${errorMessage(e).slice(0, 80)}); the history of ${a.toId} is a different security and is not used`);
+      }
+    }
+    const market = marketByMic(r.target.exchange);
+    const instrument: Instrument = {
+      id: a.fromId,
+      symbol: r.target.symbol,
+      name: `${r.target.symbol} (deslistada → ${a.toId})`,
+      exchange: r.target.exchange,
+      currency: h?.currency ?? market?.currency ?? 'BRL',
+      country: market?.country ?? '',
+      assetClass: 'equity',
+      pricing: 'auto',
+    };
+    const actions: MarketCorporateAction[] = [];
+    if (h) {
+      actions.push(...h.dividends.map((d) => dividendAction(a.fromId, d, h!.source)));
+      actions.push(...h.splits.map((s) => classifySplit(a.fromYahoo, { date: s.date, numerator: s.numerator ?? Math.round(s.ratio * 1000), denominator: s.denominator ?? 1000 }, a.fromId)));
+    }
+    if (a.effective && a.effective >= from && a.effective <= to) {
+      actions.push({ instrumentId: a.fromId, date: a.effective, type: 'SPLIT', subtype: 'MERGER', ratio: a.ratio, targetInstrumentId: a.toId, source: 'catalog', note: a.note });
+      if (a.cashPerShare) {
+        actions.push({
+          instrumentId: a.fromId,
+          date: a.effective,
+          type: 'DIVIDEND',
+          subtype: 'EXTRAORDINARY',
+          amountPerShare: a.cashPerShare,
+          exDate: a.effective,
+          ...(a.cashPayDate ? { payDate: a.cashPayDate } : {}),
+          source: 'catalog',
+          note: `cash component of the ${a.kind} (${a.fromId} -> ${a.toId})`,
+        });
+      }
+    }
+    actions.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+    const points = interval === '1mo' ? toMonthEnd(h?.points ?? []) : (h?.points ?? []);
+    return {
+      requested: req.symbol,
+      providerSymbol: a.fromYahoo,
+      instrument,
+      interval,
+      series: {
+        instrumentId: a.fromId,
+        currency: instrument.currency,
+        points,
+        source: h?.source ?? 'none',
+        ...(a.lastTradingDay ? { lastTradeDate: a.lastTradingDay } : {}),
+        stale: true,
+      },
+      actions,
+      ...(fallbacks.length ? { fallbacks } : {}),
+      asOf,
+      delisted: renameInfo(a),
+      notes: [...new Set([...notes, ...(h?.notes ?? [])])],
     };
   }
 
@@ -777,7 +901,28 @@ function roundTo(x: number, d: number): number {
 
 export function sliceHistory(h: ProviderHistory, from: ISODate, to: ISODate): ProviderHistory {
   const inR = (d: ISODate) => d >= from && d <= to;
-  return { ...h, points: h.points.filter((p) => inR(p.date)), dividends: h.dividends.filter((d) => inR(d.date)), splits: h.splits.filter((s) => inR(s.date)) };
+  const missing = h.missingCloseDates?.filter(inR);
+  return {
+    ...h,
+    points: h.points.filter((p) => inR(p.date)),
+    dividends: h.dividends.filter((d) => inR(d.date)),
+    splits: h.splits.filter((s) => inR(s.date)),
+    ...(missing?.length ? { missingCloseDates: missing } : { missingCloseDates: undefined }),
+  };
+}
+
+/**
+ * TTL of a per-year chunk (review R2, M20). A closed year becomes immutable only when its data is
+ * settled: at least 3 days into the next year and no trailing bar without close (the last session
+ * of the year could still be incomplete at Yahoo, which would freeze a wrong 31-Dec value). If the
+ * year ends with null-close bars (possibly holidays), it is frozen only from Jan 15 on.
+ */
+export function chunkTtl(chunk: ProviderHistory, year: number, today: ISODate, fetchedTo: ISODate): number {
+  if (`${year}-12-31` >= today) return historyTtlMs(fetchedTo, today);
+  const lastPoint = chunk.points[chunk.points.length - 1]?.date ?? '';
+  const trailingNull = (chunk.missingCloseDates ?? []).some((d) => d > lastPoint);
+  const settledFrom = trailingNull ? `${year + 1}-01-15` : `${year + 1}-01-04`;
+  return today >= settledFrom ? TTL.IMMUTABLE : 12 * HOUR;
 }
 
 function dividendAction(instrumentId: string, d: DividendEvent, source: string): MarketCorporateAction {
@@ -785,11 +930,13 @@ function dividendAction(instrumentId: string, d: DividendEvent, source: string):
     instrumentId,
     date: d.date,
     type: 'DIVIDEND',
-    amountPerShare: d.amount,
+    ...(d.amount > 0 ? { amountPerShare: d.amount } : {}),
     exDate: d.date,
     ...(d.payDate ? { payDate: d.payDate } : {}),
     ...(d.kind ? { subtype: d.kind } : {}),
     ...(d.currency ? { currency: d.currency } : {}),
+    ...(d.reviewRequired ? { reviewRequired: true } : {}),
+    ...(d.note ? { note: d.note } : {}),
     source,
   };
 }

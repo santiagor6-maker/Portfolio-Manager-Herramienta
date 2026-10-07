@@ -7,6 +7,7 @@ import type { TransactionType } from '@pm/core';
 import { Card, EmptyState, Modal, PageHeader } from '../components/ui';
 import { TransactionForm } from '../components/TransactionForm';
 import { SuggestionsInbox } from '../components/SuggestionsInbox';
+import { DiagnosticsPanel } from '../components/DiagnosticsPanel';
 import { useInstrumentMap, usePortfolios, useScopedTransactions } from '../hooks/useData';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
@@ -128,6 +129,16 @@ export default function TransactionsPage() {
       />
 
       <SuggestionsInbox />
+      <DiagnosticsPanel
+        onOpen={(id) => {
+          const x = (txs ?? []).find((r) => r.id === id);
+          if (x) {
+            setDuplicating(undefined);
+            setEditing(x);
+            setFormOpen(true);
+          }
+        }}
+      />
 
       <Card bodyClassName="!p-0">
         <div className="flex flex-wrap items-end gap-2 p-3 border-b border-line">

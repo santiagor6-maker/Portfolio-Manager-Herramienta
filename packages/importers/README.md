@@ -117,7 +117,7 @@ es el importador genérico con valores por defecto colombianos:
   Comisión, IVA, Retención en la fuente, GMF y Valor neto.
 - Mercado `XBOG`, moneda `COP`, fechas `DD/MM/AAAA` y números `1.234,56`.
 
-Si tu extracto solo está en PDF, copia la tabla a Excel o usa la plantilla propia.
+Si tu extracto está en PDF, súbelo directamente: `extracto-co-pdf` reconstruye la tabla por posición del texto (confianza baja). Los certificados de CDT en PDF los lee `cdt-pdf`.
 
 ## Cómo exportar desde cada corredor
 
@@ -207,31 +207,36 @@ npx tsc -p packages/importers --noEmit
 
 Los archivos de ejemplo están en `test/fixtures/` y son sintéticos, pero tienen la estructura real:
 - un CSV por formato, incluidos archivos Latin-1 con `;` y decimales con coma;
-- archivos XLSX de B3 y eToro.
+- archivos XLSX de B3 (Negociação, Movimentação y Posição) y eToro;
+- `.xls` BIFF8 (normal y con mini stream), PDF de notas SINACOR, CDT y extracto de Trii;
+- respuestas grabadas del Flex Web Service de IBKR (`ibkr-flex-ws/`).
 
-Los XLSX y los CSV Latin-1 se regeneran con `npx tsx packages/importers/test/fixtures/generate.ts`.
+Se regeneran con `npx tsx packages/importers/test/fixtures/generate.ts` (XLSX y CSV Latin-1) y
+`npx tsx packages/importers/test/fixtures/generate-r2.ts` (PDF, XLS y Posição). Los generadores usan los
+escritores mínimos de `test/helpers/` (PDF, XLS y XLSX).
 
-## Pendientes conocidos
+## Pendientes conocidos (ronda 1, actualizado)
 
 - **Formatos sin archivo real.** eToro, notas de corretagem y los extractos colombianos se
   reconstruyeron sin un archivo real a la vista, y conviene validarlos con usuarios. Lo mismo aplica a
   la semántica exacta de la tasa de cambio de Trading 212 y DEGIRO, que se usa para convertir comisiones
   y retenciones.
 - **B3 Movimentação.**
-  - Se asume que "Juros Sobre Capital Próprio" llega neto de IR.
-  - "Leilão de Fração", "Fração em Ativos", incorporaciones y cisões no se importan; quedan como aviso.
+  - Se asume que "Juros Sobre Capital Próprio" llega neto de IR; el bruto se estima como neto / 0,85.
+  - Fração + Leilão se importan como venta de la fracción; incorporaciones y cisões se entregan en `corporateActions` para el asistente.
 - **eToro.** Los montos están en USD aunque el activo cotice en EUR o GBP (se avisa con
   `CURRENCY_MISMATCH`).
 - **Símbolos sin ticker.** DEGIRO no trae ticker: los ISIN que no están en el directorio interno se
   importan con el ISIN como símbolo y el usuario debe corregirlos.
-- **Bolsa de EE.UU.** Si el ticker no está en la lista interna, se supone `XNAS` (configurable con
-  `defaultUsExchange`) y se avisa.
+- **Bolsa de EE.UU.** Si el ticker no está en la lista interna ni en el catálogo inyectado, el activo
+  queda como `US:SÍMBOLO` (configurable con `defaultUsExchange`) y se avisa; cuando llega la bolsa real
+  se reutiliza y se sugiere la actualización en `instrumentUpdates`.
 - **No soportados.** Opciones, futuros y CFD se omiten con aviso. Los traspasos de custodia entre
   corredores de B3 se omiten.
 - **Cotización en peniques.** Las acciones de Londres se guardan en GBP, pero Yahoo cotiza `.L` en
   peniques (GBp). Esto debe resolverse en `@pm/market-data`.
-- **MGC.** Las acciones extranjeras del Mercado Global Colombiano compradas en COP quedan como
-  `XBOG:SÍMBOLO`, y Yahoo puede no tener ese símbolo.
+- **MGC.** Las acciones extranjeras del Mercado Global Colombiano compradas en COP se asocian al activo
+  de EE. UU. (`XNAS:AAPL`) y la operación queda en COP, sin `fxRateToBase`.
 
 
 ## Respuesta a la revisión ronda 1

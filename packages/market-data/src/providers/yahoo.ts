@@ -92,6 +92,8 @@ export interface YahooOptions {
   /** Used for the per-symbol split history (TTL 1 day). */
   cache?: TieredCache;
   baseUrl?: string;
+  /** Second Yahoo host tried when the first fails for reasons other than "not found" (default query1). */
+  fallbackBaseUrl?: string | null;
   now?: () => Date;
 }
 
@@ -129,8 +131,19 @@ export class YahooProvider implements PriceProvider {
   // -------------------------------------------------------------------------- raw endpoints
 
   async chart(symbol: string, params: Record<string, string | number>): Promise<YahooChartResult> {
+    try {
+      return await this.chartAt(this.base, symbol, params);
+    } catch (e) {
+      const alt = this.opts.fallbackBaseUrl === undefined ? 'https://query1.finance.yahoo.com' : this.opts.fallbackBaseUrl;
+      // A host-level outage or rate limit on query2 is often absent on query1 (same data).
+      if (!alt || alt === this.base || (e instanceof MarketDataError && (e.code === 'NOT_FOUND' || e.code === 'BAD_REQUEST'))) throw e;
+      return this.chartAt(alt, symbol, params);
+    }
+  }
+
+  private async chartAt(base: string, symbol: string, params: Record<string, string | number>): Promise<YahooChartResult> {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
-    const url = `${this.base}/v8/finance/chart/${encodeURIComponent(symbol)}?${qs.toString()}`;
+    const url = `${base}/v8/finance/chart/${encodeURIComponent(symbol)}?${qs.toString()}`;
     let body: YahooChartResponse;
     try {
       body = await this.opts.http.getJson<YahooChartResponse>(url);
@@ -345,10 +358,21 @@ export function buildHistory(
   const closes = q?.close ?? [];
   let raw: PricePoint[] = [];
   let phantom = 0;
+  const missingCloseDates: ISODate[] = [];
   for (let i = 0; i < ts.length; i++) {
-    const c = closes[i];
-    if (c == null || !Number.isFinite(c) || c <= 0) continue;
+    let c = closes[i];
     const date = dateInZone(ts[i]!, tz, off);
+    if (c == null || !Number.isFinite(c) || c <= 0) {
+      // Yahoo sometimes leaves the latest session's bar without a close for hours after the
+      // close (SAP.DE 2026-10-06: close null, regularMarketPrice 188.6). Complete it from meta.
+      if (date === lastTradeDate && m.regularMarketPrice && m.regularMarketPrice > 0) {
+        c = m.regularMarketPrice;
+        notes.push(`close of ${date} completed from regularMarketPrice (bar had no close)`);
+      } else {
+        missingCloseDates.push(date);
+        continue;
+      }
+    }
     // Bars after the last real trade (meta.regularMarketTime) are carried-forward or duplicated
     // phantom closes: CNEC.CL repeats a 6240 bar (copy of 2025-11-04, even with its volume)
     // weeks after its last trade at 5000 on 2025-11-14.
@@ -403,6 +427,7 @@ export function buildHistory(
     basis: unadjust ? 'as-traded' : 'split-adjusted',
     ...(lastTradeDate ? { lastTradeDate } : {}),
     ...(reg ? { session: { start: reg.start, end: reg.end } } : {}),
+    ...(missingCloseDates.length ? { missingCloseDates: missingCloseDates.filter((d) => d >= from && d <= to) } : {}),
     source: 'yahoo',
   };
 }

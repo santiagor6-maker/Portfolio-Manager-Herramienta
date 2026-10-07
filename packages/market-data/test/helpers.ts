@@ -145,6 +145,7 @@ export function createFakeFetch(opts: FakeFetchOptions = {}): FakeFetch {
       const filtered = [lines[0], ...lines.slice(1).filter((l) => wanted.some((c) => l.startsWith(`EXR.D.${c}.`)))];
       return text(filtered.join('\r\n'), 'text/csv');
     }
+    if (url.host === 'apisidra.ibge.gov.br') return json(fixture('ibge/sidra-1737-63.json'));
     if (url.host === 'fred.stlouisfed.org') return text(fixture('fred/CPIAUCSL.csv'), 'text/csv');
     if (url.host === 'www.tesourotransparente.gov.br') return text(fixture('tesouro/PrecoTaxaTesouroDireto.csv'), 'text/csv');
     if (url.host === 'brapi.dev') {
