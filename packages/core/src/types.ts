@@ -115,8 +115,8 @@ export interface AccrualSpec {
   issueDate?: ISODate;
   /**
    * Tax on the yield for the net value and estimated withholding at maturity (round 3).
-   * Default by tax residence: BR + BRL -> BR_IR_REGRESSIVE (IOF + IR 22.5..15 %), CO + COP ->
-   * CO_RETENCION (4 %). Use EXEMPT for LCI/LCA/CRI/CRA/incentivadas.
+   * Default by the instrument's jurisdiction (withheld at source): BRL/BR -> BR_IR_REGRESSIVE
+   * (IOF + IR 22.5..15 %), COP/CO -> CO_RETENCION (4 %). Use EXEMPT for LCI/LCA/CRI/CRA/incentivadas.
    */
   taxRegime?: 'BR_IR_REGRESSIVE' | 'CO_RETENCION' | 'EXEMPT' | 'NONE';
   /** CO_RETENCION rate override (default 0.04). */

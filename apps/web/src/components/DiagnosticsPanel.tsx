@@ -33,7 +33,9 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
           <li key={i} className="flex items-start gap-2 px-4 py-2">
             {d.severity === 'error' ? <XCircle size={14} className="text-neg mt-0.5 shrink-0" aria-label={t('diag.error')} /> : d.severity === 'warning' ? <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-label={t('diag.warning')} /> : <Info size={14} className="text-info mt-0.5 shrink-0" aria-label={t('diag.info')} />}
             <span className="num text-xs text-muted w-24 shrink-0">{formatDate(d.date, f.locale, 'short')}</span>
-            <span className="flex-1">{t(`diag.code.${d.code}`, { defaultValue: d.message })}</span>
+            <span className="flex-1">
+              <span className="font-medium">{t(`diag.code.${d.code}`, { defaultValue: d.code })}</span> <span className="text-ink-2 text-xs">{d.message}</span>
+            </span>
             {d.transactionId && (
               <button className="btn btn-sm btn-ghost" onClick={() => onOpen(d.transactionId!)}>
                 {t('diag.open')}

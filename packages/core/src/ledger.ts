@@ -177,6 +177,11 @@ export interface EngineContext {
   outliers: { tx: Transaction; message: string }[];
   /** Tax residence (explicit or inferred from the portfolio base currency). */
   taxResidence: string | undefined;
+  /**
+   * Currency whose cash funds implicit FX conversions: options.fundingCurrency, else the currency
+   * of the first recorded DEPOSIT, else the portfolio base. Independent of the reporting view.
+   */
+  fundingCurrency: CurrencyCode;
 }
 
 export function resolveOptions(input: EngineInput, extra?: EngineOptions): ResolvedOptions {
@@ -335,6 +340,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     base,
     portfolioBase: input.portfolio.baseCurrency,
     taxResidence: residenceOf(input.portfolio.taxResidence, input.portfolio.baseCurrency),
+    fundingCurrency: raw.fundingCurrency ?? sorted.find((x) => x.tx.type === 'DEPOSIT')?.tx.currency ?? input.portfolio.baseCurrency,
     market,
     instruments,
     options,
@@ -578,7 +584,7 @@ export class Ledger {
     if (amount > 0) this.pullUnassigned(ccy, acct, amount - Math.max(this.acctCash(ccy, acct), 0));
     if (amount > 0 && implicit) {
       let shortfall = amount - this.availableFor(ccy, acct);
-      const pb = this.ctx.portfolioBase;
+      const pb = this.ctx.fundingCurrency;
       if (shortfall > CASH_EPS && (opts.fx ?? true) && this.ctx.options.implicitFx === 'fromBaseCash' && ccy !== pb) {
         const avail = this.availableFor(pb, acct);
         const r = this.ctx.market.fxAt(ccy, pb, day) ?? this.ctx.market.fxNearest(ccy, pb, day); // pb per ccy

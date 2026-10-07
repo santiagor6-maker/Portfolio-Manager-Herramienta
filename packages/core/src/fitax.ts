@@ -8,8 +8,10 @@
  * CO_RETENCION (CDT and other financial yields; residents of Colombia): withholding of 4 %
  *   (configurable with accrual.withholdingRate) on the interest earned.
  * EXEMPT (LCI, LCA, CRI, CRA, debêntures incentivadas, ...) and NONE: no tax.
- * The default regime follows the portfolio's tax residence and the instrument currency; set
- * `accrual.taxRegime` to override. These are estimates for display; the tax package computes
+ * The default regime follows the instrument's jurisdiction (withholding is applied at source by
+ * the paying bank/issuer): BRL / country BR -> BR_IR_REGRESSIVE, COP / country CO -> CO_RETENCION.
+ * It never depends on the reporting currency or a view's portfolio. Set `accrual.taxRegime` to
+ * override (e.g. EXEMPT for LCI/LCA). These are estimates for display; the tax package computes
  * the official figures.
  */
 import type { AccrualSpec, Instrument } from './types';
@@ -18,12 +20,12 @@ export type FixedIncomeTaxRegime = NonNullable<AccrualSpec['taxRegime']>;
 
 export const IOF_TABLE = [96, 93, 90, 86, 83, 80, 76, 73, 70, 66, 63, 60, 56, 53, 50, 46, 43, 40, 36, 33, 30, 26, 23, 20, 16, 13, 10, 6, 3];
 
-export function taxRegimeFor(inst: Instrument, residence: string | undefined): FixedIncomeTaxRegime {
+export function taxRegimeFor(inst: Instrument, _residence?: string): FixedIncomeTaxRegime {
   const spec = inst.accrual;
   if (!spec) return 'NONE';
   if (spec.taxRegime) return spec.taxRegime;
-  if (residence === 'BR' && inst.currency === 'BRL') return 'BR_IR_REGRESSIVE';
-  if (residence === 'CO' && inst.currency === 'COP') return 'CO_RETENCION';
+  if (inst.currency === 'BRL' || inst.country === 'BR') return 'BR_IR_REGRESSIVE';
+  if (inst.currency === 'COP' || inst.country === 'CO') return 'CO_RETENCION';
   return 'NONE';
 }
 

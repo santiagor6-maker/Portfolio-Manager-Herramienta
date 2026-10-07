@@ -83,6 +83,8 @@ export interface EngineOptions {
   benchmarkKinds?: Record<string, 'price' | 'total'>;
   /** Trade prints deviating more than this from the surrounding closes are not used as prices (default 0.3 = 30 %). */
   tradePriceTolerance?: number;
+  /** Currency whose cash funds implicit FX conversions (default: currency of the first DEPOSIT, else portfolio base). */
+  fundingCurrency?: CurrencyCode;
 }
 
 export interface MarketDataInput {
