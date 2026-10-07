@@ -5,5 +5,7 @@ export type { MarketDataEx } from './market';
 export { ASSET_CLASS_LABELS, CURRENCY_COUNTRY } from './allocation';
 export { periodStart } from './engine';
 export * as dates from './dates';
+export * as calendars from './calendars';
+export type { CalendarId } from './calendars';
 export { createDemoData, DEMO_PORTFOLIO_ID } from './demo';
 export type { DemoData } from './demo';

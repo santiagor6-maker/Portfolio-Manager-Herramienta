@@ -33,15 +33,14 @@ describe('de-duplication', () => {
   });
   it('keeps identical legitimate rows within one file and dedupes them on re-import', async () => {
     const csv = 'date,type,symbol,exchange,quantity,price,currency\n2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n';
-    // Identical rows in one file are a blocking choice: excluded until the user accepts them.
-    const blocked = await importText(csv, { portfolioId: 'p1' });
-    expect(blocked.stats).toMatchObject({ imported: 1, possibleDuplicates: 1 });
-    expect(byLine(blocked, 3)).toMatchObject({ status: 'possible_duplicate', duplicateOf: { inFile: true, line: 2 } });
-    const first = await importText(csv, { portfolioId: 'p1', acceptDuplicates: 'in-file' });
-    expect(first.stats.imported).toBe(2);
+    // Identical rows in one file are legitimate (partial fills): imported, only flagged (I21).
+    const first = await importText(csv, { portfolioId: 'p1' });
+    expect(first.stats).toMatchObject({ imported: 2, possibleDuplicates: 0 });
+    expect(byLine(first, 3).issues.map((i) => i.code)).toContain('POSSIBLE_DUPLICATE_IN_FILE');
     const second = await importText(csv, { portfolioId: 'p1', existingTransactions: first.transactions });
     expect(second.stats).toMatchObject({ imported: 0, duplicates: 2 });
-    const third = await importText(csv + '2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n', { portfolioId: 'p1', existingTransactions: first.transactions, acceptDuplicates: [4] });
+    // A third identical row appears in a later export: the two known ones are duplicates, the new one imports.
+    const third = await importText(csv + '2024-01-02,BUY,PETR4,BVMF,100,38.5,BRL\n', { portfolioId: 'p1', existingTransactions: first.transactions });
     expect(third.stats).toMatchObject({ imported: 1, duplicates: 2 });
   });
   it('flags possible duplicates coming from another source (B3 Negociação vs Movimentação)', async () => {
