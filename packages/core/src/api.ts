@@ -81,6 +81,8 @@ export interface EngineOptions {
   indices?: IndexId[];
   /** Benchmark kind override: 'total' = the price series is already total return (adjusted) or dividends are reinvested. */
   benchmarkKinds?: Record<string, 'price' | 'total'>;
+  /** Trade prints deviating more than this from the surrounding closes are not used as prices (default 0.3 = 30 %). */
+  tradePriceTolerance?: number;
 }
 
 export interface MarketDataInput {
