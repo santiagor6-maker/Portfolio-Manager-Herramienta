@@ -7,7 +7,11 @@ import type { TransactionType } from '@pm/core';
 import { Banner, Card, Field, PageHeader, Segmented } from '../components/ui';
 import { usePortfolios, useInstrumentMap } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
-import { canonicalTemplateCsv, commitImport, listPresets, runImport, type ColumnMapping, type ImportResult, type MappingField } from '../services/importers';
+import { canonicalTemplateCsv, commitImport, corporateActionToTransaction, listBrokerProfiles, listPresets, runImport, type ColumnMapping, type ImportAnswers, type ImportResult, type MappingField } from '../services/importers';
+import { ConfirmFormats, CorporateEvents, PossibleDuplicates, SecurityMapPrompt, type CaChoice } from '../components/ImportReview';
+import { db } from '../db/schema';
+import { bulkAddTransactions } from '../db/repo';
+import { parseDecimal } from '../lib/parse';
 import { createPortfolio } from '../db/repo';
 import { downloadText } from '../lib/export';
 import { CURRENCY_CODES } from '../lib/currencies';
@@ -41,9 +45,15 @@ export default function ImportPage() {
   const [result, setResult] = useState<ImportResult>();
   const [error, setError] = useState<string>();
   const [mapping, setMapping] = useState<ColumnMapping>();
-  const [filter, setFilter] = useState<'all' | 'ok' | 'duplicate' | 'error'>('all');
+  const [filter, setFilter] = useState<'all' | 'ok' | 'duplicate' | 'error' | 'possible_duplicate' | 'pending'>('all');
   const [done, setDone] = useState<{ transactions: number; instruments: number }>();
   const [drag, setDrag] = useState(false);
+  const profiles = useMemo(() => listBrokerProfiles(), []);
+  const [profileId, setProfileId] = useState('');
+  const [answers, setAnswers] = useState<ImportAnswers>({});
+  const [caChoices, setCaChoices] = useState<Record<number, CaChoice>>({});
+  const [updates, setUpdates] = useState<Set<string>>(new Set());
+  const profile = profiles.find((p) => p.id === profileId);
 
   const resolvePortfolio = async (): Promise<string> => {
     if (portfolioId !== '__new') return portfolioId;
@@ -53,13 +63,24 @@ export default function ImportPage() {
     return p.id;
   };
 
-  const process = async (fl: File, map?: ColumnMapping) => {
+  const process = async (fl: File, map?: ColumnMapping, ans: ImportAnswers = answers) => {
     setBusy(true);
     setError(undefined);
     try {
       const pid = await resolvePortfolio();
-      const r = await runImport({ file: fl, portfolioId: pid, account, presetId: map ? undefined : presetId, mapping: map, locale: f.language as Locale, defaultCurrency });
+      const r = await runImport({
+        file: fl,
+        portfolioId: pid,
+        account: account || profile?.defaults.account || '',
+        presetId: map ? undefined : presetId,
+        mapping: map,
+        locale: f.language as Locale,
+        defaultCurrency,
+        brokerProfile: profileId,
+        answers: ans,
+      });
       setResult(r);
+      setUpdates(new Set((r.instrumentUpdates ?? []).map((u) => u.id)));
       if (r.needsMapping && r.mappingSuggestion) {
         setMapping(r.mappingSuggestion.mapping);
         setStep('mapping');
@@ -83,7 +104,16 @@ export default function ImportPage() {
     try {
       const pid = await resolvePortfolio();
       const r = await commitImport(result, pid, `import:${result.detection.presetId}`);
-      setDone(r);
+      // Corporate events and instrument updates the user confirmed in the review.
+      const known = await db.instruments.toArray();
+      const resolve = (sym?: string) => (sym ? [...known, ...result.instruments].find((i) => i.symbol.toUpperCase() === sym.toUpperCase()) : undefined);
+      const caTxs = (result.corporateActions ?? [])
+        .filter((c) => caChoices[c.line]?.include ?? true)
+        .map((c) => corporateActionToTransaction(c, resolve, pid, (parseDecimal(caChoices[c.line]?.costFraction ?? '', f.locale) ?? 0) / 100))
+        .filter((x): x is NonNullable<typeof x> => !!x);
+      if (caTxs.length) await bulkAddTransactions(caTxs);
+      for (const u of result.instrumentUpdates ?? []) if (updates.has(u.id)) await db.instruments.update(u.id, u.changes);
+      setDone({ ...r, transactions: r.transactions + caTxs.length });
       setSetting('selectedPortfolioId', pid);
       setStep('done');
     } finally {
@@ -98,6 +128,14 @@ export default function ImportPage() {
     setStep('upload');
     setDone(undefined);
     setError(undefined);
+    setAnswers({});
+    setCaChoices({});
+  };
+
+  const rerun = (patch: ImportAnswers) => {
+    const next = { ...answers, ...patch };
+    setAnswers(next);
+    if (file) void process(file, mapping && result?.needsMapping ? mapping : undefined, next);
   };
 
   const rows = (result?.rows ?? []).filter((r) => filter === 'all' || r.status === filter);
@@ -158,6 +196,34 @@ export default function ImportPage() {
                   <option value="__new">+ {t('imp.newPortfolio')}</option>
                 </select>
               </Field>
+              <Field label={t('impr.broker')} htmlFor="i-broker" hint={profile?.help}>
+                <select
+                  id="i-broker"
+                  className="select"
+                  value={profileId}
+                  onChange={(e) => {
+                    setProfileId(e.target.value);
+                    const p = profiles.find((x) => x.id === e.target.value);
+                    if (p && !account) setAccount(p.defaults.account);
+                    if (p?.defaults.currency) setDefaultCurrency(p.defaults.currency);
+                  }}
+                  data-testid="import-broker"
+                >
+                  <option value="">{t('impr.anyBroker')}</option>
+                  {(['CO', 'BR', 'US', 'INTL', 'MX', 'CL', 'PE'] as const).map((c) => {
+                    const list = profiles.filter((p) => p.country === c);
+                    return list.length ? (
+                      <optgroup key={c} label={t(`impr.country.${c}`)}>
+                        {list.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null;
+                  })}
+                </select>
+              </Field>
               <Field label={t('imp.format')} htmlFor="i-fmt" hint={presets.find((p) => p.id === presetId)?.exportHelp}>
                 <select id="i-fmt" className="select" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
                   <option value="">{t('imp.autoDetect')}</option>
@@ -205,7 +271,7 @@ export default function ImportPage() {
               {busy ? <Loader2 className="mx-auto animate-spin text-accent" size={28} /> : <FileUp className="mx-auto text-muted" size={28} />}
               <div className="font-semibold mt-3">{busy ? t('imp.reading') : t('imp.drop')}</div>
               <p className="text-xs text-muted mt-1">{t('imp.formats')}</p>
-              <input ref={fileRef} type="file" className="hidden" accept=".csv,.txt,.xlsx,.xls,.html,.htm" onChange={(e) => onFile(e.target.files?.[0])} data-testid="import-file" />
+              <input ref={fileRef} type="file" className="hidden" accept=".csv,.txt,.xlsx,.xls,.html,.htm,.pdf" onChange={(e) => onFile(e.target.files?.[0])} data-testid="import-file" />
             </div>
             <div className="mt-4">
               <div className="text-xs font-medium text-muted mb-2">{t('imp.supported')}</div>
@@ -307,6 +373,10 @@ export default function ImportPage() {
 
       {step === 'preview' && result && (
         <>
+          <ConfirmFormats key={`cf-${result.needsConfirmation?.length ?? 0}`} result={result} busy={busy} onApply={(a) => rerun(a)} />
+          <SecurityMapPrompt result={result} current={answers.securityMap ?? {}} busy={busy} onApply={(m) => rerun({ securityMap: { ...(answers.securityMap ?? {}), ...m } })} />
+          <PossibleDuplicates result={result} accepted={answers.acceptDuplicates ?? []} busy={busy} onApply={(lines) => rerun({ acceptDuplicates: lines })} />
+          <CorporateEvents result={result} choices={caChoices} onChange={setCaChoices} updates={updates} onUpdates={setUpdates} />
           <Card
             title={t('imp.previewTitle', { file: file?.name })}
             subtitle={
@@ -363,6 +433,10 @@ export default function ImportPage() {
                   { value: 'ok', label: `OK (${result.rows.filter((r) => r.status === 'ok').length})` },
                   { value: 'duplicate', label: `${t('imp.stat.duplicates')} (${result.stats.duplicates})` },
                   { value: 'error', label: `${t('imp.stat.errors')} (${result.stats.errors})` },
+                  ...(result.rows.some((r) => r.status === 'possible_duplicate')
+                    ? [{ value: 'possible_duplicate' as const, label: `${t('impr.possible')} (${result.rows.filter((r) => r.status === 'possible_duplicate').length})` }]
+                    : []),
+                  ...(result.rows.some((r) => r.status === 'pending') ? [{ value: 'pending' as const, label: `${t('impr.pending')} (${result.rows.filter((r) => r.status === 'pending').length})` }] : []),
                 ]}
               />
             }

@@ -79,8 +79,14 @@ function levelData(id: string, kind: IndexSeries['kind'], days: number[], levels
   // daily growth of the last interval, for projections
   const n = days.length;
   const trend = n >= 2 ? Math.pow((levels[n - 1] as number) / (levels[n - 2] as number), 1 / ((days[n - 1] as number) - (days[n - 2] as number))) : 1;
+  const trendFirst = n >= 2 ? Math.pow((levels[1] as number) / (levels[0] as number), 1 / ((days[1] as number) - (days[0] as number))) : 1;
   const at = (d: number, extrapolate: boolean): number | undefined => {
-    if (days.length === 0 || d < first) return undefined;
+    if (days.length === 0) return undefined;
+    if (d < first) {
+      // short backward projection (a purchase a few days before the first published level)
+      if (!extrapolate || first - d > MAX_PROJECTION_DAYS) return undefined;
+      return (levels[0] as number) / Math.pow(trendFirst, first - d);
+    }
     if (d >= last) {
       if (d <= last + tolerance) return levels[levels.length - 1];
       if (!extrapolate || d > last + MAX_PROJECTION_DAYS) return undefined;
@@ -136,7 +142,9 @@ function dailyRateData(id: string, days: number[], rates: number[], cal: Calenda
   };
   /** C(d) = prod_{j < d} (1 + p r_j). */
   const C = (d: number, p: number, extrapolate: boolean): number | undefined => {
-    if (days.length === 0 || d < first) return undefined;
+    if (days.length === 0) return undefined;
+    // nothing accrues before the first rate day (a period starting on a weekend/holiday before it)
+    if (d <= first) return first - d <= 5 ? 1 : undefined;
     const cum = cumFor(p);
     if (d > last + 1) {
       if (!extrapolate && d > last + 5) return undefined;
@@ -183,8 +191,9 @@ function annualRateData(id: string, days: number[], rates: number[], dc: DayCoun
   };
   const C = (d: number, p: number, extrapolate: boolean): number | undefined => {
     if (days.length === 0 || d < first) return undefined;
+    // An annual rate is valid until the next point: accrual may use it indefinitely (flagged as
+    // estimated by callers when older than a month); benchmarks only up to 31 days.
     if (!extrapolate && d > last + 31) return undefined;
-    if (d > last + 31 + MAX_PROJECTION_DAYS) return undefined;
     const lv = levelsFor(p);
     const i = lastIndexAtOrBefore(days, d);
     return (lv[i] as number) * growth(rates[i] as number, days[i] as number, d, dc, cal, p);

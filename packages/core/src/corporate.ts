@@ -16,6 +16,14 @@
  * most one action, so a JCP and a dividend with the same ex-date are both handled. Duplicate
  * provider rows (same instrument, kind, ex-date, subtype and amount) are reported once.
  *
+ * Market-data conventions (round 3):
+ * - DIVIDEND with subtype COUPON (NTN-B / NTN-F / bond coupons) is suggested as INTEREST income.
+ * - A merger arrives as SPLIT/MERGER (ratio, targetInstrumentId) plus, on the same instrument
+ *   and ex-date, a DIVIDEND/EXTRAORDINARY carrying the cash per share (e.g. CPLE6 -> R$ 0.7749).
+ *   Both become ONE SPLIT/MERGER transaction with amount = units x cash per share (merger cash,
+ *   allocated by the ledger as a partial disposal of the parent); the dividend is reported as
+ *   skipped with reason ABSORBED_IN_MERGER.
+ *
  * Complexity (C27): one sort of the transactions and the actions and a single chronological
  * sweep of the holdings: O((n + m) log n).
  */
@@ -25,7 +33,7 @@ import { sortTransactions } from './ledger';
 
 export interface CorporateActionResult {
   suggested: Transaction[];
-  /** Actions skipped with the reason: ALREADY_RECORDED, NO_POSITION, DUPLICATE_ACTION, INVALID. */
+  /** Actions skipped with the reason: ALREADY_RECORDED, NO_POSITION, DUPLICATE_ACTION, ABSORBED_IN_MERGER, INVALID. */
   skipped: { action: CorporateAction; reason: string }[];
   /** Actions flagged reviewRequired by the provider (heuristic classification). */
   review: CorporateAction[];
@@ -97,6 +105,14 @@ export function applyCorporateActions(
   }
   valid.sort((x, y) => x.ex - y.ex);
 
+  // Merger cash: DIVIDEND/EXTRAORDINARY on the same instrument and ex-date as a SPLIT/MERGER.
+  const mergerKeys = new Set(valid.filter(({ a }) => a.type === 'SPLIT' && a.subtype === 'MERGER').map(({ a, ex }) => `${a.instrumentId}|${ex}`));
+  const mergerCash = new Map<string, CorporateAction>();
+  for (const { a, ex } of valid) {
+    const k = `${a.instrumentId}|${ex}`;
+    if (a.type === 'DIVIDEND' && a.subtype === 'EXTRAORDINARY' && mergerKeys.has(k) && !mergerCash.has(k)) mergerCash.set(k, a);
+  }
+
   // Chronological sweep of holdings.
   const qty = new Map<string, number>();
   const get = (id: string) => qty.get(id) ?? 0;
@@ -152,6 +168,10 @@ export function applyCorporateActions(
     const base = { id, portfolioId, importHash: id, source: `corporate-action${a.source ? `:${a.source}` : ''}`, note: a.note };
     const q = get(a.instrumentId);
 
+    if (a.type === 'DIVIDEND' && mergerCash.get(`${a.instrumentId}|${ex}`) === a) {
+      out.skipped.push({ action: a, reason: 'ABSORBED_IN_MERGER' });
+      continue;
+    }
     if (a.type === 'DIVIDEND') {
       const aps = a.amountPerShare ?? 0;
       if (!(aps > 0)) {
@@ -188,7 +208,7 @@ export function applyCorporateActions(
       const t: Transaction = {
         ...base,
         date: a.payDate && isStrictIsoDate(a.payDate) ? a.payDate : (a.exDate ?? a.date),
-        type: 'DIVIDEND',
+        type: a.subtype === 'COUPON' ? 'INTEREST' : 'DIVIDEND',
         instrumentId: a.instrumentId,
         quantity: q,
         price: aps,
@@ -244,6 +264,12 @@ export function applyCorporateActions(
     if (a.subtype) t.subtype = a.subtype;
     if (a.targetInstrumentId) t.targetInstrumentId = a.targetInstrumentId;
     if (a.costFraction !== undefined) t.costFraction = a.costFraction;
+    const cash = a.subtype === 'MERGER' ? mergerCash.get(`${a.instrumentId}|${ex}`) : undefined;
+    if (cash?.amountPerShare && cash.amountPerShare > 0) {
+      t.amount = Math.round(q * cash.amountPerShare * 1e6) / 1e6;
+      t.currency = cash.currency ?? t.currency;
+      t.note = `${t.note ? `${t.note} · ` : ''}efectivo de la fusión ${cash.amountPerShare} por acción`;
+    }
     out.suggested.push(t);
     applyTx(t); // the suggested event changes the holdings for later actions
   }

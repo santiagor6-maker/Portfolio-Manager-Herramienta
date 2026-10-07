@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { createMarketData, ledgerDiagnostics, monthlyPerformance, performanceSummary, realizedGains, valuePortfolio } from './api';
 import type { EngineInput } from './api';
-import { businessDaysBetween, isoToDay } from './dates';
+import { isoToDay } from './dates';
+import { businessDaysIn } from './calendars';
 import { inst, prices, tx } from './__fixtures__/helpers';
 import type { IndexSeries, Instrument } from './types';
 
@@ -55,10 +56,13 @@ describe('Colombian CDT at 12 % E.A. (ACT/365)', () => {
     const m = { ...input, instruments: [CDT2] };
     const v = valuePortfolio(m, '2024-12-31');
     expect(v.holdings).toHaveLength(0);
-    const proceeds = 10_000_000 * Math.pow(1.12, 360 / 365);
+    // Colombian CDT: 4 % retención on the interest is withheld at source (estimated)
+    const gross = 10_000_000 * Math.pow(1.12, 360 / 365);
+    const proceeds = gross - 0.04 * (gross - 10_000_000);
     expect(v.cash[0]!.amount).toBeCloseTo(proceeds, 4);
     const r = realizedGains(m)[0]!;
     expect(r.sellDate).toBe('2024-12-27');
+    expect(r.estimated).toBe(true);
     expect(r.gain).toBeCloseTo(proceeds - 10_000_000, 4);
     expect(ledgerDiagnostics(m).map((d) => d.code)).toContain('MATURITY_REDEEMED');
     // after maturity the money sits in cash: no growth in the last days of December
@@ -111,8 +115,9 @@ describe('Tesouro IPCA+ 6 % (monthly IPCA, BUS/252 spread)', () => {
       transactions: [tx({ date: '2024-01-31', type: 'BUY', instrumentId: NTNB.id, quantity: 1, price: 3000, currency: 'BRL' })],
     };
     const v = valuePortfolio(input, '2024-02-29');
-    const bus = businessDaysBetween(isoToDay('2024-01-31'), isoToDay('2024-02-29'));
-    expect(bus).toBe(21);
-    expect(v.holdings[0]!.marketValue).toBeCloseTo(3000 * 1.0083 * Math.pow(1.06, 21 / 252), 8);
+    // ANBIMA calendar: February 2024 has 19 business days after 01-31 (Carnival 02-12 and 02-13)
+    const bus = businessDaysIn(isoToDay('2024-01-31'), isoToDay('2024-02-29'), 'BR');
+    expect(bus).toBe(19);
+    expect(v.holdings[0]!.marketValue).toBeCloseTo(3000 * 1.0083 * Math.pow(1.06, 19 / 252), 8);
   });
 });

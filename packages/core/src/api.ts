@@ -250,6 +250,15 @@ export function goalProjection(opts: GoalProjectionOptions): GoalProjectionResul
 }
 
 /**
+ * Goal projection seeded from the portfolio (C35): current value, average contribution of the last
+ * 12 months, historical annualized TWR and volatility, inflation of the base currency. Any field
+ * of `opts` overrides the defaults (e.g. target, targetDate, indexContributions, realTerms).
+ */
+export function goalProjectionForPortfolio(input: EngineInput, asOf: ISODate, opts?: Partial<GoalProjectionOptions>): GoalProjectionResult {
+  return engineFor(input).goalProjection(asOf, opts);
+}
+
+/**
  * Engine diagnostics from replaying the ledger: negative cash, oversells, unknown instruments,
  * missing FX, withdrawals above cash, negative account quantities, implicit FX conversions,
  * income without position, maturity redemptions, rejected rows (invalid dates).

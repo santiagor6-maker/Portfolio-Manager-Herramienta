@@ -518,8 +518,11 @@ export function monthlyFromContext(ctx: EngineContext, input: EngineInput, opts:
     };
     if (p.endDay < (ends[i] as number)) row.partial = true;
     if (inflId) {
-      const f = ctx.market.index(inflId)!.factor(p.startDay, p.endDay);
+      // C4: months not yet published use the last published variation, flagged as estimated.
+      const idx = ctx.market.index(inflId)!;
+      const f = idx.factor(p.startDay, p.endDay, { extrapolate: true });
       if (f !== undefined) {
+        if (p.endDay > idx.lastDay) row.inflationEstimated = true;
         row.inflation = f - 1;
         row.realTwr = (1 + p.twr) / f - 1;
         if (cumReal !== undefined) cumReal *= 1 + row.realTwr;

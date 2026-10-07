@@ -286,7 +286,8 @@ describe.skipIf(!LIVE)('LIVE contract tests for providers validated only with sy
   const service = new MarketDataService();
   const today = todayISO();
   const RECORD = process.env.RECORD === '1';
-  const unreachable = (e: unknown) => /403|ENOTFOUND|ECONN|fetch failed|forbidden|egress|allowlist/i.test(String((e as Error)?.message ?? e));
+  const unreachable = (e: unknown) =>
+    /403|ENOTFOUND|ECONN|fetch failed|forbidden|egress|allowlist|timeout|timed out/i.test(`${String((e as Error)?.message ?? e)} ${JSON.stringify((e as { details?: unknown })?.details ?? '')}`);
 
   const contract = async (name: string, run: () => Promise<void>) => {
     try {

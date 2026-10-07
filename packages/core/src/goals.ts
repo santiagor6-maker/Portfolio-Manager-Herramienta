@@ -22,6 +22,12 @@ export interface GoalProjectionOptions {
   targetDate?: ISODate;
   /** z-score of the scenario band (default 1.2816 = 10th/90th percentile). */
   z?: number;
+  /** Expected annual inflation (decimal) for indexed contributions and real terms (round 3). */
+  inflation?: number;
+  /** Contributions grow with inflation every month. */
+  indexContributions?: boolean;
+  /** Express every value (and the target) in today's money, deflated by `inflation`. */
+  realTerms?: boolean;
 }
 
 export interface GoalProjectionResult {
@@ -36,11 +42,38 @@ export interface GoalProjectionResult {
   probabilityOfSuccess?: number;
 }
 
+let contribGrowth = 0; // monthly growth of contributions (set per projection)
+let deflator = 0; // monthly inflation for real terms (0 = nominal)
+
 function fv(start: number, contrib: number, annual: number, months: number): number {
   const i = Math.pow(1 + annual, 1 / 12) - 1;
-  if (Math.abs(i) < 1e-12) return start + contrib * months;
-  const g = Math.pow(1 + i, months);
-  return start * g + (contrib * (g - 1)) / i;
+  let v: number;
+  if (contribGrowth === 0) {
+    if (Math.abs(i) < 1e-12) v = start + contrib * months;
+    else {
+      const g = Math.pow(1 + i, months);
+      v = start * g + (contrib * (g - 1)) / i;
+    }
+  } else {
+    v = start;
+    let c = contrib;
+    for (let m = 1; m <= months; m++) {
+      v = v * (1 + i) + c;
+      c *= 1 + contribGrowth;
+    }
+  }
+  return deflator ? v / Math.pow(1 + deflator, months) : v;
+}
+
+/** Sum of contributions paid after `months` (nominal, or deflated in real terms). */
+function contributed(start: number, contrib: number, months: number): number {
+  let total = start;
+  let c = contrib;
+  for (let m = 1; m <= months; m++) {
+    total += deflator ? c / Math.pow(1 + deflator, m) : c;
+    c *= 1 + contribGrowth;
+  }
+  return total;
 }
 
 function normCdf(x: number): number {
@@ -56,6 +89,18 @@ function monthsBetween(a: ISODate, b: ISODate): number {
 
 export function goalProjection(o: GoalProjectionOptions): GoalProjectionResult {
   const sigma = o.volatility ?? 0.15;
+  const inflM = o.inflation ? Math.pow(1 + o.inflation, 1 / 12) - 1 : 0;
+  contribGrowth = o.indexContributions ? inflM : 0;
+  deflator = o.realTerms ? inflM : 0;
+  try {
+    return project(o, sigma);
+  } finally {
+    contribGrowth = 0;
+    deflator = 0;
+  }
+}
+
+function project(o: GoalProjectionOptions, sigma: number): GoalProjectionResult {
   const z = o.z ?? 1.2816;
   const months = o.targetDate ? Math.max(0, monthsBetween(o.startDate, o.targetDate)) : Math.round((o.years ?? 10) * 12);
   const points: GoalProjectionPoint[] = [];
@@ -64,7 +109,7 @@ export function goalProjection(o: GoalProjectionOptions): GoalProjectionResult {
     const band = t > 0 ? (z * sigma) / Math.sqrt(t) : 0;
     points.push({
       date: addMonths(o.startDate, m),
-      contributed: o.startValue + o.monthlyContribution * m,
+      contributed: contributed(o.startValue, o.monthlyContribution, m),
       pessimistic: fv(o.startValue, o.monthlyContribution, Math.max(-0.99, o.expectedReturn - band), m),
       expected: fv(o.startValue, o.monthlyContribution, o.expectedReturn, m),
       optimistic: fv(o.startValue, o.monthlyContribution, o.expectedReturn + band, m),
@@ -79,10 +124,10 @@ export function goalProjection(o: GoalProjectionOptions): GoalProjectionResult {
       }
     }
     if (months > 0) {
-      const i = Math.pow(1 + o.expectedReturn, 1 / 12) - 1;
-      const g = Math.pow(1 + i, months);
-      const annuity = Math.abs(i) < 1e-12 ? months : (g - 1) / i;
-      res.requiredMonthlyContribution = Math.max(0, (o.target - o.startValue * g) / annuity);
+      // FV is linear in the contribution: FV(C) = FV(0) + C * (FV(1) - FV(0)).
+      const f0 = fv(o.startValue, 0, o.expectedReturn, months);
+      const f1 = fv(o.startValue, 1, o.expectedReturn, months);
+      res.requiredMonthlyContribution = Math.max(0, (o.target - f0) / (f1 - f0));
       // Annualized return needed, then P(R >= needed) with R ~ N(mu, sigma / sqrt(T)).
       let lo = -0.99;
       let hi = 10;

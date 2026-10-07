@@ -16,6 +16,7 @@ import { dayToIso } from './dates';
 import type { Ledger } from './ledger';
 import { roundQty } from './lots';
 import { type PositionValue, valuePosition } from './pricing';
+import { fixedIncomeTax, taxRegimeFor } from './fitax';
 
 export interface ValueIssues {
   missingFx: Set<CurrencyCode>;
@@ -118,6 +119,8 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
   const missingPrices: string[] = [];
   const stalePrices: string[] = [];
   const missingIndex = new Set<string>();
+  const estimatedIndex = new Set<string>();
+  let accruedTaxTotal = 0;
   const missingFx = new Set<CurrencyCode>();
   for (const [id, book] of ledger.books) {
     const q = book.quantity;
@@ -170,6 +173,23 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     h.unrealizedGainBase = pv.mvBase - CB;
     h.priceGainBase = (pv.mv - C) * X0;
     h.fxGainBase = h.unrealizedGainBase - h.priceGainBase;
+    if (pv.estimated) {
+      h.estimated = true;
+      if (inst.accrual?.index) estimatedIndex.add(inst.accrual.index);
+    }
+    // C31: estimated tax on the accrued yield (IR regressivo + IOF in Brazil, 4 % retención in Colombia)
+    const regime = inst.accrual ? taxRegimeFor(inst) : 'NONE';
+    if (regime !== 'NONE' && regime !== 'EXEMPT') {
+      let tax = 0;
+      book.lots.forEach((l, i) => {
+        const v = pv.lotValues?.[i] ?? (q !== 0 ? (pv.mv * l.quantity) / q : 0);
+        tax += fixedIncomeTax(regime, day - l.openDay, v - l.quantity * l.unitValue, inst.accrual).total;
+      });
+      const taxBase = tax * (pv.rate ?? X0);
+      h.accruedTaxBase = taxBase;
+      h.netMarketValueBase = pv.mvBase - taxBase;
+      accruedTaxTotal += taxBase;
+    }
     holdings.push(h);
   }
 
@@ -208,6 +228,8 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     missingFx: Array.from(missingFx).sort(),
   };
   if (stalePrices.length) v.stalePrices = stalePrices.sort();
+  if (estimatedIndex.size) v.estimatedIndex = Array.from(estimatedIndex).sort();
+  if (accruedTaxTotal !== 0) v.totalNetMarketValueBase = total - accruedTaxTotal;
   if (missingIndex.size) v.missingIndex = Array.from(missingIndex).sort();
   return v;
 }

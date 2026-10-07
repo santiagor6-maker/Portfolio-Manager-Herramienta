@@ -22,8 +22,10 @@ npm run start -w @pm/server      # o: npx tsx apps/server/src/main.ts
 | `HOST` | **127.0.0.1** | use `0.0.0.0` solo detrás de un firewall o proxy, y con `API_TOKEN` |
 | `CORS_ORIGIN` | `http://localhost:5173`, `http://127.0.0.1:5173`, `:4173` | allowlist separada por comas (`*` = cualquiera, no recomendado) |
 | `API_TOKEN` | — | si se define, todo `/api/*` salvo `/api/health` exige `Authorization: Bearer <token>` o `x-api-key` |
-| `RATE_LIMIT_PER_MIN` | 120 | límite por cliente (token bucket; un batch cuesta 10). `0` lo desactiva |
-| `TRUST_PROXY` | — | `1`: identifica al cliente por `X-Forwarded-For` (solo detrás de un proxy de confianza) |
+| `RATE_LIMIT_PER_MIN` | 120 | límite por cliente (token bucket; un batch cuesta un token por ítem; `/api/health` no consume). `0` lo desactiva |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` si `HOST` es loopback | allowlist de la cabecera `Host` (protección contra DNS rebinding) |
+| `ALLOW_LOCAL_ADMIN` | — | `1`: permite `DELETE /api/cache` sin token desde un socket loopback real (nunca con `TRUST_PROXY`) |
+| `TRUST_PROXY` | — | `1`: identifica al cliente por `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP`. Úselo solo detrás de un proxy de confianza; en serverless es necesario para tener un límite por cliente |
 | `CACHE_DIR` | `.cache/market-data` | caché persistente |
 | `CACHE_MAX_FILES` | 20000 | poda LRU de la caché en disco |
 | `MD_CUSTOM_FEEDS_FILE` | — | JSON con feeds de precios definidos por el usuario (ver README de market-data) |
@@ -45,7 +47,7 @@ sin efectos secundarios: sirve para `app.request()` en pruebas o para desplegar 
 | `GET /api/index` (alias `/api/rates`) | `id` (o `series`), `from`, `to?`; sin `id` lista los índices | `{ series: IndexSeries (core), info, lastObservation, notes? }` |
 | `GET /api/catalog` | — | `{ version, updated, instruments, benchmarks }` |
 | `POST /api/batch` | `{ histories, fx, quotes, indices }` (máx. 100 ítems, ~100k puntos estimados, cuerpo ≤ 64 KiB) | cada ítem resuelto por separado, más `tookMs` |
-| `DELETE /api/cache` | `symbol` | invalida la caché del símbolo (requiere token o cliente loopback) |
+| `DELETE /api/cache` | `symbol` | invalida la caché del símbolo (requiere `API_TOKEN`, o `ALLOW_LOCAL_ADMIN=1` con socket loopback directo) |
 
 Errores: `{ "error": { "code", "message", "details?" } }` con los siguientes estados:
 
@@ -55,6 +57,7 @@ Errores: `{ "error": { "code", "message", "details?" } }` con los siguientes est
 | 401 | `UNAUTHORIZED` |
 | 403 | `FORBIDDEN_ORIGIN` / `FORBIDDEN` |
 | 404 | `NOT_FOUND` (con `details.fallbacks` y `details.suggest`) |
+| 410 | `DELISTED`: ticker fusionado o convertido, con `details.delisted` (razón y efectivo) y `details.suggest` |
 | 413 | cuerpo demasiado grande |
 | 422 | `UNSUPPORTED` |
 | 429 | límite por cliente, con `Retry-After` |

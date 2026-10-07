@@ -10,12 +10,14 @@ import type { IndexSeries } from './types';
 const d = isoToDay;
 
 describe('index construction', () => {
-  it('level series with geometric interpolation; no extrapolation for benchmarks', () => {
+  it('level series: geometric interpolation; projection with the last trend only when asked', () => {
     const ipc = buildIndex({ id: 'IPC_CO', kind: 'level', source: 't', points: [{ date: '2024-01-31', value: 100 }, { date: '2024-02-29', value: 101 }] })!;
     expect(ipc.factor(d('2024-01-31'), d('2024-02-29'))).toBeCloseTo(1.01, 14);
     expect(ipc.factor(d('2024-01-31'), d('2024-02-14'))).toBeCloseTo(Math.pow(1.01, 14 / 29), 14);
     expect(ipc.factor(d('2024-01-31'), d('2024-03-31'))).toBeUndefined();
-    expect(ipc.factor(d('2024-01-31'), d('2024-03-31'), { extrapolate: true })).toBeCloseTo(1.01, 14);
+    // projected with February's daily trend, flagged as estimated by callers (C4/C32)
+    expect(ipc.factor(d('2024-01-31'), d('2024-03-31'), { extrapolate: true })).toBeCloseTo(1.01 * Math.pow(1.01, 31 / 29), 12);
+    expect(ipc.lastDay).toBe(d('2024-02-29'));
   });
 
   it('monthly variations (IPCA SGS 433) chain into month-end levels', () => {
@@ -60,10 +62,12 @@ describe('real returns and % of index', () => {
     const ibrFeb = Math.pow(1 + 0.12 / 360, 29) - 1;
     expect(feb.indexReturns!.IBR).toBeCloseTo(ibrFeb, 12);
     expect(feb.percentOfIndex!.IBR).toBeCloseTo(0.25 / ibrFeb, 9);
-    // March is partial and CPI for March is not published: no inflation (never extrapolated)
+    // March is partial and its CPI is not published: projected with February's variation (C4)
     expect(rows[2]!.partial).toBe(true);
-    expect(rows[2]!.inflation).toBeUndefined();
-    expect(rows[2]!.cumulativeRealTwr).toBeUndefined();
+    expect(rows[2]!.inflationEstimated).toBe(true);
+    expect(rows[2]!.inflation).toBeCloseTo(Math.pow(1.01, 15 / 29) - 1, 12);
+    expect(rows[1]!.inflationEstimated).toBeUndefined();
+    expect(rows[2]!.cumulativeRealTwr).toBeDefined();
     expect(rows[1]!.cumulativeRealTwr).toBeCloseTo((1 + rows[0]!.realTwr!) * (1 + feb.realTwr!) - 1, 12);
   });
 

@@ -42,6 +42,8 @@ import {
 import { positionPerformanceImpl } from './positions';
 import { type ValueIssues, buildValuation, newIssues, totalValue, valueAggregates } from './valuation';
 import { xirrDetailed } from './xirr';
+import { type GoalProjectionOptions, type GoalProjectionResult, goalProjection } from './goals';
+import { riskMetricsImpl } from './risk';
 
 /** First day included in the period (start value is measured at the end of the previous day). */
 export function periodStart(period: PeriodKey, asOf: ISODate, inception: ISODate | undefined, custom?: { from: ISODate; to: ISODate }): ISODate {
@@ -310,8 +312,12 @@ export class Engine {
 
     const infl = inflationIndexFor(ctx);
     if (infl) {
-      const f = ctx.market.index(infl)!.factor(baseDay, toDay);
+      // C4: real return "to date": unpublished months use the last published variation (flagged).
+      const idx = ctx.market.index(infl)!;
+      const f = idx.factor(baseDay, toDay, { extrapolate: true });
       if (f !== undefined) {
+        s.inflationThrough = dayToIso(Math.min(toDay, idx.lastDay));
+        if (toDay > idx.lastDay) s.inflationEstimated = true;
         s.inflation = f - 1;
         s.realTwr = (1 + twr) / f - 1;
         if (years >= 1 - 1e-12 && s.realTwr > -1) s.realTwrAnnualized = Math.pow(1 + s.realTwr, 1 / years) - 1;
@@ -375,6 +381,38 @@ export class Engine {
 
   positions(period: PeriodKey, asOf: ISODate, custom?: { from: ISODate; to: ISODate }): PositionPerformance[] {
     return positionPerformanceImpl(this, period, asOf, custom);
+  }
+
+  /**
+   * Goal projection from the portfolio (C35). Defaults: start value = value at asOf, monthly
+   * contribution = average net external flow of the last 12 months (>= 0), expected return =
+   * annualized TWR since inception (clamped to [-20 %, 30 %]), volatility = annualized monthly
+   * volatility, inflation = last 12 months of the base currency's inflation index.
+   */
+  goalProjection(asOf: ISODate, opts: Partial<GoalProjectionOptions> = {}): GoalProjectionResult {
+    const si = this.summary('SI', asOf);
+    const y = this.summary('1Y', asOf);
+    const years = si.years ?? 0;
+    const annual = si.twrAnnualized ?? (years > 0.25 && si.twr > -1 ? Math.pow(1 + si.twr, 1 / years) - 1 : 0.08);
+    const monthsInYear = Math.max(1, Math.min(12, Math.round((y.years ?? 1) * 12)));
+    const rows = this.monthly({ asOf });
+    const risk = riskMetricsImpl(rows);
+    let inflation: number | undefined;
+    const infl = inflationIndexFor(this.ctx);
+    if (infl) {
+      const to = isoToDay(asOf);
+      const f = this.ctx.market.index(infl)!.factor(isoToDay(addMonths(asOf, -12)), to, { extrapolate: true });
+      if (f !== undefined) inflation = f - 1;
+    }
+    return goalProjection({
+      startValue: si.endValueBase,
+      startDate: asOf,
+      monthlyContribution: Math.max(0, y.netFlowsBase / monthsInYear),
+      expectedReturn: Math.min(0.3, Math.max(-0.2, annual)),
+      volatility: risk.volatility > 0 ? risk.volatility : 0.15,
+      ...(inflation !== undefined ? { inflation } : {}),
+      ...opts,
+    });
   }
 }
 

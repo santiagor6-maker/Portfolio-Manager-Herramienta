@@ -3,12 +3,16 @@
  * (existing transactions for de-duplication and known instruments for matching).
  */
 import {
+  listBrokerProfiles,
   canonicalTemplateCsv,
   exportTransactionsCsv,
   importFile,
   inspectFile,
   listPresets,
   type ColumnMapping,
+  type CorporateActionSuggestion,
+  type DateFormat,
+  type NumberFormat,
   type FileInspection,
   type ImportResult,
   type Locale,
@@ -21,8 +25,19 @@ import { bulkAddTransactions, upsertInstruments } from '../db/repo';
 import { newId } from '../lib/ids';
 import { searchInstruments } from './marketData';
 
-export type { ColumnMapping, FileInspection, ImportResult, MappingField, PresetInfo };
-export { canonicalTemplateCsv, exportTransactionsCsv, listPresets };
+export type { ColumnMapping, CorporateActionSuggestion, DateFormat, FileInspection, ImportResult, MappingField, NumberFormat, PresetInfo };
+export { canonicalTemplateCsv, exportTransactionsCsv, listBrokerProfiles, listPresets };
+export type BrokerProfileInfo = ReturnType<typeof listBrokerProfiles>[number];
+
+/** User answers collected by the review step and fed back into a re-run of the import. */
+export interface ImportAnswers {
+  dateFormat?: DateFormat;
+  numberFormat?: NumberFormat;
+  /** Line numbers of possible duplicates the user accepted. */
+  acceptDuplicates?: number[];
+  /** Unknown security spec / ticker → instrument id or MIC. */
+  securityMap?: Record<string, string>;
+}
 
 export interface ImportRequest {
   file: File;
@@ -32,6 +47,8 @@ export interface ImportRequest {
   mapping?: ColumnMapping;
   locale: Locale;
   defaultCurrency?: string;
+  brokerProfile?: string;
+  answers?: ImportAnswers;
 }
 
 export async function inspect(file: File, locale: Locale): Promise<FileInspection> {
@@ -54,6 +71,12 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
       existingInstruments,
       locale: req.locale,
       defaultCurrency: req.defaultCurrency,
+      brokerProfile: req.brokerProfile || undefined,
+      dateFormat: req.answers?.dateFormat,
+      numberFormat: req.answers?.numberFormat,
+      acceptDuplicates: req.answers?.acceptDuplicates?.length ? req.answers.acceptDuplicates : 'none',
+      securityMap: req.answers?.securityMap && Object.keys(req.answers.securityMap).length ? req.answers.securityMap : undefined,
+      catalog: (await import('../lib/catalog')).CATALOG,
       idFactory: () => newId('tx'),
     },
   );
@@ -106,4 +129,48 @@ export async function commitImport(
   const rows: Transaction[] = result.transactions.map((t) => ({ ...t, portfolioId, source: t.source ?? source }));
   await bulkAddTransactions(rows);
   return { transactions: rows.length, instruments: newInstruments.length };
+}
+
+/** Security names/tickers the importer could not resolve (answered with `securityMap`). */
+export function unresolvedSecurities(r: ImportResult): { key: string; code: string }[] {
+  const out = new Map<string, string>();
+  for (const issue of [...r.errors, ...r.rows.flatMap((x) => x.issues)]) {
+    if (issue.code === 'UNKNOWN_SECURITY' && issue.params?.spec) out.set(String(issue.params.spec), issue.code);
+    if (issue.code === 'EXCHANGE_REQUIRED' && issue.params?.symbol) out.set(String(issue.params.symbol), issue.code);
+  }
+  return [...out.entries()].map(([key, code]) => ({ key, code }));
+}
+
+/**
+ * Turns an importer corporate-action suggestion (incorporação, cisão, conversão...) into the
+ * core SPLIT transaction with subtype MERGER / SPINOFF / TICKER_CHANGE. Returns undefined when a
+ * leg cannot be resolved to a known instrument.
+ */
+export function corporateActionToTransaction(
+  ca: CorporateActionSuggestion,
+  resolve: (symbol: string | undefined) => Instrument | undefined,
+  portfolioId: string,
+  costFraction?: number,
+): Transaction | undefined {
+  const out = ca.legs.find((l) => l.direction === 'out');
+  const inn = ca.legs.find((l) => l.direction === 'in');
+  const from = resolve(out?.symbol);
+  const to = resolve(inn?.symbol);
+  if (!from || !to) return undefined;
+  const ratio = out?.quantity && inn?.quantity ? inn.quantity / out.quantity : 1;
+  const subtype = ca.kind === 'spinoff' ? 'SPINOFF' : ca.kind === 'symbol_change' ? 'TICKER_CHANGE' : 'MERGER';
+  return {
+    id: newId('tx'),
+    portfolioId,
+    date: ca.date,
+    type: 'SPLIT',
+    subtype,
+    instrumentId: from.id,
+    targetInstrumentId: to.id,
+    ratio,
+    currency: from.currency,
+    costFraction: subtype === 'SPINOFF' ? (costFraction ?? 0) : undefined,
+    note: ca.description,
+    source: 'import:corporate-action',
+  };
 }

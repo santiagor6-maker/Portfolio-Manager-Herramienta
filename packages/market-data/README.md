@@ -109,8 +109,10 @@ Hallazgos al validar:
   devuelve estos dos.
 - **Nutresa** (`NUTRESA.CL`) sigue cotizando (318.340 COP, muy ilíquida tras las OPA).
 - **Canacol** (`CNEC.CL`) sin precio desde 2025-11-14: excluida.
-- Renombres en B3: ELET3 → **AXIA3**, EMBR3 → **EMBJ3**, CCRO3 → **MOTV3**, NTCO3 → **NATU3**,
-  BRFS3 → **MBRF3**, CPLE6 → **CPLE3**. Yahoo reporta los FII y ETF de B3 como `EQUITY`: la clase
+- Renombres en B3 (misma acción): ELET3 → **AXIA3**, EMBR3 → **EMBJ3**, CCRO3 → **MOTV3**, NTCO3 → **NATU3**,
+  MRFG3 → **MBRF3**.
+- Fusiones y conversiones (otra acción, ver M23): BRFS3 → 0,8521 **MBRF3**; CPLE6/CPLE5 → 1 **CPLE3** + R$0,7749.
+- Yahoo reporta los FII y ETF de B3 como `EQUITY`: la clase
   de activo sale del catálogo o de una heurística por nombre (FII/Imobiliário → `reit`,
   "Índice" → `etf`).
 - **COLCAP**: `^COLCAP` no existe en Yahoo y el índice MSCI COLCAP (`^737809-COP-STRD`) solo trae
@@ -176,8 +178,12 @@ Fixtures (`test/fixtures/`):
   la documentación, el router y la cadena de precios caen al siguiente proveedor y lo registran.
 - No hay serie diaria del COLCAP: Yahoo no la tiene y BanRep publica solo el promedio mensual.
 - En Colombia (BVC) no hay fecha de pago de dividendos. Solo B3 la trae, vía brapi y con `BRAPI_TOKEN`.
-- Las fechas efectivas de los renombres no están verificadas, así que la tabla de alias las deja vacías. Las
-  relaciones de canje de NTCO3→NATU3, BRFS3/MRFG3→MBRF3 y CPLE6→CPLE3 se asumen 1:1 y hay que verificarlas.
+- Renombres sin fecha efectiva verificada (PFBCOLOM, BCOLOMBIA, ELET3, EMBR3, CCRO3). No afecta los precios:
+  son la misma serie con canje 1:1.
+- BVC: no hay fuente gratuita de respaldo de precios, ni calendario de dividendos con cuotas y fechas de pago,
+  ni COLCAP diario. La API pública de la BVC (`rest.bvc.com.co`) no es accesible desde el contenedor y sus
+  parámetros no están documentados.
+- Cupones NTN-C (IGP-M): se emite la fecha y se marcan `reviewRequired`, sin valor.
 - Los spin-offs fuera de la lista conocida (GE/GEV, GE/GEHC, MMM/SOLV) se marcan `reviewRequired` sin
   instrumento destino.
 
@@ -271,3 +277,26 @@ Hallazgos en el servicio SDMX de BanRep (`totoro.banrep.gov.co/nsi-jax-ws`):
 | M17 | baja | Validación por ítem en batch (`BAD_REQUEST`); los errores internos se responden como `INTERNAL` sin mensaje. | `round2` M17, server |
 | M18 | baja | Búsqueda por ISIN vía Yahoo, filtro de ruido por prefijo de palabra, la subcadena solo cuenta con 5 o más letras ("isa" ya no trae Visa) y `countries=` prioriza países. | `round2` M18 |
 | M19 | baja | CoinGecko como proveedor de precios cripto y de pares cripto en `/api/fx` (Yahoo `BTC-USD` primero). | `round2` M19 + vivo |
+
+## Respuesta a la revisión ronda 2
+
+| Gap | Severidad | Corrección | Prueba |
+|---|---|---|---|
+| M23 | alta | La tabla de alias distingue `rename` (misma acción: se cose la historia, 1:1) de `merger` y `conversion` (otra acción). Para un ticker fusionado se devuelve **solo su propia historia** hasta su último día de negociación (vacía si ningún proveedor la conserva), con `delisted`, `SPLIT/MERGER` y la componente en efectivo. Su cotización responde **410 DELISTED** con `suggest`. Datos verificados: BRFS3 → **0,8521** MBRF3 (desde 2025-09-23; último día 2025-09-22); MRFG3 → MBRF3 1:1 como renombre (Marfrig es la sobreviviente); NTCO3 → NATU3 1:1 (desde 2025-07-02); CPLE6 y CPLE5 → 1 CPLE3 + **R$0,7749** (2025-12-22; pago 2025-12-30). | `round3` M23, server, vivo |
+| M20 | media | Si la barra del último día con operación (`regularMarketTime`) viene con `close: null`, se completa con `regularMarketPrice` y se deja nota; los demás nulos quedan en `missingCloseDates`. Un año cerrado solo se congela cuando está asentado: desde el 4 de enero, o desde el 15 de enero si termina con barras sin cierre. En vivo, SAP.DE da 188.6 tanto en el historial como en la cotización. | `round3` M20, vivo |
+| M21 | media | `DELETE /api/cache` exige `API_TOKEN`. Sin token solo funciona con `ALLOW_LOCAL_ADMIN=1` desde un socket loopback **real**, sin proxy: nunca en serverless (sin socket), nunca con `X-Forwarded-For` falsificado y nunca con `trustProxy`. Los clientes sin dirección comparten un bucket `anonymous`, con aviso (en serverless hay que usar `TRUST_PROXY=1`). | server round 3 |
+| M22 | media | Feeds JSON en modo filas (`rowsPath` + `dateField` + `closeField`). El modo de rutas paralelas conserva los huecos (`keepMissing`) y rechaza longitudes distintas, así que una fila sin valor ya no desplaza las siguientes. | `round3` M22 |
+| M25 | media | Los errores de los índices pasan por `mapHttpError` y responden 502/404/503, nunca 500. El IPCA tiene una segunda fuente (IBGE SIDRA, tabla 1737 v63). Se guarda la última serie buena por índice y se sirve con `stale: true`, `fallbacks` y nota si todo falla. | `round3` M25, server |
+| M26 | media | Eventos `DIVIDEND/COUPON` para los títulos "com Juros Semestrais". NTN-F paga R$48,80885 por título (10 % a.a. semestral sobre R$1000). NTN-B paga VNA × 2,956301 %, con el VNA calculado desde el IPCA (R$1000 el 2000-07-15, actualizado cada día 15). Las fechas siguen el mes de vencimiento y el mes a seis meses de distancia, movidas al siguiente día hábil: NTN-B 2035/2045 en mayo y noviembre, NTN-B 2030/2040 en febrero y agosto, NTN-F en enero y julio. Corrijo la sugerencia de la revisión (ene/jul para NTN-B): eso solo vale para NTN-F y NTN-C. Si falta el IPCA o el título es NTN-C, el cupón sale con fecha y `reviewRequired`, sin valor. Pedí a core que registre `COUPON` como INTEREST. | `round3` M26 |
+| M2 | media (parcial) | Sin claves: si `query2` falla, Yahoo reintenta en `query1` (verificado como host independiente). Los respaldos ajustados por splits (stooq, FMP) se convierten a cierres tal como se negociaron con la historia de splits cacheada. **Sigue abierto**: no hay una segunda fuente gratuita para BVC ni Londres; la API de la BVC no es accesible desde aquí y no está documentada. | `round3` M2 |
+| M8 | media (persiste) | Sin cambios de fuente: la BVC no publica su calendario de dividendos en una API accesible. Lo que existe: `payDate` y JCP vía brapi (con token) y la moneda del dividendo (VUSA/VWRL). | — |
+| M15 | media (persiste) | Pruebas de contrato en `live.test.ts`: en una máquina con acceso verifican PTAX compra/venta, SGS, SIDRA, BCE, FRED, Tesouro, brapi y stooq contra los servicios reales (`RECORD=1` recuerda regrabar los fixtures). Desde el contenedor informan "UNREACHABLE". | vivo (contrato) |
+| M24 | baja | `stale` solo se calcula con la fecha de última operación global de Yahoo o cuando el rango llega a los últimos 7 días. Un rango histórico cerrado de un FIC, Tesouro o feed ya no aparece como "suspendido". | `round3` M24 |
+| M27 | baja | `/api/health` no consume del límite. Un batch cuesta un token por ítem. Hay allowlist de `Host` (`ALLOWED_HOSTS`; por defecto localhost, 127.0.0.1 y [::1] cuando `HOST` es loopback) contra DNS rebinding. | server round 3 |
+| M13 | baja (persiste) | Sin cambios: el COLCAP diario requiere la API de la BVC, inaccesible. Sigue el promedio mensual de BanRep (`COLCAP_AVG`) más ICOLCAP con retorno total. | — |
+| M18 | baja (parcial) | Los ISIN de valores renombrados resuelven vía alias: `COB07PA00078` → XBOG:PFCIBEST. No encontré una fuente accesible de ISIN de la BVC: el formato 351 de la Superfinanciera solo trae nemotécnicos para acciones. | `round3` M18 |
+
+Fuentes de los datos de M23:
+- BRF→MBRF 0,8521, efectiva el 2025-09-23: [Finance News](https://financenews.com.br/2025/09/novas-acoes-da-mbrf-mbrf3-estreiam-na-b3-em-23-de-setembro/), [Investidor10](https://investidor10.com.br/noticias/mbrf3-cai-6-72-em-estreia-na-bolsa-mas-nao-impede-recorde-ao-ibovespa-115614/).
+- NTCO3→NATU3 1:1 desde el 2025-07-02: [Acionista](https://acionista.com.br/natura-comeca-a-operar-com-ticker-natu3-nesta-quarta-feira-3/), [Suno](https://www.suno.com.br/noticias/natura-ntco3-anuncia-reestruturacao-extingue-holding/amp/).
+- Copel 1 ON + R$0,7749 (2025-12-22, pago el 2025-12-30): [Investidor10](https://investidor10.com.br/noticias/copel-cple3-agora-so-tem-acoes-ordinarias-em-negociacao-na-b3-117563/), [Seu Dinheiro](https://www.seudinheiro.com/2025/empresas/copel-cple6-rumo-ao-novo-mercado-da-b3-tudo-o-que-os-acionistas-precisam-saber-sobre-os-dividendos-e-o-que-fazer-com-as-acoes-agora-miql/), [Acionista](https://acionista.com.br/copel-cple6-anuncia-mudancas-que-podem-impactar-acoes-e-dividendos/).

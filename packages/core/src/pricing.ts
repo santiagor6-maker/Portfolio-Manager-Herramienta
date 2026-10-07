@@ -14,6 +14,7 @@
 import type { AccrualSpec, DayCount, Instrument } from './types';
 import { isoToDay, lastIndexAtOrBefore } from './dates';
 import { fixedGrowth } from './indices';
+import { calendarForCurrency } from './calendars';
 import type { LotBook, LotState } from './lots';
 import type { EngineContext, Ledger } from './ledger';
 
@@ -27,6 +28,20 @@ export interface PriceInfo {
 
 function multiplier(m: number | undefined): number {
   return m && m > 0 ? m : 1;
+}
+
+/** Latest market/manual close on or before day (instrument currency), without trade prints. */
+export function marketInfo(ctx: EngineContext, inst: Instrument, day: number): PriceInfo | undefined {
+  const m = ctx.market;
+  const pt = m.pricePointAt(inst.id, day);
+  if (!pt) return undefined;
+  const pc = m.priceCurrency(inst.id);
+  let p: number | undefined = pt.close;
+  if (pc && pc !== inst.currency) {
+    const r = m.fxAt(pc, inst.currency, day) ?? m.fxNearest(pc, inst.currency, day);
+    p = r === undefined ? undefined : p * r;
+  }
+  return p === undefined ? undefined : { price: p, day: pt.day, source: 'market' };
 }
 
 /** Latest price observation (market close or trade print) on or before day, instrument currency. */
@@ -70,7 +85,8 @@ export function accrualFactor(ctx: EngineContext, inst: Instrument, a: number, b
   if (spec.maturity) end = Math.min(end, isoToDay(spec.maturity));
   if (end <= start) return 1;
   const dc = defaultDayCount(spec, inst);
-  if (spec.kind === 'fixed') return fixedGrowth(spec.annualRate ?? 0, start, end, dc);
+  const cal = calendarForCurrency(inst.currency); // C29: ANBIMA for BRL, Colombia for COP
+  if (spec.kind === 'fixed') return fixedGrowth(spec.annualRate ?? 0, start, end, dc, cal);
   let g = 1;
   if (spec.index) {
     const idx = ctx.market.index(spec.index);
@@ -81,8 +97,18 @@ export function accrualFactor(ctx: EngineContext, inst: Instrument, a: number, b
     if (f === undefined) return undefined;
     g = f;
   }
-  if (spec.spread) g *= fixedGrowth(spec.spread, start, end, dc);
+  if (spec.spread) g *= fixedGrowth(spec.spread, start, end, dc, cal);
   return g;
+}
+
+/** The accrual on `day` uses an index projected beyond its last published value (C4/C32). */
+export function accrualEstimated(ctx: EngineContext, inst: Instrument, day: number): boolean {
+  const spec = inst.accrual;
+  if (!spec || spec.kind !== 'indexed' || !spec.index) return false;
+  const idx = ctx.market.index(spec.index);
+  if (!idx) return false;
+  const end = spec.maturity ? Math.min(day, isoToDay(spec.maturity)) : day;
+  return end > idx.lastDay + (idx.kind === 'annualRate' ? 31 : 1);
 }
 
 export interface PositionValue {
@@ -97,6 +123,10 @@ export interface PositionValue {
   rate?: number;
   missingFx: boolean;
   missingIndex: boolean;
+  /** Accrual uses a projected (unpublished) index value. */
+  estimated: boolean;
+  /** Per-lot values in instrument currency (accrual instruments), for taxes on the yield. */
+  lotValues?: number[];
 }
 
 /** Accrued per-lot values (instrument currency) for an accrual instrument. */
@@ -107,7 +137,9 @@ export function accruedLotValues(
   day: number,
 ): { values: number[]; missingIndex: boolean; anchor?: PriceInfo } {
   const mult = multiplier(inst.priceMultiplier);
-  const info = priceInfo(ctx, inst, day);
+  // Anchor = market/manual price only. Trade prints of other lots do not re-anchor: each
+  // CDT/CDB purchase is its own contract with its own rate (round 3, F8).
+  const info = marketInfo(ctx, inst, day);
   let missingIndex = false;
   const values = lots.map((l) => {
     let unit: number;
@@ -142,7 +174,9 @@ export function valuePosition(ledger: Ledger, book: LotBook, inst: Instrument, d
   let price: number | undefined;
   let priceDay: number | undefined;
   let missingIndex = false;
-  if (override !== undefined) {
+  let estimated = false;
+  let lotValues: number[] | undefined;
+  if (override !== undefined && !inst.accrual) {
     mv = (q * override) / mult;
     source = 'trade';
     price = override;
@@ -150,7 +184,9 @@ export function valuePosition(ledger: Ledger, book: LotBook, inst: Instrument, d
   } else if (inst.accrual) {
     const r = accruedLotValues(ctx, inst, book.lots, day);
     mv = r.values.reduce((s, v) => s + v, 0);
+    lotValues = r.values;
     missingIndex = r.missingIndex;
+    estimated = !missingIndex && accrualEstimated(ctx, inst, day);
     source = missingIndex ? 'cost' : 'accrual';
     price = q !== 0 ? (mv * mult) / q : undefined;
     priceDay = day;
@@ -170,5 +206,5 @@ export function valuePosition(ledger: Ledger, book: LotBook, inst: Instrument, d
   if (rate !== undefined) mvBase = mv * rate;
   else if (source === 'cost') mvBase = book.costBasisBase;
   else mvBase = book.costBasis !== 0 ? mv * (book.costBasisBase / book.costBasis) : 0;
-  return { mv, mvBase, source, price, priceDay, rate, missingFx: exact === undefined, missingIndex };
+  return { mv, mvBase, source, price, priceDay, rate, missingFx: exact === undefined, missingIndex, estimated, lotValues };
 }

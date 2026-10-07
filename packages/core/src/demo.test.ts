@@ -75,8 +75,11 @@ describe('createDemoData', () => {
     expect(cdt.priceSource).toBe('accrual');
     expect(cdt.marketValue).toBeCloseTo(10_000_000 * Math.pow(1.12, 320 / 365), 2);
     const red = realizedGains(d.input).find((r) => r.instrumentId === 'MANUAL:CDT-2024')!;
-    expect(red.sellDate).toBe('2025-02-09');
-    expect(red.proceeds).toBeCloseTo(10_000_000 * Math.pow(1.12, 360 / 365), 2);
+    // matures Sunday 2025-02-09 -> paid Monday 2025-02-10, net of the estimated 4 % retención
+    expect(red.sellDate).toBe('2025-02-10');
+    const gross = 10_000_000 * Math.pow(1.12, 360 / 365);
+    expect(red.proceeds).toBeCloseTo(gross - 0.04 * (gross - 10_000_000), 2);
+    expect(red.estimated).toBe(true);
     const rows = monthlyPerformance(d.input);
     expect(rows.every((r) => r.inflation !== undefined && r.realTwr !== undefined)).toBe(true);
     expect(rows.at(-1)!.indexReturns).toHaveProperty('IBR');

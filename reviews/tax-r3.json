@@ -1,0 +1,41 @@
+{
+  "part": "tax",
+  "round": 3,
+  "score": 8,
+  "competitorName": "Gorila",
+  "competitorScore": 7,
+  "approved": false,
+  "fixed": ["T12", "T14", "T20", "T22", "T23", "T24", "T25", "T26", "T27", "T28", "T29", "T30", "T31", "T32", "T33", "T34", "T36", "T37"],
+  "gaps": [
+    {"id": "T35", "severity": "baja", "text": "(persiste) A la tabla Selic incluida le falta 2026-01, así que un DARF vencido antes de enero de 2026 y pagado después queda sin juros ni total."},
+    {"id": "T38", "severity": "alta", "text": "El régimen de la cripto se decide por la moneda del instrumento y no por la custodia: un BTC cotizado en USD pero custodiado en Mercado Bitcoin va a la Lei 14.754 y se omite el DARF 4600 mensual (R$ 30.000 en A7), con solo un aviso info."},
+    {"id": "T39", "severity": "media", "text": "El vencimiento de opciones se calcula una sola vez por instrumento: un ticker reutilizado al año siguiente nunca vence y su prima (R$ 2.000 en A3) no tributa."},
+    {"id": "T40", "severity": "media", "text": "Las opciones semanales (sufijo W1–W5, p. ej. PETRC350W4) se clasifican como ACAO y reciben la exención de R$ 20 mil."},
+    {"id": "T41", "severity": "baja", "text": "parseOfficialDocCsv interpreta '1,234.56' (miles en formato EE.UU.) como 1,23456."},
+    {"id": "T42", "severity": "baja", "text": "El XLSX de Brasil convierte en números los códigos con cero a la izquierda (grupo '03' → 3, línea '09' → 9)."},
+    {"id": "T43", "severity": "media", "text": "El IRPFM se estima sin el redutor de la carga combinada empresa+persona y puede sobrestimar mucho el impuesto de quien vive de dividendos; tampoco aclara el trato de los dividendos de la transición."},
+    {"id": "T44", "severity": "media", "text": "La conciliación exige transcribir los documentos a CSV (no lee el PDF del informe, la Área do Investidor ni la exógena de la DIAN) y compara el JCP en bruto cuando los informes suelen traerlo líquido."},
+    {"id": "T45", "severity": "baja", "text": "El régimen del exterior anterior a 2024 no calcula el carnê-leão mensal ni el crédito por la retención extranjera, y simplifica la conversión cambial de la IN SRF 118/2000."},
+    {"id": "T46", "severity": "baja", "text": "Los futuros de commodities cotizados en USD (ICF) usan el valor del punto en R$ sin convertir la moneda."}
+  ],
+  "matrix": [
+    {"feature": "Apuración mensual B3 (exención de R$ 20 mil, swing/day trade, FII, corto)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Compensación de pérdidas por categoría", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "DARF pagable (Sicalc, estado, multa e intereses, conciliación por código)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Opciones (vencimiento, ejercicio, semanales), futuros, aluguel", "ours": "partial", "others": {"Sharesight": "no", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Renta fija y fondos (tabla regresiva, IOF, exentos, come-cotas)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Cripto (GCAP, exención de R$ 35 mil, custodia en el exterior)", "ours": "partial", "others": {"Sharesight": "partial", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Proventos con línea DIRPF (dividendos, JCP, FII, aluguel; Lei 15.270)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "IRPFM (Lei 15.270)", "ours": "partial", "others": {"Sharesight": "no", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Bens e Direitos (CNPJ, campos del exterior por activo)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Exterior Lei 14.754 y régimen anterior a 2024", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Reporte Colombia (Formulario 210 con casillas, 160, Arts. 36-1, 153, 241, 254-1)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Diferencia en cambio realizada y componente inflacionario (Colombia)", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Chequeo de retención de EE.UU. y riesgo de impuesto de sucesiones", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "partial", "Ghostfolio": "no"}},
+    {"feature": "Parámetros por año con fuente legal y estado de verificación", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Simulación de venta e impuesto no realizado", "ours": "yes", "others": {"Sharesight": "yes", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "partial", "Ghostfolio": "no"}},
+    {"feature": "Exportación para el contador (XLSX/CSV, modelo para PDF)", "ours": "yes", "others": {"Sharesight": "yes", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "partial", "Ghostfolio": "partial"}},
+    {"feature": "Conciliación con documentos oficiales (informe, pré-preenchida, exógena, 1042-S)", "ours": "partial", "others": {"Sharesight": "partial", "Gorila": "partial", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Ingesta directa de datos oficiales (B3 Área do Investidor, DIAN)", "ours": "no", "others": {"Sharesight": "partial", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}}
+  ]
+}

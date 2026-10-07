@@ -21,7 +21,10 @@ describe('createEngine', () => {
 
   it('matches the stateless API and caches by input object', () => {
     expect(performanceSummary(d.input, '1Y', d.asOf).twr).toBeCloseTo(eng.summary('1Y', d.asOf).twr, 12);
-    expect(monthlyPerformance(d.input)).toBe(monthlyPerformance(d.input)); // cached
+    const a = monthlyPerformance(d.input);
+    const b = monthlyPerformance(d.input);
+    expect(b).toEqual(a); // same content (cached engine)...
+    expect(b).not.toBe(a); // ...but every call returns a fresh copy (C23)
     expect(valueSeries(d.input, { from: '2026-01-01', to: d.asOf, step: 'week' }).length).toBeGreaterThan(30);
   });
 
