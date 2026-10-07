@@ -87,6 +87,10 @@ const PAGES: [string, string][] = [
   ['/ajustes', 'settings'],
   ['/mensual/cierre', 'month-close'],
   ['/movimientos', 'transactions'],
+  ['/informe', 'report'],
+  ['/metas', 'goals-empty'],
+  ['/lista', 'watchlist'],
+  ['/alertas', 'alerts-empty'],
 ];
 
 test('screenshots of the remaining pages (desktop)', async ({ page }) => {
@@ -110,7 +114,9 @@ test('phone width + dark theme', async ({ page }) => {
   await expect(page.getByTestId('positions-table')).toBeVisible();
   await shot(page, 'positions-phone');
   await page.goto('/');
-  await page.getByRole('button', { name: 'Tema oscuro' }).click();
+  await page.getByTestId('menu-button').click();
+  await page.getByTestId('drawer').getByRole('button', { name: 'Tema oscuro' }).click();
+  await page.keyboard.press('Escape');
   await waitForData(page);
   await shot(page, 'dashboard-phone-dark');
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -124,7 +130,7 @@ test('phone width + dark theme', async ({ page }) => {
 
 test('no horizontal page scroll at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/', '/mensual', '/posiciones', '/movimientos', '/divisas', '/ajustes']) {
+  for (const path of ['/', '/mensual', '/posiciones', '/movimientos', '/divisas', '/ajustes', '/informe', '/metas', '/alertas', '/rendimiento', '/dividendos']) {
     await page.goto(path);
     await expect(page.locator('main h1').first()).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

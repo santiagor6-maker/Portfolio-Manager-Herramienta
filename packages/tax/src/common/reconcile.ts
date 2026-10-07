@@ -1,4 +1,6 @@
+import { parseLocaleNumber } from './basis';
 import { parseCsv } from './xlsx';
+import type { CsvCell } from './csv';
 
 export type ReconStatus = 'ok' | 'diferente' | 'falta_no_portfolio' | 'falta_no_documento';
 
@@ -68,25 +70,54 @@ export interface OfficialDocRow {
 }
 
 export function parseOfficialDocCsv(text: string, delimiter = ';', decimal: '.' | ',' = ','): OfficialDocRow[] {
-  const rows = parseCsv(text, delimiter, decimal);
-  const header = (rows[0] ?? []).map((h) => String(h ?? '').trim().toLowerCase());
-  const col = (...names: string[]) => header.findIndex((h) => names.includes(h));
+  return officialDocRowsFromTable(parseCsv(text, delimiter, decimal));
+}
+
+const H = (s: unknown) =>
+  String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+/**
+ * Header-mapped rows from any table (CSV or XLSX sheet). Accepts our own headers and the column
+ * names used by B3 (Área do Investidor) and DIAN (exógena) exports. The header row may not be the first.
+ */
+export function officialDocRowsFromTable(rows: CsvCell[][]): OfficialDocRow[] {
+  const syn = {
+    tipo: ['tipo', 'concepto', 'type', 'movimentacao', 'tipo de evento', 'evento'],
+    ticker: ['ticker', 'emisor', 'ativo', 'activo', 'symbol', 'codigo de negociacao', 'produto'],
+    id: ['cnpj', 'nit', 'cnpj_empresa', 'id', 'cnpj da empresa', 'nit informante', 'nit del informante', 'numero de identificacion'],
+    nome: ['nome', 'nombre', 'empresa', 'name', 'razon social', 'razao social', 'instituicao'],
+    valor: ['valor', 'value', 'monto', 'bruto', 'valor da operacao', 'valor liquido', 'valor atualizado', 'valor reportado'],
+    imposto: ['irrf', 'retencion', 'imposto', 'tax', 'ir', 'valor retenido'],
+    quantidade: ['quantidade', 'cantidad', 'quantity'],
+    codigo: ['codigo', 'code'],
+    periodo: ['periodo', 'mes', 'month', 'data'],
+  } as const;
+  const headerIdx = rows.findIndex((r) => r.some((c) => (syn.valor as readonly string[]).includes(H(c)) || (syn.quantidade as readonly string[]).includes(H(c))));
+  if (headerIdx < 0) return [];
+  const header = rows[headerIdx]!.map(H);
+  const col = (names: readonly string[]) => header.findIndex((h) => names.includes(h));
   const c = {
-    tipo: col('tipo', 'concepto', 'type'),
-    ticker: col('ticker', 'emisor', 'ativo', 'activo', 'symbol'),
-    id: col('cnpj', 'nit', 'cnpj_empresa', 'id'),
-    nome: col('nome', 'nombre', 'empresa', 'name'),
-    valor: col('valor', 'value', 'monto', 'bruto'),
-    imposto: col('irrf', 'retencion', 'retención', 'imposto', 'tax'),
-    quantidade: col('quantidade', 'cantidad', 'quantity'),
-    codigo: col('codigo', 'código', 'code'),
-    periodo: col('periodo', 'período', 'mes', 'month'),
+    tipo: col(syn.tipo),
+    ticker: col(syn.ticker),
+    id: col(syn.id),
+    nome: col(syn.nome),
+    valor: col(syn.valor),
+    imposto: col(syn.imposto),
+    quantidade: col(syn.quantidade),
+    codigo: col(syn.codigo),
+    periodo: col(syn.periodo),
   };
-  const num = (v: unknown) => (typeof v === 'number' ? v : v === undefined || v === '' ? undefined : Number(String(v).replace(/\./g, '').replace(',', '.')));
-  const str = (i: number, r: unknown[]) => (i >= 0 && r[i] !== undefined && r[i] !== '' ? String(r[i]) : undefined);
+  // Locale-aware: '1,234.56' and '1.234,56' are both 1234.56 (T41).
+  const num = (v: unknown) =>
+    typeof v === 'number' ? v : v === undefined || v === '' || v === '-' ? undefined : parseLocaleNumber(String(v).replace(/^R\$|^\$|^COP|^USD/i, '').trim());
+  const str = (i: number, r: CsvCell[]) => (i >= 0 && r[i] !== undefined && r[i] !== '' && r[i] !== null ? String(r[i]) : undefined);
   return rows
-    .slice(1)
-    .filter((r) => r.some((x) => x !== '' && x !== undefined))
+    .slice(headerIdx + 1)
+    .filter((r) => r.some((x) => x !== '' && x !== undefined && x !== null))
     .map((r) => ({
       tipo: str(c.tipo, r) ?? '',
       ticker: str(c.ticker, r),

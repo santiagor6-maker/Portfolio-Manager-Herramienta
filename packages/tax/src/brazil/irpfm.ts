@@ -13,7 +13,9 @@ export const IRPFM_META: ParamMeta = {
     'capital (exceto em bolsa), poupança, LCI/LCA/CRI/CRA, FII/Fiagro, FI-Infra, debêntures incentivadas, heranças/doações; ' +
     'deduzem-se o IRPF do ajuste, IRRF e imposto definitivo sobre os rendimentos incluídos.',
   checkedOn: '2026-10-06',
-  note: 'Redutor por tributação da pessoa jurídica (lucros distribuídos) não calculado. Regulamentação da RFB a conferir.',
+  note:
+    'Redutor calculado com a alíquota efetiva informada por empresa (issuerEffectiveRates); sem ela, o resultado é uma faixa ' +
+    '(máximo sem redutor; mínimo supondo carga efetiva de 34% na empresa). Dividendos da transição (lucros até 2025) fora da base por padrão. Regulamentação da RFB a conferir.',
 };
 
 export interface IrpfmInput {
@@ -27,6 +29,18 @@ export interface IrpfmInput {
   /** IRPF/IRRF already due on that other income (progressive table, withheld at source). */
   otherTaxPaid?: number;
   config?: BrazilTaxYearConfig;
+  /**
+   * Effective IRPJ+CSLL rate of each distributing company (by issuer key, e.g. 'BVMF:VALE'), for the
+   * redutor (T43). Unknown issuers produce a range: no redutor (max) vs. a full 34% burden (min).
+   */
+  issuerEffectiveRates?: Record<string, number>;
+  /** Nominal combined limit per issuer: 34% general, 40% insurers/others, 45% banks. Default 34%. */
+  issuerLimits?: Record<string, number>;
+  /**
+   * Include dividends of the Lei 15.270 transition (profits up to 2025 approved by 31/12/2025) in the
+   * base. Default false (needs verification against the regulation).
+   */
+  includeTransitionDividends?: boolean;
 }
 
 export interface IrpfmEstimate {
@@ -38,6 +52,11 @@ export interface IrpfmEstimate {
   irpfmGross: number;
   credits: { label: string; value: number }[];
   creditsTotal: number;
+  /** Redutor (company + IRPFM burden above the nominal limit) with the issuer rates supplied. */
+  redutor: number;
+  /** Due when unknown issuers already bear the full 34% (min) or nothing is known (max). */
+  irpfmDueRange: { min: number; max: number };
+  redutorByIssuer: { issuer: string; dividends: number; effectiveRate?: number; limit: number; redutorMin: number; redutorMax: number }[];
   irpfmDue: number;
   meta: ParamMeta;
   note: string;
@@ -62,8 +81,10 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
   const bolsaGains = sum(
     months.map((m) => Math.max(0, m.results.acoes + m.results.etf + m.results.bdr + m.results.opcoes + m.results.futuros + m.results.direitos + m.results.dayTrade + m.results.fii)),
   );
+  const divRows = (prov?.rows ?? []).filter((r) => r.type === 'DIVIDENDO' && (inp.includeTransitionDividends || !r.lei15270Transition));
+  const dividends = sum(divRows.map((r) => r.gross));
   const components = [
-    { label: 'Dividendos (ações)', value: prov?.totals.dividendos ?? 0 },
+    { label: 'Dividendos (ações)', value: dividends },
     { label: 'Juros sobre capital próprio', value: prov?.totals.jcpGross ?? 0 },
     { label: 'Renda fixa tributável', value: inp.rendaFixa?.totals.rendimentosTributaveis ?? 0 },
     { label: 'Ganhos líquidos em bolsa (inclusive isentos)', value: bolsaGains },
@@ -82,6 +103,19 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
   const creditsTotal = sum(credits.map((c) => c.value));
   const rate = params ? irpfmRate(base, params) : 0;
   const gross = base * rate;
+  // Redutor (Lei 15.270/2025): when the company's effective rate plus the IRPFM rate exceeds the
+  // nominal limit (34% / 40% / 45%), the excess applied to that company's dividends is deducted.
+  const byIssuer = new Map<string, number>();
+  for (const r of divRows) byIssuer.set(r.issuer ?? r.instrumentId ?? '?', (byIssuer.get(r.issuer ?? r.instrumentId ?? '?') ?? 0) + r.gross);
+  const redutorByIssuer = [...byIssuer.entries()].map(([issuer, d]) => {
+    const limit = inp.issuerLimits?.[issuer] ?? 0.34;
+    const eff = inp.issuerEffectiveRates?.[issuer];
+    const red = (e: number) => Math.min(d * rate, d * Math.max(0, e + rate - limit));
+    return { issuer, dividends: d, effectiveRate: eff, limit, redutorMin: eff !== undefined ? red(eff) : 0, redutorMax: red(eff ?? limit) };
+  });
+  const redKnown = sum(redutorByIssuer.map((r) => r.redutorMin));
+  const redFull = sum(redutorByIssuer.map((r) => r.redutorMax));
+  const due = (red: number) => Math.max(0, gross - creditsTotal - red);
   return {
     year: inp.year,
     applicable: !!params,
@@ -91,10 +125,13 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
     irpfmGross: gross,
     credits,
     creditsTotal,
-    irpfmDue: Math.max(0, gross - creditsTotal),
+    redutor: redKnown,
+    irpfmDueRange: { min: due(redFull), max: due(redKnown) },
+    redutorByIssuer,
+    irpfmDue: due(redKnown),
     meta: IRPFM_META,
     note: params
-      ? `IRPFM: 0% até R$ ${params.lowerLimit.toLocaleString('pt-BR')}/ano, crescendo linearmente até ${params.maxRate * 100}% a partir de R$ ${params.upperLimit.toLocaleString('pt-BR')}. Estimativa sem o redutor de lucros já tributados na empresa.`
+      ? `IRPFM: 0% até R$ ${params.lowerLimit.toLocaleString('pt-BR')}/ano, crescendo linearmente até ${params.maxRate * 100}% a partir de R$ ${params.upperLimit.toLocaleString('pt-BR')}. Redutor: carga empresa + IRPFM limitada a 34% (40%/45% setor financeiro).`
       : `IRPFM não se aplica a ${inp.year} (vigente a partir de 2026).`,
   };
 }

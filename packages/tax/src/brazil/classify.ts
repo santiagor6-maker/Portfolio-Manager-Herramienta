@@ -1,4 +1,5 @@
 import type { Instrument } from '@pm/core';
+import type { ParamMeta, TaxInput, TaxIssue } from '../common/types';
 
 /**
  * Tax categories for a Brazilian resident:
@@ -38,9 +39,12 @@ const BDR_SUFFIX = /(3[2345]|39)$/;
 export const FUTURES_RE = /^(WIN|WDO|IND|DOL|BGI|CCM|ICF|DI1|SJC|BIT|ETR|SOL)[FGHJKMNQUVXZ]\d{2}$/;
 
 /** Point value (R$ per point per contract) of common B3 futures. Override via instrument.priceMultiplier < 1 is not used. */
-export const FUTURES_POINT_VALUE: Record<string, number> = { WIN: 0.2, IND: 1, WDO: 10, DOL: 50, BGI: 330, CCM: 450, ICF: 100 };
+export const FUTURES_POINT_VALUE: Record<string, number> = { WIN: 0.2, IND: 1, WDO: 10, DOL: 50, BGI: 330, CCM: 450, ICF: 100, SJC: 450 };
+/** Futures quoted in US dollars (point value is in USD): converted to BRL at the trade date (T46). */
+export const FUTURES_QUOTE_CURRENCY: Record<string, 'USD'> = { ICF: 'USD', SJC: 'USD' };
 
-export const OPTION_RE = /^[A-Z]{4}[A-X]\d{1,4}[A-Z]?$/;
+/** B3 option tickers, incl. weekly series with suffix W1-W5 (T40), e.g. PETRC350W4. */
+export const OPTION_RE = /^[A-Z]{4}[A-X]\d{1,4}(?:[A-Z]|W[1-5])?$/;
 /** Subscription rights (1, 2) and receipts (9, 10) of B3 shares. */
 const RIGHTS_RE = /^[A-Z]{4}(1|2|9|10)$/;
 /** Known B3 fixed-income ETFs (Lei 13.043/2014). Extend via categoryOverrides. */
@@ -51,24 +55,122 @@ const ETF_RF_NAME = /renda fixa|ima-?b|irf-?m|tesouro|treasury|\blft\b|\bntn|deb
 
 export type CryptoCustody = 'brasil' | 'exterior' | 'desconhecida';
 
-/** Exchanges with Brazilian entity/CNPJ (custody in Brazil → GCAP monthly). Extend via cryptoCustody. */
-const BR_CRYPTO_EXCHANGES = new Set(['MERCADOBITCOIN', 'MB', 'FOXBIT', 'NOVADAX', 'BITPRECO', 'BITYPRECO', 'BRASILBITCOIN', 'RIPIO_BR', 'XP_CRIPTO', 'NUBANK_CRIPTO', 'BTG_MYNT', 'MYNT', 'HASHDEX_BR']);
+const norm = (s: string) => s.toUpperCase().normalize('NFD').replace(/[^A-Z0-9]/g, '');
+
+/** Exchanges/brokers with a Brazilian entity (CNPJ): custody in Brazil → GCAP monthly. Extend via accountCustody. */
+const BR_CRYPTO_VENUES = new Set(
+  [
+    'MERCADOBITCOIN', 'MB', 'FOXBIT', 'NOVADAX', 'BITPRECO', 'BITYPRECO', 'BRASILBITCOIN', 'RIPIO', 'RIPIOBR', 'XPCRIPTO', 'XP',
+    'XPINVESTIMENTOS', 'NUBANK', 'NUCRIPTO', 'NUBANKCRIPTO', 'BTGMYNT', 'MYNT', 'BTG', 'BTGPACTUAL', 'HASHDEXBR', 'INTER', 'BANCOINTER',
+    'PICPAY', 'MERCADOPAGO', 'BINANCEBR', 'BINANCEBRASIL', 'COINEXT', 'ITAU', 'ITAUCRIPTO', 'RICO', 'CLEAR', 'GENIAL', 'AVENUEBR',
+  ].map(norm),
+);
 /** Foreign exchanges/custodians (Lei 14.754/2023 annual regime). */
-const FOREIGN_CRYPTO_EXCHANGES = new Set(['BINANCE', 'COINBASE', 'KRAKEN', 'BYBIT', 'OKX', 'KUCOIN', 'BITFINEX', 'GEMINI', 'BITSTAMP', 'CRYPTOCOM', 'GATEIO', 'HTX', 'HUOBI', 'BITGET', 'MEXC', 'NEXO']);
+const FOREIGN_CRYPTO_VENUES = new Set(
+  ['BINANCE', 'BINANCECOM', 'COINBASE', 'KRAKEN', 'BYBIT', 'OKX', 'KUCOIN', 'BITFINEX', 'GEMINI', 'BITSTAMP', 'CRYPTOCOM', 'GATEIO', 'HTX', 'HUOBI', 'BITGET', 'MEXC', 'NEXO', 'REVOLUT'].map(norm),
+);
+
+export const CRYPTO_CUSTODY_META: ParamMeta = {
+  status: 'needs-verification',
+  source: 'Listas internas de exchanges com/sem entidade no Brasil (IN RFB 1.888/2019; Lei 14.754/2023)',
+  checkedOn: '2026-10-07',
+  note:
+    '"Binance" sem sufixo é tratada como exterior, mas a Binance opera no Brasil com entidade local: se a conta é a brasileira, ' +
+    'informe accountCustody { "Binance": "brasil" } (ou use a conta "Binance BR").',
+};
+
+/** Custody implied by a venue/account name (broker, exchange or wallet label), if recognised. */
+export function cryptoCustodyForVenue(name: string | undefined, accountCustody?: Record<string, CryptoCustody>): CryptoCustody | undefined {
+  if (!name) return undefined;
+  const n = norm(name);
+  if (accountCustody) {
+    for (const [k, v] of Object.entries(accountCustody)) if (norm(k) === n) return v;
+  }
+  if (BR_CRYPTO_VENUES.has(n)) return 'brasil';
+  if (FOREIGN_CRYPTO_VENUES.has(n)) return 'exterior';
+  if (/^(SELF|WALLET|CARTEIRA|LEDGER|TREZOR|COLD|METAMASK)/.test(n)) return 'desconhecida';
+  return undefined;
+}
 
 /**
- * Where a crypto-asset is custodied, which defines its regime for a Brazilian resident:
- * 'brasil' → GCAP monthly (R$ 35k exemption, DARF 4600); 'exterior' → Lei 14.754/2023 annual 15%;
- * 'desconhecida' → never generates a DARF until the user confirms (self-custody wallets, MANUAL...).
+ * Custody of a crypto-asset from the instrument alone (explicit override or the exchange in the
+ * instrument id). The quote currency is NOT a custody signal (T38): BTC-USD from Yahoo may be held at
+ * Mercado Bitcoin. Prefer `routeCryptoByCustody`, which also reads `Transaction.account`.
  */
 export function cryptoCustodyOf(inst: Instrument, overrides?: Record<string, CryptoCustody>): CryptoCustody {
   const o = overrides?.[inst.id];
   if (o) return o;
-  const ex = inst.exchange.toUpperCase().replace(/[\s.-]/g, '');
-  if (BR_CRYPTO_EXCHANGES.has(ex)) return 'brasil';
-  if (FOREIGN_CRYPTO_EXCHANGES.has(ex)) return 'exterior';
-  if (inst.currency !== 'BRL') return 'exterior';
-  return 'desconhecida';
+  return cryptoCustodyForVenue(inst.exchange) ?? 'desconhecida';
+}
+
+export interface CryptoRouting {
+  /** Input with crypto transactions re-pointed to per-custody virtual instruments when needed. */
+  input: TaxInput;
+  /** Custody per (possibly virtual) instrument id. */
+  custody: Record<string, CryptoCustody>;
+  issues: TaxIssue[];
+}
+
+/**
+ * Decides the regime of each crypto transaction by CUSTODY (T38): instrument override, then the
+ * transaction's account/broker (`Transaction.account`, `accountCustody` map, known Brazilian/foreign
+ * venues), then the instrument's exchange; otherwise 'desconhecida' (DARF withheld + warning).
+ * When one asset is held at venues with different regimes, it is split into virtual instruments
+ * `${id}#brasil` / `${id}#exterior` so each part follows its own regime and cost basis.
+ */
+export function routeCryptoByCustody(
+  input: TaxInput,
+  opts: { cryptoCustody?: Record<string, CryptoCustody>; accountCustody?: Record<string, CryptoCustody> } = {},
+): CryptoRouting {
+  const custody: Record<string, CryptoCustody> = {};
+  const issues: TaxIssue[] = [];
+  const cryptos = new Map(input.instruments.filter((i) => i.assetClass === 'crypto').map((i) => [i.id, i]));
+  if (!cryptos.size) return { input, custody: { ...(opts.cryptoCustody ?? {}) }, issues };
+  const txCustody = new Map<string, CryptoCustody>();
+  const byInst = new Map<string, Set<CryptoCustody>>();
+  for (const t of input.transactions) {
+    const inst = t.instrumentId ? cryptos.get(t.instrumentId) : undefined;
+    if (!inst) continue;
+    const c =
+      opts.cryptoCustody?.[inst.id] ??
+      cryptoCustodyForVenue(t.account, opts.accountCustody) ??
+      cryptoCustodyForVenue(inst.exchange, opts.accountCustody) ??
+      'desconhecida';
+    txCustody.set(t.id, c);
+    byInst.set(inst.id, (byInst.get(inst.id) ?? new Set()).add(c));
+  }
+  const extra: Instrument[] = [];
+  for (const [id, set] of byInst) {
+    if (set.size === 1) {
+      custody[id] = [...set][0]!;
+      continue;
+    }
+    const inst = cryptos.get(id)!;
+    for (const c of set) {
+      extra.push({ ...inst, id: `${id}#${c}`, name: `${inst.name} (${c})` });
+      custody[`${id}#${c}`] = c;
+    }
+    issues.push({
+      level: 'info',
+      code: 'CRYPTO_SPLIT_BY_CUSTODY',
+      instrumentId: id,
+      message: `${inst.symbol} está em custódias diferentes (${[...set].join(', ')}): cada parte segue seu regime e custo médio próprios.`,
+    });
+  }
+  for (const [id, inst] of cryptos) if (!custody[id] && !byInst.has(id)) custody[id] = opts.cryptoCustody?.[id] ?? cryptoCustodyOf(inst);
+  if (!extra.length) return { input, custody, issues };
+  const split = new Set(extra.map((e) => e.id.split('#')[0]!));
+  return {
+    input: {
+      ...input,
+      instruments: [...input.instruments, ...extra],
+      transactions: input.transactions.map((t) =>
+        t.instrumentId && split.has(t.instrumentId) ? { ...t, instrumentId: `${t.instrumentId}#${txCustody.get(t.id)}` } : t,
+      ),
+    },
+    custody,
+    issues,
+  };
 }
 
 export function classifyForBrazil(

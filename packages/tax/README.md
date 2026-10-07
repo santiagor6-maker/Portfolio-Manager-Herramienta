@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 135 pruebas con escenarios calculados a mano (46 de regresión ronda 1 + 35 ronda 2)
+npx vitest run packages/tax      # 152 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3)
 npx tsc -p packages/tax --noEmit
 ```
 

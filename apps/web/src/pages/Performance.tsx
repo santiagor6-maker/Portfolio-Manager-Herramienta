@@ -140,7 +140,12 @@ export default function PerformancePage() {
           loading={loading}
           label={mainIdx ? t('perf.pctOfIndex', { index: indexName(mainIdx) }) : t('perf.pctOfIndexShort')}
           value={<Pct value={mainIdx ? si?.percentOfIndex?.[mainIdx] : undefined} decimals={0} />}
-          sub={<span className="text-xs text-muted">{mainIdx ? t('perf.indexWas', { index: indexName(mainIdx), value: formatPct(si?.indexReturns?.[mainIdx], f.locale, { signed: true }) }) : t('perf.noIndex')}</span>}
+          sub={
+            <span className="text-xs text-muted">
+              {mainIdx ? t('perf.indexWas', { index: indexName(mainIdx), value: formatPct(si?.indexReturns?.[mainIdx], f.locale, { signed: true }) }) : t('perf.noIndex')}
+              {mainIdx && a?.indexCoverage[mainIdx] ? ` · ${t('perf.indexUntil', { month: formatMonth(a.indexCoverage[mainIdx]!, f.locale) })}` : ''}
+            </span>
+          }
           hint={t('perf.pctOfIndexHint')}
         />
         <Kpi loading={loading} label={t('perf.volatility')} value={<Pct value={risk?.volatility} />} sub={<span className="text-xs text-muted">{t('perf.volatilitySub')}</span>} />

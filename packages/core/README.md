@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 160 pruebas
+npx vitest run packages/core        # 190 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -116,22 +116,48 @@ en `MonthlyRow.missingFx` y `PerformanceSummary.missingFx`; nunca ceros silencio
 ### Renta fija por devengo (CDT, CDB, LCI/LCA, Tesouro, TES)
 
 `Instrument.accrual = { kind, annualRate?, index?, spread?, percentOfIndex?, dayCount?, maturity?, issueDate? }`.
-Cada lote se valora como `precio ancla × F(ancla → fecha)`; el ancla es el último precio de mercado/manual u
-operación posterior a la apertura del lote, o el precio de compra del lote (los precios manuales mandan y
-reinician el devengo desde su fecha). El devengo para en `maturity`, donde la posición se **redime
-automáticamente** a su valor devengado (ganancia realizada, caja).
+Cada lote se valora como `precio ancla × F(ancla → fecha)`. El ancla es el último precio de mercado o
+manual posterior a la apertura del lote; si no hay, el precio de compra del lote. Los precios manuales
+mandan y reinician el devengo desde su fecha. Las compras de otros lotes **no** re-anclan, porque cada CDT o
+CDB es su propio contrato. El devengo para en `maturity`.
+
+Vencimiento (ronda 3):
+- El pago se espera el siguiente día hábil del calendario del instrumento.
+- Si el usuario registra una venta o redención dentro de `settlementWindowDays` días hábiles (5 por defecto),
+  ese registro es el pago real, con su retención, y no hay redención automática.
+- Si no la registra, el motor redime automáticamente al valor devengado, **neto de la retención estimada**,
+  y la ganancia realizada queda marcada `estimated`.
+
+Impuestos sobre el rendimiento (`taxRegime`). La regla por defecto sigue la jurisdicción del instrumento
+(retención en la fuente):
+- **`BR_IR_REGRESSIVE`**: IOF los primeros 30 días e IR de 22,5 % / 20 % / 17,5 % / 15 % según el plazo.
+- **`CO_RETENCION`**: 4 % sobre los intereses (configurable con `withholdingRate`).
+- **`EXEMPT`**: LCI, LCA, CRI, CRA e incentivadas.
+
+Con eso, `Holding.accruedTaxBase` y `Holding.netMarketValueBase` dan el valor líquido, y
+`Valuation.totalNetMarketValueBase` el total neto.
 
 ```
 fijo (CDT E.A., prefixado):      F = (1 + tasa)^(t)           t por base de días
 indexado (% del CDI, IBR):        F = Π (1 + p·r_día) × (1 + spread)^(t)
 indexado (IPCA+, UVR+):           F = I(b)/I(a) × (1 + spread)^(t)
-t: ACT/365 = días/365 (CDT colombiano E.A.); BUS/252 = días hábiles/252 (Brasil; por defecto para CDI/SELIC
-y BRL); ACT/360; 30/360.
+t: ACT/365 = días/365 (CDT colombiano E.A.); ACT/ACT = años calendario; BUS/252 = días hábiles/252 con el
+calendario ANBIMA (Brasil; por defecto para CDI/SELIC y BRL); ACT/360; 30/360.
+"% del índice" sobre una tasa anual escala la tasa DIARIA: (1 + p·((1+r)^(1/252) − 1))^du.
 ```
+
+Calendarios (`calendars.ts`, generados por algoritmo a partir de la Pascua):
+- **ANBIMA / B3:** Carnaval, Viernes Santo, Corpus Christi, feriados nacionales y Consciencia Negra desde
+  2024.
+- **Colombia:** Ley Emiliani, con los festivos trasladados al lunes, Jueves y Viernes Santo.
+
+Se usan en BUS/252, en la extrapolación del CDI, y para mover vencimientos al siguiente día hábil.
 
 Ejemplo: CDT de 10.000.000 COP al 12 % E.A. comprado el 2024-01-02 vale 10.000.000 × 1,12^(364/365) =
 11.196.523 el 2024-12-31. CDB 110 % do CDI: `10.000 × Π(1 + 1,1 × CDI_día)` sobre los días hábiles. Sin datos
-del índice ⇒ se valora al valor de compra y se informa `missingIndex`.
+del índice ⇒ se valora al valor de compra y se informa `missingIndex`. En meses aún no publicados (IPCA/IPC)
+el devengo continúa con la última variación publicada y la posición se marca `estimated`
+(`Valuation.estimatedIndex`).
 
 ### Descomposición precio vs. divisa (ganancia no realizada en base)
 
@@ -164,12 +190,20 @@ día con flujo f:           r_a = P(f) / V(f−1) − 1                      (me
                            si P + ENTRADAS − SALIDAS ≈ 0 (salida total): r_b = (V(f) + SALIDAS)/(P(f) + ENTRADAS) − 1
 ```
 
-`V(d)` = valor al cierre del día `d` (todas las operaciones aplicadas). `P(f)` = valor **antes** de los flujos:
-las posiciones al cierre de `f−1` valoradas con los precios del día `f`, salvo los instrumentos negociados ese
-día, que se valoran a su (primer) precio de operación, y con la FX del día `f`. Junto con el uso del precio de
+`V(d)` = valor al cierre del día `d`, con todas las operaciones aplicadas.
+
+`P(f)` = valor **antes** de los flujos. Se toman las posiciones al cierre de `f−1` **más las acciones
+corporativas de inicio de día de `f`** (split, bonificación, spin-off, fusión; ronda 3). Se valoran con los
+precios y la FX del día `f`; los instrumentos negociados ese día van a su primer precio de operación, salvo
+que ese precio sea atípico. Junto con el uso del precio de
 la operación como observación, esto da exactamente el retorno del activo en los casos de la revisión: precios
 solo de fin de mes 100 → 125 con una compra a mitad de mes a 120 ⇒ **+25 %**; 100 → 105 (compra al cierre) →
 110 ⇒ **+10 %**. Un aporte que queda en caja no se lleva el movimiento del día de las posiciones existentes.
+
+Precios de operación atípicos (ronda 3): un precio que se desvía más de `tradePriceTolerance` (30 % por
+defecto, ampliado con la raíz del número de meses de distancia) del cierre o precio anterior **y** del cierre
+siguiente no se usa como precio, y se informa `TRADE_PRICE_OUTLIER`. Tampoco se usan las operaciones de menos
+del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
 (`DEGENERATE_SUBPERIOD`, `NEGATIVE_VALUE_SUBPERIOD`).
@@ -313,18 +347,30 @@ históricos. `input` está listo para el motor y `isDemo` es `true` para mostrar
 
 Un portafolio de 10 años, 2.000 movimientos y 40 instrumentos con precios diarios genera la serie
 diaria completa en ~0,2 s y el tablero completo (10 resúmenes + rentabilidad por posición, motor nuevo) en
-~0,6 s (prueba `perf.test.ts`, límite 1,5 s). `createEngine(input)` memoriza el libro y una cadena diaria de
-valores e índice TWR: cualquier periodo es `I(b)/I(a) − 1`. Las funciones de la API usan un motor en caché
-por objeto `input` (tratar las entradas como inmutables). Con 30.000 movimientos y 150 instrumentos
-(escenario S6 del revisor) los 10 resúmenes bajaron de 1,74 s a 0,59 s.
+~0,5 s (prueba `perf.test.ts`, límite 1,5 s). `createEngine(input)` memoriza el libro y una cadena diaria de
+valores e índice TWR: cualquier periodo es `I(b)/I(a) − 1`. El valor diario usa una ruta sin asignaciones de
+memoria para posiciones normales.
+
+Caché segura (ronda 3):
+- `createEngine` toma una **copia** de la entrada.
+- Las funciones de la API reutilizan motores solo si el **contenido** es idéntico: un hash estructural de
+  todos los campos de los movimientos, instrumentos, portafolio, opciones y moneda de reporte, más la
+  identidad del objeto de datos de mercado. Por eso las ediciones sobre el mismo objeto, `options.asOf` o
+  `baseCurrency` se reflejan siempre.
+- Todo lo que se devuelve es una copia nueva: la UI puede ordenar, invertir o mutar sin efectos.
+- Cuando cambian los precios hay que pasar un nuevo `MarketData`; los de `createMarketData` son inmutables.
+
+Con 30.000 movimientos y 150 instrumentos (escenario S6), los 11 resúmenes tardan ~0,7 s, incluido el hash
+de contenido en cada llamada; en la ronda 1 eran 1,74 s.
 
 ## Pendientes / limitaciones conocidas
 
 - Los lotes son por portafolio (no por cuenta). Para rentabilidad por cuenta usar `options.filter.accounts`
   (cada cuenta se analiza como un portafolio propio, con sus flujos implícitos).
-- BUS/252 cuenta lunes a viernes sin calendario de feriados (el CDI diario de BCB sí trae solo días hábiles).
-- Renta fija: no hay cupones periódicos automáticos ni curva de mercado (marcación a mercado solo con
-  precios manuales); la redención automática usa el valor devengado.
+- Feriados: solo nacionales (no regionales ni cierres extraordinarios de bolsa).
+- Renta fija: los cupones periódicos llegan como acciones corporativas `DIVIDEND/COUPON` (sugeridas como
+  `INTEREST`); no hay curva de mercado (marcación a mercado solo con precios manuales). Los impuestos de
+  renta fija son estimaciones para mostrar; los cálculos oficiales están en `packages/tax`.
 - Ventas en corto no soportadas (se reportan como sobreventa).
 - Consolidar varios portafolios: pasar la unión de sus movimientos con un `Portfolio` sintético.
 
@@ -332,7 +378,7 @@ por objeto `input` (tratar las entradas como inmutables). Con 30.000 movimientos
 
 Revisión: `reviews/core-r1.md`. Los escenarios del revisor (S1a…S7f) quedaron como pruebas de regresión en
 `src/review-r1.test.ts`; además hay suites nuevas `fixedincome`, `indices`, `positions`, `corporate` y
-`engine`. Total: 160 pruebas.
+`engine`. Total en esa ronda: 160 pruebas.
 
 | Hallazgo | Severidad | Arreglo |
 |---|---|---|
@@ -376,3 +422,73 @@ campos opcionales de `MonthlyRow`, `PerformanceSummary` y `RiskMetrics`, `Positi
 `EngineOptions`; funciones nuevas `createEngine`, `positionPerformance`, `applyCorporateActions`,
 `goalProjection`, `xirrEx`. Ningún campo ni miembro de unión existente cambió de significado, salvo dos
 correcciones documentadas arriba: el orden del split en el día (C2) y la convención del día con flujo (C1).
+
+## Respuesta a la revisión ronda 2
+
+Revisión: `reviews/core-r2.md`; estos cambios forman la **ronda 3** del motor. Los escenarios del revisor
+(`r2-a` … `r2-f`) quedaron como pruebas de regresión en `src/review-r2.test.ts`. Total: **190 pruebas**,
+que pasan también con `TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. Las pruebas de `apps/web` (40) pasan
+y todos los paquetes dependientes compilan sin errores.
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C22 Split/spin-off + flujo el mismo día | Alta | El valor antes del flujo `P(f)` usa el estado "cierre de f−1 + acciones corporativas de inicio de día de f" (`Ledger.applyStartOfDay`) en la cadena diaria, la tabla mensual y `positionPerformance`. En posiciones, las reestructuraciones son flujos de inicio de día (`startInBase/startOutBase`). R1a, R1b y R1c = 0 % exactos. |
+| C23 Caché insegura | Alta | `createEngine` copia la entrada. La API busca motores por **hash de contenido** (todos los campos de los movimientos, instrumentos, portafolio, opciones, moneda, identidad del mercado; LRU de 8). Las salidas se devuelven como copias (`structuredClone`). E1–E4 pasan: edición en sitio, `asOf`, `baseCurrency`, `reverse()` de la UI. |
+| C24 La redención automática pisa el pago real | Alta | El vencimiento se paga el siguiente día hábil (calendario de la moneda). Una venta o redención registrada dentro de `settlementWindowDays` días hábiles (5) reemplaza la redención automática. Si no hay registro, la redención automática es **neta de la retención estimada** y queda `estimated`. F2: caja = 11.152.000, sin `OVERSELL`. |
+| C4 Rentabilidad real a hoy | Media | Los meses sin IPC/IPCA publicado usan la última variación (proyección geométrica, máximo 62 días) y se marcan con `inflationEstimated`. El resumen informa `inflationThrough`. YTD, 1Y y SI "a hoy" ya tienen `realTwr`. |
+| C25 Precio de operación con error de digitación | Media | Detector de atípicos frente al cierre o precio anterior y al cierre siguiente (`tradePriceTolerance`, 30 %). No se usa como precio y se informa `TRADE_PRICE_OUTLIER`. Las operaciones mínimas (< 0,5 % de la posición) no reemplazan cierres de la misma semana. R2: febrero −0,89 % (antes +900 %). |
+| C26 JCP + dividendo con la misma fecha ex | Media | Deduplicación por (instrumento, tipo, ventana ex/pago, subtipo o monto ±2 % o precio por acción); cada registro empareja una sola acción; los duplicados del proveedor se informan como `DUPLICATE_ACTION`. Retención sugerida y editable: JCP 15 %, dividendos de EE.UU. 30 % (`withholding`). |
+| C27 `applyCorporateActions` cuadrático | Media | Un solo ordenamiento y un barrido cronológico con índices por instrumento y búsqueda binaria: O((n+m) log n). 30.000 movimientos × 200 acciones: 34 ms (antes 2,9 s). 2.000 acciones en < 1 s (prueba). |
+| C28 Efectivo de fusión en la posición equivocada | Media | El efectivo es una enajenación parcial de la empresa **de origen**: se realiza una fracción del costo, `efectivo / (efectivo + valor de las acciones nuevas)`, y el resto pasa a la resultante. En posiciones va como flujo de inicio de día. K5: A = 0, B = +20, C = +50; realizado total = 70. |
+| C29 BUS/252 sin feriados | Media | Calendarios ANBIMA (Brasil) y Ley Emiliani (Colombia) generados desde la Pascua (`calendars.ts`). Se usan en BUS/252, en la extrapolación del CDI, para mover vencimientos y en la ventana de liquidación. F5: 253 días hábiles en 2024. |
+| C30 `implicitFx` tomaba caja de otra cuenta | Media | El faltante y la conversión implícita se financian solo con la caja de la **misma cuenta** (más la caja sin cuenta). Si la caja en moneda base está en otra cuenta, se informa `IMPLICIT_FX_OTHER_ACCOUNT`. La moneda de financiación (`fundingCurrency`: la del primer depósito o la del portafolio) no depende de la moneda de reporte. E5: la suma por cuenta es igual al consolidado. |
+| C31 Valor líquido de renta fija | Media | `fitax.ts`: IR regresivo + IOF (Brasil) y retención del 4 % (Colombia), según la jurisdicción del instrumento (`taxRegime`, `EXEMPT` para LCI/LCA). Campos `Holding.accruedTaxBase`, `netMarketValueBase` y `Valuation.totalNetMarketValueBase`. |
+| C32 Devengo IPCA+ plano en el mes no publicado | Baja | El devengo continúa con la última variación publicada; `Holding.estimated` y `Valuation.estimatedIndex`. Una compra unos días antes del primer nivel publicado se proyecta hacia atrás. |
+| C33 % de un índice anual | Baja | Se escala la tasa diaria: `(1 + p·((1+r)^(1/252) − 1))^du`. F4 coincide con la convención de mercado usando días ANBIMA. |
+| C34 `Engine.asOf` en UTC | Baja | Usa `todayIso()` (fecha local), igual que la tabla mensual. |
+| C35 Metas desconectadas | Baja | `goalProjection` acepta `inflation`, `indexContributions` y `realTerms`. Nuevo `goalProjectionForPortfolio(input, asOf, opts)` / `Engine.goalProjection`: usa el valor actual, el aporte promedio de 12 meses, el TWR anualizado, la volatilidad histórica y la inflación de la moneda base. |
+
+También en esta ronda, por pedido de market-data:
+- `CorporateAction {type: 'DIVIDEND', subtype: 'COUPON'}` se sugiere como **`INTEREST`** (cupones NTN-B y
+  NTN-F).
+- Una fusión llega como `SPLIT/MERGER` más un `DIVIDEND/EXTRAORDINARY` del mismo instrumento y la misma fecha
+  ex con el efectivo por acción (CPLE6 → R$ 0,7749). Se combinan en un único `SPLIT/MERGER` con
+  `amount = unidades × efectivo por acción`, y el dividendo queda como `ABSORBED_IN_MERGER`.
+- Los campos de `CorporateAction` que pidió market-data (`STOCK_DIVIDEND`, `subtype`, `exDate`, `payDate`,
+  `currency`, `targetInstrumentId`, `costFraction`, `reviewRequired`, `source`, `note`) están en el contrato.
+
+Correcciones detectadas al integrar con `apps/web`:
+- El régimen de retención de renta fija ya no depende de la moneda de reporte.
+- La moneda de financiación de la conversión implícita tampoco depende de ella.
+
+La vista consolidada de la web usa como base la moneda de reporte, y los pesos de asignación deben ser
+iguales en cualquier moneda.
+
+Esperados del revisor que cambian por diseño (las pruebas usan el valor corregido):
+- **F1:** la redención automática ahora es neta de la retención estimada del 4 %. Además, 2024-01-02 →
+  2025-01-02 son 366 días en ACT/365. Para un CDT que paga exactamente la tasa en un año calendario se usa
+  `dayCount: 'ACT/ACT'`.
+- **F4:** se cuentan días hábiles ANBIMA y no lunes a viernes.
+- **F8:** la segunda compra del mismo bono ya no re-ancla el primer lote, porque cada lote devenga su propio
+  contrato.
+
+Cambios aditivos al contrato:
+- `DayCount` agrega `'ACT/ACT'`.
+- `AccrualSpec` agrega `taxRegime`, `withholdingRate` y `settlementWindowDays`.
+- `Holding` agrega `accruedTaxBase`, `netMarketValueBase` y `estimated`.
+- `Valuation` agrega `estimatedIndex` y `totalNetMarketValueBase`.
+- `RealizedGain` agrega `estimated`.
+- `MonthlyRow` agrega `inflationEstimated`; `PerformanceSummary` agrega `inflationEstimated` e
+  `inflationThrough`.
+- `RiskMetrics` agrega `monthsUsed`, `maxDrawdownStartDate` y `maxDrawdownEndDate`.
+- `CorporateAction` agrega los campos indicados arriba.
+- `EngineOptions` agrega `tradePriceTolerance` y `fundingCurrency`.
+- Funciones nuevas: `goalProjectionForPortfolio` y `Engine.goalProjection`.
+- Módulos nuevos: `calendars.ts` y `fitax.ts`.
+
+Ningún campo existente cambió de significado. Los cambios de comportamiento son los arreglos descritos:
+- el estado antes del flujo incluye las acciones corporativas;
+- la redención es neta de retención estimada;
+- los atípicos no se usan como precio;
+- la caja de financiación es la de la misma cuenta;
+- BUS/252 usa feriados.

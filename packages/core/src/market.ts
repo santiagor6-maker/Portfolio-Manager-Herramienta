@@ -34,6 +34,8 @@ export interface EngineMarket extends MarketData {
   priceAt(instrumentId: string, day: number): number | undefined;
   /** Last price point on/before day (with its date). */
   pricePointAt(instrumentId: string, day: number): { day: number; close: number } | undefined;
+  /** Day of the last price point on/before day, or -Infinity (allocation-free). */
+  priceDayAt(instrumentId: string, day: number): number;
   fxAt(from: CurrencyCode, to: CurrencyCode, day: number): number | undefined;
   /** Like fxAt, but if no rate exists on/before day, uses the first rate after it (for historical cost only). */
   fxNearest(from: CurrencyCode, to: CurrencyCode, day: number): number | undefined;
@@ -321,6 +323,12 @@ export function createMarketDataImpl(input: MarketDataInput): MarketDataEx {
       const i = lastIndexAtOrBefore(s.days, day);
       return i < 0 ? undefined : { day: s.days[i] as number, close: s.values[i] as number };
     },
+    priceDayAt(instrumentId, day) {
+      const s = prices.get(instrumentId);
+      if (!s) return -Infinity;
+      const i = lastIndexAtOrBefore(s.days, day);
+      return i < 0 ? -Infinity : (s.days[i] as number);
+    },
     pricePoint(instrumentId, date) {
       const p = market.pricePointAt(instrumentId, isoToDay(date));
       return p ? { date: dayToIso(p.day), close: p.close } : undefined;
@@ -342,6 +350,7 @@ export function toEngineMarket(m: MarketData): EngineMarket {
     price: (id, date) => m.price(id, date),
     fx: (a, b, date) => m.fx(a, b, date),
     priceAt: (id, day) => m.price(id, dayToIso(day)),
+    priceDayAt: (id, day) => (m.price(id, dayToIso(day)) === undefined ? -Infinity : day),
     pricePointAt: (id, day) => {
       const close = m.price(id, dayToIso(day));
       return close === undefined ? undefined : { day, close };

@@ -37,7 +37,12 @@ const NOTE_RE = /\[(?:costo|cost|custo)\s*:\s*(\d{4}-\d{2}-\d{2})\s*@\s*([\d.,]+
  * Returns undefined for malformed input.
  */
 export function parseLocaleNumber(raw: string): number | undefined {
-  const s = raw.trim().replace(/\s/g, '');
+  const t = raw.trim().replace(/\s/g, '');
+  if (/^-/.test(t) || /^\(.*\)$/.test(t)) {
+    const v = parseLocaleNumber(t.replace(/^-|^\(|\)$/g, ''));
+    return v === undefined ? undefined : -v;
+  }
+  const s = t;
   if (!/^[\d.,]+$/.test(s) || !/\d/.test(s)) return undefined;
   const lastDot = s.lastIndexOf('.');
   const lastComma = s.lastIndexOf(',');

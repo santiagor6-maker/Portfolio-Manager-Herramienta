@@ -45,6 +45,7 @@ export const esR2 = {
     pctOfIndexShort: '% del índice de tasa',
     pctOfIndexHint: 'Rentabilidad del portafolio dividida por la del índice de tasa (100 % = igual que el CDI/IBR).',
     indexWas: '{{index}} del periodo: {{value}}',
+    indexUntil: 'datos hasta {{month}}',
     noIndex: 'Sin CDI/IBR cargado',
     inflationLine: 'Inflación ({{index}})',
     notAnnualized: 'No se anualizan periodos de menos de un año',

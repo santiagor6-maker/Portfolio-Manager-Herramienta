@@ -1,12 +1,12 @@
 import type { CurrencyCode, ISODate } from '@pm/core';
 import { basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
-import { lastBrazilBusinessDayOfMonth, nextMonth, yearOf } from '../common/dates';
+import { addDays, isBrazilBusinessDay, lastBrazilBusinessDayOfMonth, nextMonth, yearOf } from '../common/dates';
 import { gcapTax } from './crypto';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
-import { classifyForBrazil, type BrCategory, type CryptoCustody } from './classify';
+import { classifyForBrazil, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
 import { brazilConfig, type BrazilTaxYearConfig } from './config';
 
 /** BCB PTAX closing rates (BRL per unit of foreign currency). */
@@ -29,6 +29,13 @@ export interface BrForeignOptions {
   acceptNoteProposals?: boolean;
   /** Crypto custody per instrument id (foreign custody → this report, Lei 14.754). */
   cryptoCustody?: Record<string, CryptoCustody>;
+  /** Crypto custody per account/broker name (`Transaction.account`). */
+  accountCustody?: Record<string, CryptoCustody>;
+  /**
+   * Pre-2024 only (IN SRF 118/2000): instruments bought with income earned abroad — the gain is computed
+   * in foreign currency and converted at the PTAX of the sale date (T45).
+   */
+  foreignOriginInstruments?: string[];
   /**
    * Portfolio base currency; when 'BRL' (default) `fxRateToBase` of foreign-currency deposits is
    * used as the cost actually paid for the currency (IN RFB 2.180/2024).
@@ -51,6 +58,8 @@ export interface BrForeignSaleRow {
   proceedsBrl: number;
   /** Average acquisition cost in BRL (each purchase at PTAX de compra of its date). */
   costBrl: number;
+  /** Average acquisition cost in the foreign currency. */
+  costFx: number;
   gainBrl: number;
 }
 
@@ -112,6 +121,9 @@ export interface BrForeignReport {
     months: { month: string; salesBrl: number; exempt: boolean; gainBrl: number; tax: number; darfDueDate?: ISODate }[];
     totalTax: number;
     dividendsCarneLeaoBrl: number;
+    /** Carnê-leão on foreign dividends/interest (T45): monthly progressive table, credit for tax paid abroad. */
+    carneLeao: { month: string; incomeBrl: number; taxTable: number; foreignTaxCreditBrl: number; taxDue: number; darfCode: '0190'; dueDate: ISODate }[];
+    carneLeaoTotal: number;
   };
   disclaimer: LocalizedText;
   sales: BrForeignSaleRow[];
@@ -142,7 +154,10 @@ interface YearAgg {
  * PTAX de venda of the receipt date, losses offset within the year and carried forward, and tax
  * paid abroad credited up to the Brazilian tax on that income.
  */
-export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOptions): BrForeignReport {
+export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOptions): BrForeignReport {
+  const routed = routeCryptoByCustody(rawInput, { cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
+  const input = routed.input;
+  const cryptoCustody = routed.custody;
   const cfgOf = opts.config ?? brazilConfig;
   const year = opts.year;
   const instruments = instrumentMap(input.instruments);
@@ -162,6 +177,14 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     }
     return r;
   };
+  /** Carnê-leão: USD "cotação de compra" of the last business day of the 1st half of the previous month. */
+  const carneLeaoRate = (ccy: CurrencyCode, date: ISODate): number => {
+    const [y, m] = date.split('-').map(Number) as [number, number];
+    const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+    let d = `${pm}-15`;
+    while (!isBrazilBusinessDay(d)) d = addDays(d, -1);
+    return rate('buy', ccy, d);
+  };
   if (!opts.ptax) {
     issues.push({
       level: 'info',
@@ -170,7 +193,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     });
   }
 
-  const isForeign = (id?: string) => classifyForBrazil(id ? instruments.get(id) : undefined, opts.categoryOverrides, opts.cryptoCustody) === 'FOREIGN';
+  const isForeign = (id?: string) => classifyForBrazil(id ? instruments.get(id) : undefined, opts.categoryOverrides, cryptoCustody) === 'FOREIGN';
   const pos = new Map<string, { qty: number; costFx: number; costBrl: number }>();
   const pool = new CurrencyPool();
   let shortfallWarned = false;
@@ -325,6 +348,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
         const coveredShare = qRequested > 0 ? q / qRequested : 0;
         const f = p.qty > 0 ? Math.min(1, q / p.qty) : 0;
         const costBrl = p.costBrl * f;
+        const costFxSold = p.costFx * f;
         p.qty = Math.max(0, p.qty - q);
         p.costFx -= p.costFx * f;
         p.costBrl -= costBrl;
@@ -343,6 +367,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
             ptaxSell: ps,
             proceedsBrl,
             costBrl,
+            costFx: costFxSold,
             gainBrl: proceedsBrl - costBrl,
           });
           pool.add(ccy, proceedsFx - taxes, (proceedsFx - taxes) * ps);
@@ -419,7 +444,7 @@ export function brazilForeignAnnualReport(input: TaxInput, opts: BrForeignOption
     sales: a.sales,
     income: a.income,
     totals: totals ?? computeYear(a, carry, cfgYear),
-    gcapPre2024: regime === 'pre-2024' ? pre2024(a) : undefined,
+    gcapPre2024: regime === 'pre-2024' ? pre2024(a, opts.foreignOriginInstruments ?? [], carneLeaoRate) : undefined,
     positions: snap.positions,
     positionsPrevYear: prev.positions,
     cash: snap.cash,
@@ -506,15 +531,58 @@ function computeYear(a: YearAgg, carryIn: number, cfg: BrazilTaxYearConfig): BrF
   };
 }
 
-function pre2024(a: YearAgg): NonNullable<BrForeignReport['gcapPre2024']> {
+/** Monthly IRPF table (carnê-leão): [upTo, rate, deduction]. Until Apr/2023 and from May/2023 (Lei 14.663/2023). */
+const IRPF_MONTHLY_OLD: [number, number, number][] = [[1903.98, 0, 0], [2826.65, 0.075, 142.8], [3751.05, 0.15, 354.8], [4664.68, 0.225, 636.13], [Infinity, 0.275, 869.36]];
+const IRPF_MONTHLY_2023_05: [number, number, number][] = [[2112, 0, 0], [2826.65, 0.075, 158.4], [3751.05, 0.15, 370.4], [4664.68, 0.225, 651.73], [Infinity, 0.275, 884.96]];
+
+export function irpfMonthlyTax(base: number, month: string): number {
+  const table = month >= '2023-05' ? IRPF_MONTHLY_2023_05 : IRPF_MONTHLY_OLD;
+  const row = table.find(([upTo]) => base <= upTo)!;
+  return Math.max(0, base * row[1] - row[2]);
+}
+
+function pre2024(
+  a: YearAgg,
+  foreignOrigin: string[],
+  carneLeaoRate: (ccy: CurrencyCode, date: ISODate) => number,
+): NonNullable<BrForeignReport['gcapPre2024']> {
+  const gain = (x: BrForeignSaleRow) => (foreignOrigin.includes(x.instrumentId) ? (x.proceedsFx - x.costFx) * x.ptaxSell : x.gainBrl);
   const byMonth = new Map<string, BrForeignSaleRow[]>();
   for (const s of a.sales) byMonth.set(s.date.slice(0, 7), [...(byMonth.get(s.date.slice(0, 7)) ?? []), s]);
   const months = [...byMonth.entries()].sort().map(([month, list]) => {
     const salesBrl = sum(list.map((x) => x.proceedsBrl));
     const exempt = salesBrl <= 35_000;
-    const gainBrl = sum(list.map((x) => Math.max(0, x.gainBrl)));
-    const tax = exempt ? 0 : sum(list.map((x) => gcapTax(Math.max(0, x.gainBrl))));
+    const gainBrl = sum(list.map((x) => Math.max(0, gain(x))));
+    const tax = exempt ? 0 : sum(list.map((x) => gcapTax(Math.max(0, gain(x)))));
     return { month, salesBrl, exempt, gainBrl, tax, darfDueDate: tax > 0 ? lastBrazilBusinessDayOfMonth(nextMonth(month)) : undefined };
   });
-  return { months, totalTax: sum(months.map((m) => m.tax)), dividendsCarneLeaoBrl: sum(a.income.map((i) => i.grossBrl)) };
+  const incByMonth = new Map<string, { income: number; foreignTax: number }>();
+  for (const i of a.income) {
+    const m = i.date.slice(0, 7);
+    const r = carneLeaoRate(i.currency, i.date);
+    const acc = incByMonth.get(m) ?? { income: 0, foreignTax: 0 };
+    acc.income += i.grossFx * r;
+    acc.foreignTax += i.foreignTaxFx * r;
+    incByMonth.set(m, acc);
+  }
+  const carneLeao = [...incByMonth.entries()].sort().map(([month, v]) => {
+    const taxTable = irpfMonthlyTax(v.income, month);
+    const credit = Math.min(v.foreignTax, taxTable);
+    return {
+      month,
+      incomeBrl: v.income,
+      taxTable,
+      foreignTaxCreditBrl: credit,
+      taxDue: taxTable - credit,
+      darfCode: '0190' as const,
+      dueDate: lastBrazilBusinessDayOfMonth(nextMonth(month)),
+    };
+  });
+  return {
+    months,
+    totalTax: sum(months.map((m) => m.tax)),
+    dividendsCarneLeaoBrl: sum(a.income.map((i) => i.grossBrl)),
+    carneLeao,
+    carneLeaoTotal: sum(carneLeao.map((c) => c.taxDue)),
+  };
 }

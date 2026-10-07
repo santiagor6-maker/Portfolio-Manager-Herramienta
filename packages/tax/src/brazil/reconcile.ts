@@ -16,6 +16,8 @@ export interface BrInformeRendimentos {
     nomeEmpresa?: string;
     valor: number;
     irrf?: number;
+    /** The value is net of IRRF (common for JCP in B3/broker statements). */
+    liquido?: boolean;
   }[];
   /** Custody position at 31/12. */
   posicoes?: { ticker: string; quantidade: number; cnpjEmpresa?: string }[];
@@ -36,6 +38,46 @@ export interface BrReconciliation {
   cnpjByIssuer: Record<string, string>;
   summary: { ok: number; diferente: number; faltaNoPortfolio: number; faltaNoDocumento: number };
   issues: TaxIssue[];
+}
+
+const b3Ticker = (s?: string) => (s ?? '').split(/\s+-\s+|\s/)[0]?.trim().toUpperCase() ?? '';
+const yearOfBr = (d?: string) => (d ? (/(\d{4})-\d{2}-\d{2}/.exec(d)?.[1] ?? /\d{2}\/\d{2}\/(\d{4})/.exec(d)?.[1]) : undefined);
+
+/**
+ * B3 Área do Investidor "Movimentação" export (XLSX/CSV, read with readXlsx/parseCsv +
+ * officialDocRowsFromTable): proventos credited to the investor. JCP there is NET of IRRF (T44).
+ */
+export function informeFromB3Movimentacao(rows: OfficialDocRow[], ano: number): BrInformeRendimentos {
+  const itens: BrInformeRendimentos['itens'] = [];
+  for (const r of rows) {
+    if (yearOfBr(r.periodo) !== String(ano)) continue;
+    const t = r.tipo.toLowerCase();
+    const tipo = /juros\s+sobre\s+capital/.test(t)
+      ? 'JCP'
+      : /dividendo/.test(t)
+        ? 'DIVIDENDO'
+        : /rendimento/.test(t)
+          ? 'RENDIMENTO_FII'
+          : /empr[eé]stimo|aluguel/.test(t) && /remunera|cr[eé]dito|liquida/.test(t)
+            ? 'ALUGUEL'
+            : undefined;
+    if (!tipo) continue;
+    itens.push({ tipo, ticker: b3Ticker(r.ticker), valor: Math.abs(r.valor), liquido: tipo === 'JCP' || tipo === 'ALUGUEL' });
+  }
+  return { fonte: { cnpj: '09.346.601/0001-25', nome: 'B3 - Área do Investidor' }, ano, itens };
+}
+
+/** B3 Área do Investidor "Posição" export (all sheets): quantities and issuer CNPJ at the date. */
+export function informeFromB3Posicao(sheets: { name: string; rows: OfficialDocRow[] }[], ano: number): BrInformeRendimentos {
+  const posicoes: NonNullable<BrInformeRendimentos['posicoes']> = [];
+  for (const sh of sheets) {
+    for (const r of sh.rows) {
+      const ticker = b3Ticker(r.ticker);
+      if (!ticker || r.quantidade === undefined || /^total/i.test(ticker)) continue;
+      posicoes.push({ ticker, quantidade: r.quantidade, cnpjEmpresa: r.id });
+    }
+  }
+  return { fonte: { cnpj: '09.346.601/0001-25', nome: 'B3 - Área do Investidor' }, ano, itens: [], posicoes };
 }
 
 /** Converts generic CSV rows (parseOfficialDocCsv) of an informe into the structured type. */
@@ -84,7 +126,28 @@ export function reconcileBrazil(
     }
     for (const p of inf.posicoes ?? []) if (p.cnpjEmpresa) cnpjByIssuer[b3Root(p.ticker)] ??= p.cnpjEmpresa;
   }
-  if (informes.length) lines.push(...reconcileMaps('proventos', ours, theirs));
+  // JCP may come net of IRRF (T44): compare with our net value when the informe says so or when it matches.
+  const oursNet = new Map<string, number>();
+  for (const r of pack.proventos.rows) {
+    if (r.type !== 'JCP' && r.type !== 'ALUGUEL') continue;
+    const k = `${r.type}|${b3Root(r.symbol ?? '')}`;
+    oursNet.set(k, (oursNet.get(k) ?? 0) + r.gross - r.irrf);
+  }
+  const netKeys = new Set<string>();
+  for (const inf of informes) for (const it of inf.itens) if (it.liquido) netKeys.add(`${it.tipo}|${b3Root(it.ticker ?? it.nomeEmpresa ?? '')}`);
+  if (informes.length) {
+    const pl = reconcileMaps('proventos', ours, theirs).map((l) => {
+      const net = oursNet.get(l.key);
+      if (net === undefined || l.theirs === undefined) return l;
+      const matchesNet = Math.abs(net - l.theirs) <= Math.max(1, Math.abs(l.theirs) * 0.005);
+      if (netKeys.has(l.key) || (l.status === 'diferente' && matchesNet)) {
+        const diff = net - l.theirs;
+        return { ...l, ours: net, diff, status: matchesNet ? ('ok' as const) : ('diferente' as const), note: 'Documento em valor líquido (bruto − IRRF)' };
+      }
+      return l;
+    });
+    lines.push(...pl);
+  }
 
   // Positions at 31/12 (quantities)
   const posOurs = new Map<string, ReconValue>();

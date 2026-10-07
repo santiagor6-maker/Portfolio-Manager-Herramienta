@@ -15,7 +15,7 @@ import type { CashBalance, CurrencyCode, Holding, Instrument, Lot, Valuation } f
 import { dayToIso } from './dates';
 import type { Ledger } from './ledger';
 import { roundQty } from './lots';
-import { type PositionValue, valuePosition } from './pricing';
+import { type PositionValue, quick, quickValue, valuePosition } from './pricing';
 import { fixedIncomeTax, taxRegimeFor } from './fitax';
 
 export interface ValueIssues {
@@ -54,7 +54,16 @@ export function totalValue(ledger: Ledger, day: number, fxDay: number = day, ove
     if (book.quantity === 0) continue;
     const inst = ledger.instrumentOf.get(id);
     if (!inst) continue;
-    const pv = valuePosition(ledger, book, inst, day, fxDay, overrides?.get(id));
+    const ov = overrides?.get(id);
+    if (ov === undefined && quickValue(ledger, book, inst, day, fxDay)) {
+      if (issues) {
+        if (quick.missingFx) issues.missingFx.add(inst.currency);
+        if (quick.cost) issues.missingPrices.add(id);
+      }
+      total += quick.mvBase;
+      continue;
+    }
+    const pv = valuePosition(ledger, book, inst, day, fxDay, ov);
     if (issues) {
       if (pv.missingFx) issues.missingFx.add(inst.currency);
       if (pv.source === 'cost') issues.missingPrices.add(id);
@@ -87,6 +96,20 @@ export function valueAggregates(ledger: Ledger, day: number, issues?: ValueIssue
     if (book.quantity === 0) continue;
     const inst = ledger.instrumentOf.get(id);
     if (!inst) continue;
+    if (!stale && quickValue(ledger, book, inst, day, day)) {
+      if (issues) {
+        if (quick.missingFx) issues.missingFx.add(inst.currency);
+        if (quick.cost) issues.missingPrices.add(id);
+      }
+      const C = book.costBasis;
+      const CB = book.costBasisBase;
+      const X0 = C !== 0 ? CB / C : (quick.rate ?? 0);
+      const u = quick.mvBase - CB;
+      securities += quick.mvBase;
+      unrealized += u;
+      unrealizedFx += u - (quick.mv - C) * X0;
+      continue;
+    }
     const pv = valuePosition(ledger, book, inst, day, day);
     if (issues) {
       if (pv.missingFx) issues.missingFx.add(inst.currency);

@@ -14,6 +14,7 @@ function dataset(ccy: string, overrides: Partial<Dataset> = {}): Dataset {
     prices: d.prices,
     fx: d.fx,
     manualPrices: groupManualPrices((d.manualPrices ?? []).map((m) => ({ ...m, updatedAt: 0 }))),
+    indexSeries: d.indexSeries ?? [],
     selectedPortfolioId: 'all',
     reportingCurrency: ccy,
     asOf: '2026-10-05',
@@ -75,5 +76,21 @@ describe('computeAnalysis (engine wiring)', () => {
     const ms = performance.now() - t0;
     expect(a.engineErrors).toEqual({});
     expect(ms).toBeLessThan(8000);
+  });
+
+  it('wires the round-2 engine outputs (positions, real returns, % of index, diagnostics)', () => {
+    expect(cop.inflationIndex).toBe('IPC_CO');
+    expect(cop.rateIndices).toContain('IBR');
+    expect(cop.summaries.SI!.realTwr).toBeDefined();
+    expect(cop.summaries.SI!.realTwr!).toBeLessThan(cop.summaries.SI!.twr);
+    expect(cop.summaries.SI!.percentOfIndex?.IBR).toBeDefined();
+    expect(cop.monthly.some((m) => m.realTwr !== undefined)).toBe(true);
+    expect(cop.positions.length).toBeGreaterThan(5);
+    const p = cop.positions[0]!;
+    expect(p.totalReturnBase).toBeCloseTo(p.endValueBase - p.startValueBase - p.investedBase + p.proceedsBase + p.incomeBase, 0);
+    expect(Array.isArray(cop.diagnostics)).toBe(true);
+    expect(cop.series.some((s) => s.investedRealBase !== undefined)).toBe(true);
+    expect(Array.isArray(cop.upcomingDividends)).toBe(true);
+    expect(cop.engineErrors).toEqual({});
   });
 });

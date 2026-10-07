@@ -205,11 +205,11 @@ export class Engine {
     }
     const eps = Math.max(1e-12, 1e-9 * flowScale(this.ledger.flows));
     const runner = new Ledger(ctx);
+    let iss = newIssues();
     for (let k = 0; k < n; k++) {
       const d = start + k;
-      const iss = newIssues();
-      const ws: string[] = [];
-      const warn = (c: string) => ws.push(c);
+      let ws: string[] | undefined;
+      const warn = (c: string) => (ws ??= []).push(c);
       const fl = k > 0 ? inOut.get(d) : undefined;
       let pre = 0;
       if (fl) {
@@ -231,8 +231,11 @@ export class Engine {
         } else g = 1 + subReturn(a.total, V[k - 1] as number, eps, warn);
         I[k] = (I[k - 1] as number) * g;
       }
-      if (iss.missingFx.size || iss.missingPrices.size || iss.missingIndex.size) issues.set(d, iss);
-      if (ws.length) warnings.set(d, ws);
+      if (iss.missingFx.size || iss.missingPrices.size || iss.missingIndex.size) {
+        issues.set(d, iss);
+        iss = newIssues(); // only allocate a new collector when this one was kept
+      }
+      if (ws) warnings.set(d, ws);
     }
     return { start, end, V, I, cash, U, UFx, issues, warnings };
   }
@@ -463,42 +466,45 @@ export function snapshotInput(input: EngineInput): EngineInput {
 const marketIds = new WeakMap<object, number>();
 let nextMarketId = 1;
 
-function fnv(h: number, s: string): number {
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
 const TX_FIELDS = [
   'id', 'date', 'type', 'instrumentId', 'quantity', 'price', 'currency', 'amount', 'fees', 'taxes', 'ratio', 'toCurrency',
   'toAmount', 'fxRateToBase', 'account', 'subtype', 'targetInstrumentId', 'costFraction', 'portfolioId',
 ] as const;
 
-/** Structural hash of everything that affects results (two 32-bit FNV lanes). */
+const f64 = new Float64Array(1);
+const u32 = new Uint32Array(f64.buffer);
+
+/** Structural hash of everything that affects results (two 32-bit FNV-style lanes). */
 export function inputHash(input: EngineInput): string {
   let a = 2166136261;
   let b = 0x811c9dc5 ^ 0x5bd1e995;
-  const mix = (s: string) => {
-    a = fnv(a, s);
-    b = fnv(b, s + '\u0001');
+  const mixInt = (x: number) => {
+    a = Math.imul(a ^ x, 16777619);
+    b = Math.imul(b ^ (x + 0x9e3779b9), 0x01000193) ^ (b >>> 15);
+  };
+  const mixStr = (v: string) => {
+    for (let i = 0; i < v.length; i++) mixInt(v.charCodeAt(i));
+    mixInt(0x1f);
+  };
+  const mixVal = (v: unknown) => {
+    if (v === undefined || v === null) mixInt(0x7e);
+    else if (typeof v === 'number') {
+      f64[0] = v;
+      mixInt(u32[0] as number);
+      mixInt(u32[1] as number);
+    } else mixStr(String(v));
   };
   const m = input.market as unknown as object;
   let mid = marketIds.get(m);
   if (mid === undefined) marketIds.set(m, (mid = nextMarketId++));
-  mix(`m${mid}|${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
-  mix(JSON.stringify(input.instruments ?? []));
+  mixInt(mid);
+  mixStr(`${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
+  mixStr(JSON.stringify(input.instruments ?? []));
   for (const t of input.transactions ?? []) {
-    let row = '';
-    for (const f of TX_FIELDS) {
-      const v = (t as unknown as Record<string, unknown>)[f];
-      row += v === undefined ? '~' : String(v);
-      row += '|';
-    }
-    mix(row);
+    const r = t as unknown as Record<string, unknown>;
+    for (const f of TX_FIELDS) mixVal(r[f]);
   }
-  return `${a.toString(36)}.${b.toString(36)}.${input.transactions?.length ?? 0}`;
+  return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${input.transactions?.length ?? 0}`;
 }
 
 const engineCache = new Map<string, Engine>();

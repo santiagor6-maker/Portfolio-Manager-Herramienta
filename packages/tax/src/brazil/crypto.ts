@@ -3,7 +3,7 @@ import { lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, nextMonth } from
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, round2, sortTransactions, sum } from '../common/util';
-import { classifyForBrazil, cryptoCustodyOf, type BrCategory, type CryptoCustody } from './classify';
+import { classifyForBrazil, cryptoCustodyOf, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
 import { sicalcData, type SicalcData } from './darf';
 
 /** GCAP progressive rates on capital gains of individuals (Lei 13.259/2016 art. 21 da Lei 8.981). */
@@ -85,6 +85,8 @@ export interface CryptoOptions {
    * under Lei 14.754; anything else → 'desconhecida', tax shown but no DARF until confirmed).
    */
   cryptoCustody?: Record<string, CryptoCustody>;
+  /** Custody per account/broker name (`Transaction.account`), e.g. { 'Binance': 'brasil' }. */
+  accountCustody?: Record<string, CryptoCustody>;
   /** @deprecated use cryptoCustody. 'exterior' forces every crypto-asset abroad. */
   custody?: 'brasil' | 'exterior';
   exemptionLimit?: number;
@@ -95,16 +97,16 @@ export interface CryptoOptions {
  * sales exemption, GCAP progressive rates on net gains of each sale, DARF 4600 due on the last
  * bank business day of the following month. Losses are not offset (GCAP has no compensation).
  */
-export function brazilCryptoReport(input: TaxInput, opts: CryptoOptions): CryptoReport {
+export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): CryptoReport {
+  const forced: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
+  if (opts.custody) for (const i of rawInput.instruments) if (i.assetClass === 'crypto') forced[i.id] ??= opts.custody;
+  const routed = routeCryptoByCustody(rawInput, { cryptoCustody: forced, accountCustody: opts.accountCustody });
+  const input = routed.input;
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
   const limit = opts.exemptionLimit ?? 35_000;
-  const custodyMap: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
-  if (opts.custody === 'exterior') {
-    for (const i of input.instruments) if (i.assetClass === 'crypto') custodyMap[i.id] ??= 'exterior';
-  } else if (opts.custody === 'brasil') {
-    for (const i of input.instruments) if (i.assetClass === 'crypto') custodyMap[i.id] ??= 'brasil';
-  }
+  const custodyMap = routed.custody;
+  issues.push(...routed.issues);
   const isCrypto = (id?: string) => !!id && classifyForBrazil(instruments.get(id), opts.categoryOverrides, custodyMap) === 'CRYPTO';
   const custodyOf = (id: string): CryptoCustody => {
     const inst = instruments.get(id);

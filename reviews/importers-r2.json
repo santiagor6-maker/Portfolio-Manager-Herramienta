@@ -1,0 +1,112 @@
+{
+  "part": "importers",
+  "round": 2,
+  "score": 6.5,
+  "competitorName": "Sharesight",
+  "competitorScore": 8,
+  "approved": false,
+  "fixed": ["I1", "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I14", "I15", "I16", "I17", "I18", "I19"],
+  "gaps": [
+    {
+      "id": "I21",
+      "severity": "alta",
+      "title": "La deduplicación bloquea por defecto movimientos legítimos idénticos (ignora cuenta e institución)",
+      "detail": "La clave semántica es tipo|activo|moneda y nunca usa la cuenta ni la Instituição. B3 Negociação con 3 lotes de 100 ITSA4 a 10,00 el mismo día (2 de XP y 1 de NU INVEST) importa 1; los otros 2 quedan como possible_duplicate y fuera de transactions. En B3 Movimentação, el mismo Dividendo de PETR4 (189) en XP y en NU deja fuera el de NU. Dos cobros de GMF de -400 el mismo día dejan fuera uno. Un depósito de 1.000.000 COP a Davivienda 2 días después de uno igual a Trii se bloquea. Arreglo: incluir cuenta/institución en la clave; las filas idénticas del mismo archivo sin referencia del corredor deben importarse (son lotes parciales), o como mucho marcarse sin excluirse cuando el formato las lista por negocio."
+    },
+    {
+      "id": "I22",
+      "severity": "alta",
+      "title": "La sincronización Flex (XML) descarta acciones corporativas en silencio y duplica dividendos de resumen",
+      "detail": "flexXmlToTable solo convierte Trade, CashTransaction, Transfer y OpenPosition. Un <CorporateAction> 'NVDA SPLIT 10 FOR 1' desaparece sin aviso: la posición queda en 10 en vez de 100 y la valoración sale ×0,1. Lo mismo pasa con SalesTax. Una fila CashTransaction levelOfDetail=SUMMARY se importa como un segundo DIVIDEND de 0,4 USD sin activo. Arreglo: mapear CorporateActions (FS/RS/SO/TC/DI…), filtrar levelOfDetail=SUMMARY y emitir UNHANDLED_SECTION para cualquier otro elemento con registros, igual que en el Activity Statement."
+    },
+    {
+      "id": "I23",
+      "severity": "alta",
+      "title": "SINACOR: tickers mal deducidos en silencio y catálogo de emisores mínimo",
+      "detail": "'GERDAU MET PN N1' (Metalúrgica Gerdau, GOAU4) se importa como BVMF:GGBR4 sin aviso, porque coincide con el prefijo 'gerdau '. La tabla B3_ISSUER_ROOTS tiene unos 80 nombres: 'ISHARES BOVA CI ER' (BOVA11) y 'APPLE DRN' (AAPL34) dan UNKNOWN_SECURITY, y lo mismo pasa con casi todas las small caps, ETF y BDR, que obligan a escribir un securityMap a mano. Gorila y Kinvo no tienen este problema. Arreglo: usar el cadastro oficial de B3 (nome de pregão + especificação → ticker) desde @pm/market-data, comparar por coincidencia exacta del nombre de pregão y nunca por prefijo, y avisar cuando la coincidencia no sea exacta."
+    },
+    {
+      "id": "I4",
+      "severity": "alta",
+      "title": "Fechas ambiguas: la heurística de monotonía decide mal en silencio",
+      "detail": "Extracto en español, con ';', COP y movimientos agrupados por especie (fechas DMY reales: 01/05, 02/03, 03/04, 04/06/2024). La lectura MDY resulta ordenada, así que se elige MDY sin pedir confirmación (solo DATE_FORMAT_INFERRED) y las 4 filas quedan 'ok' en enero–abril en lugar de mayo, marzo, abril y junio. La monotonía no debe bastar para decidir: con encabezados en español y moneda COP o BRL debe pedir confirmación, o exigir monotonía en más de N filas y que la otra lectura no sea también plausible."
+    },
+    {
+      "id": "I2",
+      "severity": "alta",
+      "title": "La sincronización sigue siendo solo una librería",
+      "detail": "syncIbkrFlex existe y maneja bien los códigos 1012, 1019 y demás, pero no se usa en ningún sitio: apps/server, la web y las rutinas no lo referencian, no hay almacenamiento cifrado del token ni programación diaria. Tampoco hay conexión con la Área do Investidor de B3 (Gorila, Kinvo), ni buzón de correo para confirmaciones (Sharesight), ni agregadores (Belvo, Pluggy, Salt Edge). Además arrastra la pérdida de acciones corporativas de I22."
+    },
+    {
+      "id": "I24",
+      "severity": "media",
+      "title": "SINACOR: layouts frágiles, sin contraseña ni OCR",
+      "detail": "Con 'Nr. nota', 'Folha' y 'Data pregão' apilados (etiqueta y valor en la misma línea, como en Nu e Inter), el PDF se detecta como nota pero devuelve 0 filas, 0 errores y 0 avisos: no se importa nada y no se explica nada. Las notas de XP, Clear y Rico vienen protegidas con los 3 primeros dígitos del CPF y no hay opción de contraseña (getDocument la soporta): solo se devuelve PDF_READ_ERROR. No hay OCR para notas escaneadas. Arreglo: aviso NOTE_WITHOUT_TRADES cuando se detecta una nota sin operaciones, aceptar varios layouts de cabecera, y agregar options.pdfPassword."
+    },
+    {
+      "id": "I25",
+      "severity": "media",
+      "title": "SINACOR: IRRF day trade, costos con 'C' y costos de opciones mal asignados",
+      "detail": "La línea 'IRRF Day Trade: Base R$ 50,00 … 0,50' sobrescribe el IRRF s/ operações (0,16): el total queda en 0,50 en lugar de 0,66 y se reparte también sobre la venta swing de ITUB4. Las operaciones con Obs 'D' (day trade) no se marcan. Un costo con 'C' (crédito o estorno, 4,90 C) se suma como costo: queda 10,22 en vez de 0,42 (NOTA_TOTALS_MISMATCH lo detecta, pero la fila sigue 'ok'). Al omitir una opción, sus costos, incluida la Taxa de termo/opções, se cargan al activo de contado: PETR4 queda con 5,38 frente a ≈1,32."
+    },
+    {
+      "id": "I26",
+      "severity": "media",
+      "title": "CDT: vencimiento y tasa mal leídos en silencio",
+      "detail": "Si el texto 'intereses: al vencimiento' aparece antes de las fechas, el vencimiento se toma de la línea siguiente: queda vencimiento = apertura (2024-01-15), con una causación de 0 días y la fila 'ok'. Una tasa nominal '10,80% N.M.V.' se guarda como 10,80 % E.A. (la equivalente es 11,35 % E.A.). La retención en la fuente sobre los rendimientos se ignora. Arreglo: exigir vencimiento posterior a apertura, convertir las tasas nominales (NMV, NATV, NASV) a E.A. y avisar CDT_RATE_NOMINAL."
+    },
+    {
+      "id": "I20",
+      "severity": "media",
+      "title": "La conciliación mezcla corredores y da diferencias falsas",
+      "detail": "computeBalances suma todos los movimientos existentes sin filtrar por cuenta. Para un usuario con KO en Schwab, el extracto de IBKR reporta 'KO: reportado 0, calculado 30' y 'USD: reportado 149, calculado 3.349'. Ese es justo el usuario objetivo (varios corredores), y para él RECONCILIATION_DIFF es ruido permanente. Arreglo: conciliar por cuenta (account del extracto o ClientAccountID) y solo contra los movimientos de esa cuenta."
+    },
+    {
+      "id": "I28",
+      "severity": "media",
+      "title": "Ids incompatibles con @pm/market-data (US:, Tesouro como MANUAL)",
+      "detail": "Los tickers de EE. UU. no conocidos quedan con id 'US:ENB'. En market-data, yahooSymbolFromId('US:ENB') devuelve undefined y resolve() lanza BAD_REQUEST 'Unknown exchange' si se cotiza por id. Solo funciona si se pasa providerSymbols.yahoo. Los títulos del Tesouro Direto que llegan de B3 se crean como MANUAL:slug con precio manual, aunque market-data cotiza automáticamente los ids TD:. Arreglo: acordar con market-data el pseudo-MIC 'US' y emitir TD:<título> (y FIC: para fondos colombianos)."
+    },
+    {
+      "id": "I3",
+      "severity": "media",
+      "title": "Números: un archivo con varias monedas usa un solo formato",
+      "detail": "En un extracto con ';' y filas en COP y en USD, el precio '1.725' de SIRI en USD se lee como 1725 (×1000). Solo se emite NUMBER_FORMAT_INFERRED a nivel de archivo y la fila queda 'ok'. Los casos del round 1 sí quedaron corregidos ('1,500' bloquea, '1.000;2.450' infiere bien). Falta validar la plausibilidad por fila: moneda distinta de COP con 3 decimales, o referencePrice obligatorio cuando la moneda difiere."
+    },
+    {
+      "id": "I13",
+      "severity": "media",
+      "title": "Cobertura de corredores: perfiles, no importadores",
+      "detail": "XP, BTG, Nu, Inter, Avenue y Hapi solo tienen un 'perfil' que remite a B3 o a la plantilla; no hay un analizador de sus extratos propios. En Fidelity, la reinversión de SPAXX (money market base, presente en todas las cuentas) da MISSING_INSTRUMENT. 'Traslado', 'Liquidación' y 'Transferência' sin signo siguen sin clasificarse."
+    },
+    {
+      "id": "I29",
+      "severity": "baja",
+      "title": "Extractos PDF: la sección de portafolio se lee como movimientos",
+      "detail": "En un extracto tipo Trii, la tabla 'Portafolio al cierre' (Especie, Cantidad, Precio cierre, Valor) produce 3 filas con error (INVALID_DATE y UNKNOWN_TYPE 'ECOPETROL') en vez de omitirse o usarse para conciliar."
+    }
+  ],
+  "matrix": [
+    { "feature": "Sincronización automática con corredor/agregador", "ours": "partial", "others": { "Sharesight": "yes", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Sincronización B3 (Área do Investidor)", "ours": "no", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Importación de archivos B3 Negociação/Movimentação/Posição", "ours": "partial", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "Lectura de notas de corretagem en PDF (SINACOR)", "ours": "partial", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Importadores PDF de bancos y corredores", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "Reenvío de confirmaciones por correo", "ours": "no", "others": { "Sharesight": "yes", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "no" } },
+    { "feature": "Asistente CSV/Excel con mapeo de columnas editable", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Presets de corredores (IBKR, Schwab, Fidelity, DEGIRO, T212, eToro...)", "ours": "partial", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "IBKR completo (FX, retenciones, transferencias, acciones corporativas)", "ours": "partial", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "no" } },
+    { "feature": "Formato regional de números y fechas sin errores silenciosos", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Vista previa fila por fila con línea y mensajes", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "Deduplicación al reimportar el mismo archivo", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "partial", "Ghostfolio": "partial", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Deduplicación entre fuentes sin falsos positivos", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "yes" } },
+    { "feature": "Splits y bonificaciones (proporción inferida o automática)", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Colombia: extractos de comisionistas, GMF y CDT", "ours": "partial", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "no" } },
+    { "feature": "Traspasos de custodia entre corredores", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "yes" } },
+    { "feature": "Codificaciones Latin-1/UTF-16, BOM, CRLF y campos multilínea", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Formatos .xls antiguo / HTML complejo / OFX", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Respaldo completo e ida y vuelta CSV/JSON", "ours": "yes", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "yes", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Conciliación con posiciones y caja del corredor", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Privacidad: todo en el navegador, sin terceros", "ours": "yes", "others": { "Sharesight": "no", "Portfolio Performance": "yes", "Ghostfolio": "yes", "Kubera": "no", "Gorila": "no" } }
+  ]
+}

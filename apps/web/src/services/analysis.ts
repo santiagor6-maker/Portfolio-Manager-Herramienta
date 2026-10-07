@@ -121,6 +121,8 @@ export interface Analysis {
   inflationIndex?: IndexId;
   /** Rate indices compared against (CDI, IBR...), when loaded. */
   rateIndices: IndexId[];
+  /** Last month covered when a "% of index" was derived from partial index data. */
+  indexCoverage: Record<string, string>;
   upcomingDividends: UpcomingDividend[];
   /** Corporate-action transactions suggested from provider data (not yet recorded). */
   suggestions: Suggestion[];
@@ -230,6 +232,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     positions: [],
     positionsYtd: [],
     rateIndices: [],
+    indexCoverage: {},
     upcomingDividends: [],
     suggestions: [],
     reviewActions: [],
@@ -287,6 +290,23 @@ export function computeAnalysis(ds: Dataset): Analysis {
 
   const benchmarks = ds.benchmarks.filter((b) => ds.prices.some((p) => p.instrumentId === b));
   out.monthly = attempt('monthlyPerformance', () => core.monthlyPerformance(E, { to: ds.asOf.slice(0, 7), benchmarks, asOf: ds.asOf })) ?? [];
+
+  // Rate indices often lag (BanRep/BCB publish with delay): when the engine leaves a period's
+  // "% of index" empty, derive it from the months the index covers and record that coverage.
+  for (const s of Object.values(out.summaries)) {
+    if (!s || !out.rateIndices.length) continue;
+    for (const id of out.rateIndices) {
+      if (s.percentOfIndex?.[id] !== undefined) continue;
+      const rows = out.monthly.filter((m) => m.month >= s.from.slice(0, 7) && m.month <= s.to.slice(0, 7) && m.indexReturns?.[id] !== undefined);
+      if (!rows.length) continue;
+      const idx = rows.reduce((c, m) => c * (1 + m.indexReturns![id]!), 1) - 1;
+      const twr = rows.reduce((c, m) => c * (1 + m.twr), 1) - 1;
+      if (Math.abs(idx) < 1e-9) continue;
+      s.indexReturns = { ...(s.indexReturns ?? {}), [id]: idx };
+      s.percentOfIndex = { ...(s.percentOfIndex ?? {}), [id]: twr / idx };
+      out.indexCoverage[id] = rows[rows.length - 1]!.month;
+    }
+  }
 
   if (out.monthly.length) {
     out.risk = attempt('riskMetrics', () =>

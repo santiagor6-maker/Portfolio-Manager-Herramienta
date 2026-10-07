@@ -1,0 +1,42 @@
+{
+  "part": "market-data",
+  "round": 3,
+  "score": 7.5,
+  "competitorName": "Portfolio Performance",
+  "competitorScore": 7,
+  "approved": false,
+  "fixed": ["M20", "M21", "M22", "M23", "M24", "M25", "M26", "M27"],
+  "gaps": [
+    {"id": "M28", "severity": "alta", "text": "El alias 'rename' NTCO3→NATU3 sirve barras fantasma de volumen 0 (36,86, copia del último cierre de 2019) como cierre de junio de 2025, unas 3,6 veces el valor real (~R$10), y deja vacío el periodo 2020-01 a 2025-05."},
+    {"id": "M29", "severity": "media", "text": "Los títulos deslistados o fusionados (BRFS3, CPLE6 y NTCO3 entre 2020 y 2025) no tienen historia; las fechas de Copel son inexactas (CPLE6 dejó de negociar el 2025-11-07 y pasó por CPLE5) y CPLE11 no figura."},
+    {"id": "M2", "severity": "media", "text": "(persiste) Sin claves de API no hay segunda fuente para la BVC ni Londres; query1 es la misma infraestructura de Yahoo."},
+    {"id": "M8", "severity": "media", "text": "(persiste) Los dividendos de la BVC no traen fecha de pago ni cuotas, y JCP con fecha de pago depende del token de brapi."},
+    {"id": "M15", "severity": "media", "text": "(persiste) PTAX, SGS, SIDRA, BCE, FRED, el CSV del Tesouro (con los cupones NTN-B) y brapi/stooq no se han validado en vivo, y las pruebas de contrato pasan aunque no haya acceso."},
+    {"id": "M30", "severity": "baja", "text": "Los tickers de B3 sin sufijo y fuera del catálogo (CPLE3, CPLE11) se resuelven como símbolos de EE.UU. y fallan sin sugerir .SA."},
+    {"id": "M31", "severity": "baja", "text": "Las fechas de cupón de Tesouro ignoran los feriados de B3/ANBIMA (15-nov, 1-ene), así que los pagos de NTN-B en noviembre y NTN-F en enero quedan fechados en día feriado."},
+    {"id": "M13", "severity": "baja", "text": "(persiste) El COLCAP real solo está disponible como promedio mensual; el benchmark sigue siendo ICOLCAP con retorno total."},
+    {"id": "M18", "severity": "baja", "text": "(persiste) Los ISIN de la BVC fuera del catálogo y de la tabla de alias no se resuelven."}
+  ],
+  "matrix": [
+    {"feature": "Acciones BVC (Colombia)", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "yes", "Kinvo/Gorila": "no", "Status Invest": "no"}},
+    {"feature": "Acciones, FII y ETF de B3", "ours": "yes", "others": {"Sharesight": "yes", "Portfolio Performance": "yes", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Tesouro Direto con cupones", "ours": "partial", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "yes", "Status Invest": "partial"}},
+    {"feature": "CDT/CDB por devengo (plantillas + tasas)", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "yes", "Status Invest": "partial"}},
+    {"feature": "Fondos colombianos (FIC) y pensiones/cesantías", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "no", "Status Invest": "no"}},
+    {"feature": "Respaldo de precios si falla el proveedor principal", "ours": "partial", "others": {"Sharesight": "yes", "Portfolio Performance": "yes", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Feeds de precios personalizados (JSON/CSV)", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "yes", "Kinvo/Gorila": "no", "Status Invest": "no"}},
+    {"feature": "FX oficial (TRM, PTAX compra/venta, BCE)", "ours": "partial", "others": {"Sharesight": "partial", "Portfolio Performance": "partial", "Kinvo/Gorila": "partial", "Status Invest": "no"}},
+    {"feature": "Precios tal como se negociaron con splits correctos", "ours": "yes", "others": {"Sharesight": "yes", "Portfolio Performance": "yes", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Clasificación de eventos (bonificación, escisión, fusión, JCP)", "ours": "yes", "others": {"Sharesight": "partial", "Portfolio Performance": "partial", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Dividendos con fecha ex y fecha de pago", "ours": "partial", "others": {"Sharesight": "yes", "Portfolio Performance": "partial", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Renombres, fusiones e historia de títulos deslistados", "ours": "partial", "others": {"Sharesight": "yes", "Portfolio Performance": "partial", "Kinvo/Gorila": "yes", "Status Invest": "yes"}},
+    {"feature": "Índice COLCAP real como benchmark", "ours": "partial", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "no", "Status Invest": "no"}},
+    {"feature": "Inflación (IPC Colombia, IPCA)", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Tasas (CDI, Selic, IBR, DTF, UVR)", "ours": "yes", "others": {"Sharesight": "no", "Portfolio Performance": "partial", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Búsqueda en español/portugués e ISIN", "ours": "partial", "others": {"Sharesight": "yes", "Portfolio Performance": "yes", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Indicadores de frescura (provisional, stale, asOf)", "ours": "yes", "others": {"Sharesight": "partial", "Portfolio Performance": "partial", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Criptomonedas", "ours": "yes", "others": {"Sharesight": "partial", "Portfolio Performance": "yes", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Cierres de fin de mes alineados al último día hábil", "ours": "yes", "others": {"Sharesight": "partial", "Portfolio Performance": "yes", "Kinvo/Gorila": "partial", "Status Invest": "partial"}},
+    {"feature": "Servidor seguro por defecto (loopback, Origin, Host, límites)", "ours": "yes", "others": {"Sharesight": "yes", "Portfolio Performance": "yes", "Kinvo/Gorila": "yes", "Status Invest": "yes"}}
+  ]
+}

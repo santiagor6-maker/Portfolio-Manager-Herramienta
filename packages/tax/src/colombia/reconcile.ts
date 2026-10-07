@@ -31,15 +31,25 @@ export interface CoReconciliation {
   issues: TaxIssue[];
 }
 
+/** Maps DIAN exógena concept descriptions (or our short codes) to reconciliation concepts. */
+export function exogenaConcept(tipo: string): CoExogenaItem['concepto'] | undefined {
+  const t = tipo.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/dividend|participacion/.test(t)) return 'dividendos';
+  if (/retenc/.test(t)) return 'retencion';
+  if (/interes|rendimiento/.test(t)) return 'intereses';
+  if (/enajenac|venta de acciones|venta_de_acciones/.test(t)) return 'enajenacion';
+  if (/saldo.*invers|inversion|portafolio|acciones|titulos/.test(t)) return 'saldo_inversiones';
+  return undefined;
+}
+
 export function exogenaFromRows(rows: OfficialDocRow[]): CoExogenaItem[] {
-  const ok = new Set(['dividendos', 'intereses', 'retencion', 'enajenacion', 'saldo_inversiones']);
   return rows
-    .map((r) => ({ ...r, tipo: r.tipo.toLowerCase().replace(/\s+/g, '_').replace('ó', 'o') }))
-    .filter((r) => ok.has(r.tipo))
+    .map((r) => ({ ...r, concepto: exogenaConcept(r.tipo) }))
+    .filter((r): r is typeof r & { concepto: CoExogenaItem['concepto'] } => r.concepto !== undefined)
     .map((r) => ({
       nitInformante: r.id ?? '',
       nombreInformante: r.nome ?? '',
-      concepto: r.tipo as CoExogenaItem['concepto'],
+      concepto: r.concepto,
       valor: r.valor,
       retencion: r.imposto,
       detalle: r.ticker,

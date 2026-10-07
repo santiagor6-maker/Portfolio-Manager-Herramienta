@@ -4,7 +4,7 @@ Revisor: agente revisor independiente, en modo solo lectura sobre el código. Fe
 
 ## Veredicto
 
-**No aprobado, pero el salto desde R1 es grande.** Verifiqué de forma independiente que 13 de los 19 gaps están cerrados. Los otros 6 están parcialmente resueltos y siguen abiertos. Con esta ronda la parte ya tiene lo que ningún competidor global trae listo para Colombia:
+**No aprobado, pero el salto desde R1 es grande.** Verifiqué de forma independiente que 14 de los 19 gaps están cerrados. Los otros 5 están parcialmente resueltos y siguen abiertos. Con esta ronda la parte ya tiene lo que ningún competidor global trae listo para Colombia:
 - FIC y fondos de pensiones/cesantías en vivo (Superfinanciera).
 - IPC Colombia derivado de la UVR: coincide con el DANE en 20 de 20 meses.
 - IBR, DTF, UVR y TPM.

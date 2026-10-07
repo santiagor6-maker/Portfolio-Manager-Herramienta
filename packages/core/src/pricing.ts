@@ -161,6 +161,66 @@ export function accruedLotValues(
   return { values, missingIndex, anchor: info };
 }
 
+/** Per-currency FX memo for the last fxDay seen (the daily loop values many positions per day). */
+const fxMemo = new Map<string, { day: number; market: unknown; base: string; exact: number | undefined; rate: number | undefined }>();
+
+/** Scratch result of quickValue (reused to avoid allocations in the daily loop). */
+export const quick = { mv: 0, mvBase: 0, rate: 0 as number | undefined, missingFx: false, cost: false };
+
+/**
+ * Allocation-free valuation for the hot loops (daily chain). Same rules as valuePosition for
+ * instruments without accrual and without an override; returns false otherwise (use valuePosition).
+ */
+export function quickValue(ledger: Ledger, book: LotBook, inst: Instrument, day: number, fxDay: number): boolean {
+  if (inst.accrual) return false;
+  const ctx = ledger.ctx;
+  const m = ctx.market;
+  const id = inst.id;
+  let price: number | undefined;
+  const pd = m.priceDayAt(id, day);
+  const obs = ctx.observations.get(id);
+  let od = -Infinity;
+  let oi = -1;
+  if (obs) {
+    oi = lastIndexAtOrBefore(obs.days, day);
+    if (oi >= 0) od = obs.days[oi] as number;
+  }
+  if (od > pd) price = obs!.prices[oi] as number;
+  else if (pd > -Infinity) {
+    const p = m.priceAt(id, day) as number;
+    const pc = m.priceCurrency(id);
+    if (pc && pc !== inst.currency) {
+      const r = m.fxAt(pc, inst.currency, day) ?? m.fxNearest(pc, inst.currency, day);
+      price = r === undefined ? (od > -Infinity ? (obs!.prices[oi] as number) : undefined) : p * r;
+    } else price = p;
+  }
+  const base = ctx.base;
+  let exact: number | undefined;
+  let rate: number | undefined;
+  if (inst.currency === base) exact = rate = 1;
+  else {
+    const key = inst.currency;
+    const c = fxMemo.get(key);
+    if (c && c.day === fxDay && c.market === m && c.base === base) {
+      exact = c.exact;
+      rate = c.rate;
+    } else {
+      exact = m.fxAt(inst.currency, base, fxDay);
+      rate = exact ?? m.fxNearest(inst.currency, base, fxDay);
+      fxMemo.set(key, { day: fxDay, market: m, base, exact, rate });
+    }
+  }
+  quick.missingFx = exact === undefined;
+  quick.rate = rate;
+  quick.cost = price === undefined;
+  const mv = price === undefined ? book.costBasis : (book.quantity * price) / multiplier(inst.priceMultiplier);
+  quick.mv = mv;
+  if (rate !== undefined) quick.mvBase = mv * rate;
+  else if (price === undefined) quick.mvBase = book.costBasisBase;
+  else quick.mvBase = book.costBasis !== 0 ? mv * (book.costBasisBase / book.costBasis) : 0;
+  return true;
+}
+
 /** Value one position. `override` = intra-day trade price (instrument currency, quote units). */
 export function valuePosition(ledger: Ledger, book: LotBook, inst: Instrument, day: number, fxDay: number, override?: number): PositionValue {
   const ctx = ledger.ctx;

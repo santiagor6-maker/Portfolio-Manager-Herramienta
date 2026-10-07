@@ -183,7 +183,8 @@ export function parseCsv(text: string, delimiter = ';', decimal: '.' | ',' = ','
   let q = false;
   const push = () => {
     const numRe = decimal === ',' ? /^-?\d+(,\d+)?$/ : /^-?\d+(\.\d+)?$/;
-    row.push(numRe.test(cur) ? Number(cur.replace(',', '.')) : cur);
+    // Codes with leading zeros ("03", "09", "0211") stay text (T42).
+    row.push(numRe.test(cur) && !/^-?0\d/.test(cur) ? Number(cur.replace(',', '.')) : cur);
     cur = '';
   };
   for (let i = 0; i < t.length; i++) {

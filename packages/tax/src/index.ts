@@ -15,6 +15,7 @@ export { TAX_DISCLAIMER } from './common/disclaimer';
 export { toCsv, type CsvOptions, type CsvCell } from './common/csv';
 export * from './common/basis';
 export * from './common/xlsx';
+export * from './common/xlsxRead';
 export * from './common/document';
 export * from './common/reconcile';
 export {

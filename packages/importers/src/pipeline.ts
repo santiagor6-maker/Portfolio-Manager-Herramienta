@@ -32,7 +32,7 @@ import type {
   RawTable,
   Reconciliation,
 } from './types';
-import { hashString, isCurrencyCode, round } from './util';
+import { hashString, isCurrencyCode, normalizeText, round } from './util';
 
 export interface TableInspection {
   name: string;
@@ -400,6 +400,24 @@ interface DupEntry {
   inFile: boolean;
   line?: number;
   brokerRef?: string;
+  /** Existing transaction already matched by an imported row. */
+  used?: boolean;
+}
+
+const ACCOUNT_NOISE = /\b(cctvm|ctvm|dtvm|s a|sa|s a s|sas|ltda|corretora|corredores|comisionista|de|do|da|del|y|e|valores|investimentos|investimento|invest|banco|bank|llc|inc|plc|grupo|the)\b/g;
+
+/** Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu". */
+export function accountKey(account: string | undefined): string | undefined {
+  if (!account) return undefined;
+  const n = normalizeText(account);
+  const k = n.replace(ACCOUNT_NOISE, ' ').replace(/\s+/g, ' ').trim();
+  return (k || n).split(' ')[0];
+}
+
+/** Accounts are compatible when either is unknown or both normalize to the same institution. */
+export function accountsCompatible(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return true;
+  return accountKey(a) === accountKey(b);
 }
 
 const near = (a: number | undefined, b: number | undefined, rel: number, absTol: number) =>
@@ -576,30 +594,48 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     }
   }
 
-  // Semantic duplicates against existing transactions (other sources: ±3 business days; same source:
-  // same day) and within the file (identical rows without distinct broker references).
+  // Semantic duplicates (I7/I21). Against existing transactions of a compatible account/institution:
+  // other sources ±3 business days, same source same day. Each existing transaction can absorb at most
+  // one imported row (exact-hash duplicates consume theirs first), so legitimate repeats are kept.
+  // Identical rows inside the same file are legitimate (partial fills, separate GMF charges): they are
+  // only flagged, never blocked.
   const index = new DupIndex();
-  for (const t of existingTx) if (/^\d{4}-\d{2}-\d{2}$/.test(t.date)) index.add({ day: dayNumber(t.date), tx: t, inFile: false });
+  const byHash = new Map<string, DupEntry[]>();
+  for (const t of existingTx) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date)) continue;
+    const e: DupEntry = { day: dayNumber(t.date), tx: t, inFile: false };
+    index.add(e);
+    if (t.importHash) byHash.set(t.importHash, [...(byHash.get(t.importHash) ?? []), e]);
+  }
+  for (const w of work) {
+    if (w.status === 'duplicate' && w.tx?.importHash) {
+      const e = byHash.get(w.tx.importHash)?.find((x) => !x.used);
+      if (e) e.used = true;
+    }
+  }
+  const strictSources = /^import:(generic|portafolio-pro|extracto-co|pdf-)/;
   for (const w of work) {
     if (!w.tx || w.status === 'duplicate' || w.draft.noDuplicateCheck) continue;
     const tx = w.tx;
     const day = dayNumber(tx.date);
     const cal = calendarFor(tx.instrumentId, tx.currency);
     const ref = w.draft.brokerRef;
+    const compatible = (e: DupEntry) => accountsCompatible(e.tx.account, tx.account);
     const hit =
-      index.find(tx, day, cal, 3, (e) => !e.inFile && e.tx.source !== tx.source) ??
-      index.find(tx, day, cal, 0, (e) => !e.inFile && e.tx.source === tx.source && !ref) ??
-      index.find(tx, day, cal, 0, (e) => e.inFile && !(ref && e.brokerRef && ref !== e.brokerRef));
+      index.find(tx, day, cal, 3, (e) => !e.inFile && !e.used && compatible(e) && e.tx.source !== tx.source) ??
+      index.find(tx, day, cal, 0, (e) => !e.inFile && !e.used && compatible(e) && e.tx.source === tx.source && !ref);
     if (hit) {
-      const inFile = hit.inFile;
-      w.duplicateOf = { date: hit.tx.date, inFile, ...(hit.tx.source ? { source: hit.tx.source } : {}), ...(hit.line !== undefined ? { line: hit.line } : {}), ...(!inFile ? { transactionId: hit.tx.id } : {}) };
-      const ok = accepted(opts, w.row.line, inFile);
-      w.row.issues.push(
-        inFile
-          ? ctx.issue('POSSIBLE_DUPLICATE_IN_FILE', ok ? 'info' : 'warning', { line: hit.line ?? 0 }, w.row.line)
-          : ctx.issue('POSSIBLE_DUPLICATE', ok ? 'info' : 'warning', { date: hit.tx.date, source: hit.tx.source ?? 'manual' }, w.row.line),
-      );
+      hit.used = true;
+      w.duplicateOf = { date: hit.tx.date, inFile: false, transactionId: hit.tx.id, ...(hit.tx.source ? { source: hit.tx.source } : {}) };
+      const ok = accepted(opts, w.row.line, false);
+      w.row.issues.push(ctx.issue('POSSIBLE_DUPLICATE', ok ? 'info' : 'warning', { date: hit.tx.date, source: hit.tx.source ?? 'manual' }, w.row.line));
       if (!ok) w.status = 'possible_duplicate';
+    } else {
+      const twin = index.find(tx, day, cal, 0, (e) => e.inFile && compatible(e) && !(ref && e.brokerRef && ref !== e.brokerRef));
+      if (twin) {
+        // Flag only: brokers list one execution per row; user files may contain real repeats.
+        w.row.issues.push(ctx.issue('POSSIBLE_DUPLICATE_IN_FILE', strictSources.test(tx.source ?? '') ? 'warning' : 'info', { line: twin.line ?? 0 }, w.row.line));
+      }
     }
     const entry: DupEntry = { day, tx, inFile: true, line: w.row.line };
     if (ref) entry.brokerRef = ref;

@@ -1,9 +1,9 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
 import { b3Root, basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
-import { monthOf, thirdFriday } from '../common/dates';
+import { daysInMonth, monthOf, thirdFriday } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
-import { classifyForBrazil, FUTURES_POINT_VALUE, isB3Category, type BrCategory } from './classify';
+import { classifyForBrazil, FUTURES_POINT_VALUE, FUTURES_QUOTE_CURRENCY, isB3Category, type BrCategory } from './classify';
 
 export interface BrTrade {
   date: ISODate;
@@ -92,14 +92,27 @@ export function b3OptionType(symbol: string): 'call' | 'put' | undefined {
  * the year is the first such month on/after `from`; the day is the third Friday (B3 rule since 2021).
  */
 export function b3OptionExpiry(symbol: string, from: ISODate): ISODate | undefined {
-  const c = symbol.toUpperCase()[4] ?? '';
+  const sym = symbol.toUpperCase();
+  const c = sym[4] ?? '';
   const idx = CALL_LETTERS.indexOf(c) >= 0 ? CALL_LETTERS.indexOf(c) : PUT_LETTERS.indexOf(c);
   if (idx < 0) return undefined;
   const month = idx + 1;
+  // Weekly options (T40): suffix Wn = Friday of the n-th week of the series month.
+  const weekly = /W([1-5])$/.exec(sym);
+  const dayOf = (y: number) => (weekly ? nthFriday(y, month, Number(weekly[1])) : thirdFriday(y, month));
   let year = Number(from.slice(0, 4));
-  let d = thirdFriday(year, month);
-  while (d < from) d = thirdFriday(++year, month);
+  let d = dayOf(year);
+  while (d < from) d = dayOf(++year);
   return d;
+}
+
+/** n-th Friday of a month (clamped to the last Friday when the month has fewer). */
+function nthFriday(year: number, month: number, n: number): ISODate {
+  const third = thirdFriday(year, month);
+  const firstDay = Number(third.slice(8, 10)) - 14;
+  let day = firstDay + (n - 1) * 7;
+  if (day > daysInMonth(year, month)) day -= 7;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 const EXERCISE_NOTE = /exerc|assign|atribu/i;
@@ -152,6 +165,18 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     (t) => t.instrumentId && isB3Category(cat(t.instrumentId)) && (!opts.until || t.date <= opts.until),
   );
 
+  const futuresValue = (t: Transaction, root: string): number => {
+    let v = t.amount ?? (t.quantity ?? 0) * (t.price ?? 0) * (FUTURES_POINT_VALUE[root] ?? 1);
+    const ccy = FUTURES_QUOTE_CURRENCY[root] ?? (t.currency !== 'BRL' ? t.currency : undefined);
+    if (ccy && ccy !== 'BRL') {
+      const fx = input.market.fx(ccy, 'BRL', t.date);
+      if (fx === undefined) {
+        issues.push({ level: 'error', code: 'MISSING_FX', transactionId: t.id, message: `Sem cotação ${ccy}/BRL em ${t.date} para o futuro ${root}.` });
+      } else v *= fx;
+    }
+    return v;
+  };
+
   const byDay = new Map<string, Transaction[]>();
   for (const t of txs) {
     const k = `${t.date}|${t.instrumentId}`;
@@ -162,15 +187,21 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
 
   // Option expiries (T24): add an expiry "day" for every option instrument.
   const horizon = opts.until ?? opts.asOf ?? input.transactions.reduce((m, t) => (t.date > m ? t.date : m), '');
-  const expiryOf = new Map<string, ISODate>();
+  // Expiry per series AND year (T39): every transaction on an option schedules the next expiry of
+  // its series after that date, so a ticker reused the following year expires again.
+  const expiriesOf = new Map<string, Set<ISODate>>();
   for (const t of txs) {
     const id = t.instrumentId!;
-    if (expiryOf.has(id) || cat(id) !== 'OPCAO') continue;
+    if (cat(id) !== 'OPCAO') continue;
+    const set = expiriesOf.get(id) ?? new Set<ISODate>();
+    expiriesOf.set(id, set);
     const e = opts.optionExpiries?.[id] ?? b3OptionExpiry(instruments.get(id)?.symbol ?? '', t.date);
     if (!e) continue;
-    expiryOf.set(id, e);
+    set.add(e);
     if (e <= horizon && !byDay.has(`${e}|${id}`)) byDay.set(`${e}|${id}`, []);
   }
+  /** Next scheduled expiry of an option on/after a date. */
+  const nextExpiry = (id: string, from: ISODate) => [...(expiriesOf.get(id) ?? [])].filter((d) => d >= from).sort()[0];
   // Process by date; options before other assets of the same day so exercise premiums reach the
   // underlying trade.
   const keys = [...byDay.keys()]
@@ -306,7 +337,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
       const g = byAccount.get(acc) ?? { buy: emptySide(), sell: emptySide() };
       byAccount.set(acc, g);
       const side = t.type === 'BUY' ? g.buy : g.sell;
-      const gross = category === 'FUTURO' && t.amount === undefined ? (t.quantity ?? 0) * (t.price ?? 0) * (FUTURES_POINT_VALUE[symbol.slice(0, 3)] ?? 1) : grossAmount(t);
+      const gross = category === 'FUTURO' ? futuresValue(t, symbol.slice(0, 3)) : grossAmount(t);
       const fees = t.fees ?? 0;
       side.qty += t.quantity ?? 0;
       side.gross += gross;
@@ -519,7 +550,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     }
 
     // 4) option expiry without exercise (T24): close at zero
-    if (category === 'OPCAO' && expiryOf.get(id) === date) {
+    if (category === 'OPCAO' && expiriesOf.get(id)?.has(date)) {
       if (p.qty > 1e-12) {
         trades.push({
           date, month: monthOf(date), instrumentId: id, symbol, category, kind: 'swing',
@@ -569,7 +600,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         averageCost: p.cost / p.qty,
       });
     }
-    if (p.shortQty > 1e-9 && cat(id) === 'OPCAO' && (expiryOf.get(id) ?? '') > horizon) {
+    if (p.shortQty > 1e-9 && cat(id) === 'OPCAO' && (nextExpiry(id, p.shortSince ?? '') ?? '') > horizon) {
       openShorts.push({
         instrumentId: id,
         symbol: displaySymbol(id, inst),
@@ -582,7 +613,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
         level: 'info',
         code: 'OPCAO_LANCADA_EM_ABERTO',
         instrumentId: id,
-        message: `Opção lançada ${displaySymbol(id, inst)} em aberto (${p.shortQty}); vence em ${expiryOf.get(id)}: o prêmio será apurado na recompra ou no vencimento.`,
+        message: `Opção lançada ${displaySymbol(id, inst)} em aberto (${p.shortQty}); vence em ${nextExpiry(id, p.shortSince ?? '')}: o prêmio será apurado na recompra ou no vencimento.`,
       });
     } else if (p.shortQty > 1e-9) {
       openShorts.push({

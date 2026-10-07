@@ -96,6 +96,12 @@ export interface BrazilTaxPackOptions
   /** Income outside the portfolio for the IRPFM estimate (Lei 15.270/2025). */
   otherIncome?: number;
   otherTaxPaid?: number;
+  /** IRPFM redutor inputs (T43). */
+  issuerEffectiveRates?: Record<string, number>;
+  issuerLimits?: Record<string, number>;
+  includeTransitionDividends?: boolean;
+  /** Pre-2024 foreign regime: instruments bought with income earned abroad (IN SRF 118/2000). */
+  foreignOriginInstruments?: string[];
 }
 
 export interface BrazilTaxPack {
@@ -134,14 +140,27 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     transferBasis: opts.transferBasis,
     acceptNoteProposals: opts.acceptNoteProposals,
     cryptoCustody: opts.cryptoCustody,
+    accountCustody: opts.accountCustody,
     initialLossCarry: opts.initialLossCarry,
+    foreignOriginInstruments: opts.foreignOriginInstruments,
     portfolioBaseCurrency: opts.portfolioBaseCurrency,
   });
   const bensDireitos = brazilBensDireitos(input, { ...opts, year: y });
   const rendaFixa = brazilRendaFixaReport(input, { year: y, ...co, exemptIds: opts.rendaFixaExemptIds });
-  const cripto = brazilCryptoReport(input, { year: y, ...co, cryptoCustody: opts.cryptoCustody });
+  const cripto = brazilCryptoReport(input, { year: y, ...co, cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
   const comeCotas = brazilComeCotasReport(input, { year: y, ...co, fundTerms: opts.fundTerms });
-  const irpfm = brazilIrpfmEstimate({ year: y, apuracao, proventos, rendaFixa, exterior, otherIncome: opts.otherIncome, otherTaxPaid: opts.otherTaxPaid });
+  const irpfm = brazilIrpfmEstimate({
+    year: y,
+    apuracao,
+    proventos,
+    rendaFixa,
+    exterior,
+    otherIncome: opts.otherIncome,
+    otherTaxPaid: opts.otherTaxPaid,
+    issuerEffectiveRates: opts.issuerEffectiveRates,
+    issuerLimits: opts.issuerLimits,
+    includeTransitionDividends: opts.includeTransitionDividends,
+  });
   const files: Record<string, string> = {
     [`brasil-${y}-apuracao-mensal.csv`]: brazilApuracaoCsv(apuracao, opts.csv),
     [`brasil-${y}-darfs.csv`]: brazilDarfCsv(apuracao, opts.csv),
@@ -174,7 +193,10 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
         ['Alíquota', irpfm.rate],
         ['IRPFM bruto', irpfm.irpfmGross],
         ...irpfm.credits.map((c) => [`Dedução: ${c.label}`, c.value]),
+        ['Redutor (alíquotas informadas)', irpfm.redutor],
         ['IRPFM devido (estimado)', irpfm.irpfmDue],
+        ['IRPFM faixa mínima (carga de 34% nas empresas)', irpfm.irpfmDueRange.min],
+        ['IRPFM faixa máxima (sem redutor)', irpfm.irpfmDueRange.max],
         ['Nota', irpfm.note],
       ],
       opts.csv,

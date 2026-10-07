@@ -60,6 +60,8 @@ export interface BensDireitosOptions {
   rendaFixaExemptIds?: string[];
   /** Crypto custody per instrument id. */
   cryptoCustody?: Record<string, CryptoCustody>;
+  /** Crypto custody per account/broker name. */
+  accountCustody?: Record<string, CryptoCustody>;
   /** Apply free-text transfer-cost hints. */
   acceptNoteProposals?: boolean;
 }
@@ -179,7 +181,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
   }
 
   // Crypto
-  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, cryptoCustody: opts.cryptoCustody });
+  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
   const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
   const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
   for (const id of new Set([...crCur.keys(), ...crPrev.keys()])) {
@@ -214,6 +216,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     categoryOverrides: opts.categoryOverrides,
     transferBasis: opts.transferBasis,
     cryptoCustody: opts.cryptoCustody,
+    accountCustody: opts.accountCustody,
     acceptNoteProposals: opts.acceptNoteProposals,
   });
   issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));

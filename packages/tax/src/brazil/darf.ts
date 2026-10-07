@@ -44,7 +44,7 @@ const br = (d: ISODate) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`
  */
 /**
  * Monthly Selic (decimal) used by the Receita Federal for late-payment interest (BCB series 4390).
- * 2026-01 is missing (not confirmed); 2026-02..09 derived from the RFB juros table for Oct/2026.
+ * 2026-01 from secondary sources (1.16%); 2026-02..09 derived from the RFB juros table for Oct/2026.
  * Callers can pass newer months in `selicMonthly`; those override this table.
  */
 export const SELIC_MONTHLY: Record<YearMonth, number> = {
@@ -52,7 +52,7 @@ export const SELIC_MONTHLY: Record<YearMonth, number> = {
   '2024-07': 0.0091, '2024-08': 0.0087, '2024-09': 0.0084, '2024-10': 0.0093, '2024-11': 0.0079, '2024-12': 0.0093,
   '2025-01': 0.0101, '2025-02': 0.0099, '2025-03': 0.0096, '2025-04': 0.0106, '2025-05': 0.0114, '2025-06': 0.011,
   '2025-07': 0.0128, '2025-08': 0.0116, '2025-09': 0.0122, '2025-10': 0.0128, '2025-11': 0.0105, '2025-12': 0.0122,
-  '2026-02': 0.01, '2026-03': 0.0121, '2026-04': 0.0109, '2026-05': 0.0107, '2026-06': 0.0112, '2026-07': 0.0122,
+  '2026-01': 0.0116, '2026-02': 0.01, '2026-03': 0.0121, '2026-04': 0.0109, '2026-05': 0.0107, '2026-06': 0.0112, '2026-07': 0.0122,
   '2026-08': 0.0109, '2026-09': 0.0108,
 };
 
@@ -60,7 +60,7 @@ export const SELIC_META: ParamMeta = {
   status: 'needs-verification',
   source: 'Tabela "Taxa de Juros Selic" da Receita Federal (acumulada mensal), conferida em fontes secundárias em 2026-10-06',
   checkedOn: '2026-10-06',
-  note: 'Conferir no Sicalc; janeiro/2026 ausente. Atualizar mensalmente (BCB SGS 4390).',
+  note: 'Conferir no Sicalc. Atualizar mensalmente (BCB SGS 4390).',
 };
 
 export function darfLateCharges(
