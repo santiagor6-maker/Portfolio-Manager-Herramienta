@@ -315,7 +315,7 @@ function FreshnessCard() {
           <li key={name} className="flex items-center gap-2">
             <span className={`size-2 rounded-full ${s.ok ? 'bg-pos' : 'bg-warn'}`} aria-hidden />
             <span className="flex-1">
-              {t(`source.${name}`, { defaultValue: name })}
+              {name.startsWith('idx_') ? `${t('source.index')} ${indexName(name.slice(4))}` : t(`source.${name}`, { defaultValue: name })}
               {s.count ? <span className="text-muted text-xs"> · {s.count}</span> : null}
             </span>
             <span className="text-xs text-muted">{s.updatedAt ? formatRelative(s.updatedAt, f.locale) : s.ok ? '—' : t('market.failed')}</span>

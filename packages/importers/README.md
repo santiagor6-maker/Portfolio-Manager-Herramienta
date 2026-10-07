@@ -1,6 +1,6 @@
 # @pm/importers — Importación de movimientos
 
-Convierte archivos de corredores (CSV, XLSX y tablas HTML guardadas como `.xls`) en `Transaction[]` de
+Convierte archivos de corredores (CSV, XLSX, `.xls` de Excel 97-2003, tablas HTML guardadas como `.xls` y PDF) en `Transaction[]` de
 `@pm/core`, más una lista de `Instrument[]` sugeridos. Para cada fila hay una vista previa con número de
 línea, estado (`ok`, `duplicate`, `error`, `skipped`) y mensajes en español, portugués o inglés.
 
@@ -102,7 +102,13 @@ para verificar con exportaciones reales.
 | `trading212` | Trading 212, Historial | CSV | Media | Compras/ventas, dividendos (bruto = neto + retención), depósitos, retiros, intereses, conversiones, splits |
 | `etoro` | eToro, Account Statement (hoja "Account Activity") | XLSX | Baja | Posiciones reales (no CFD), cripto, dividendos, depósitos, retiros, comisiones (en USD) |
 | `extracto-co` | Extracto colombiano genérico (Davivienda Corredores, Acciones & Valores, Credicorp, Trii, tyba...) | CSV/XLSX/HTML | Baja | Movimientos con encabezados en español; BVC y COP por defecto |
-| `generic` | Cualquiera | CSV/XLSX/HTML | Depende del mapeo | Mapeo de columnas sugerido automáticamente (es/pt/en) y editable |
+| `b3-posicao` | B3 Área do Investidor, Posição (varias hojas) | XLSX | Media | Conciliación de posiciones o posición inicial (`positionsMode: 'opening'`) |
+| `fidelity` | Fidelity, Activity / Accounts History | CSV | Media | Compras/ventas, reinversiones, dividendos, impuesto extranjero, intereses, transferencias |
+| `nota-sinacor-pdf` | Notas de corretagem SINACOR (XP, Clear, Rico, BTG, Inter, Nu, Genial…) | **PDF** | Media | Negócios realizados + Resumo Financeiro: costos prorrateados por valor, IRRF a las ventas, verificación contra "Líquido para" |
+| `extracto-co-pdf` | Extracto colombiano en PDF (Trii, tyba, Davivienda Corredores, Acciones & Valores, Credicorp…) | **PDF** | Baja | Tabla de movimientos reconstruida por posición del texto |
+| `cdt-pdf` | Certificado/constancia de CDT (Colombia) | **PDF** | Baja | Emisor, valor, tasa E.A. o IPC/IBR + spread, emisión y vencimiento → activo `fixed_income` con `accrual` + compra |
+| `ibkr-flex-sync` | Interactive Brokers, Flex Web Service (token + query id) | API | Media | Igual que Flex: operaciones, efectivo, transferencias y posiciones abiertas |
+| `generic` | Cualquiera | CSV/XLSX/XLS/HTML | Depende del mapeo | Mapeo de columnas sugerido automáticamente (es/pt/en) y editable |
 
 **Colombia.** No se conoce un formato estable de exportación CSV/Excel de Trii, tyba, Acciones &
 Valores ni Davivienda Corredores; casi todos entregan extractos en PDF. Por eso el preset `extracto-co`
@@ -226,3 +232,184 @@ Los XLSX y los CSV Latin-1 se regeneran con `npx tsx packages/importers/test/fix
   peniques (GBp). Esto debe resolverse en `@pm/market-data`.
 - **MGC.** Las acciones extranjeras del Mercado Global Colombiano compradas en COP quedan como
   `XBOG:SÍMBOLO`, y Yahoo puede no tener ese símbolo.
+
+
+## Respuesta a la revisión ronda 1
+
+Revisión: `reviews/importers-r1.md`.
+
+Los archivos de prueba del revisor (`scratchpad/review-imp/t1.ts` a `t4.ts`) quedaron como pruebas de regresión en `test/review-r1.test.ts`, organizadas por número de brecha. Las pruebas de PDF y de sincronización están en `test/pdf-sync.test.ts`.
+
+**Línea base:**
+- Antes: 86 pruebas.
+- Ahora: **146 pruebas**, todas pasan (`npx vitest run packages/importers`).
+- `npx tsc -p packages/importers --noEmit` termina sin errores. Los archivos de prueba también pasan el typecheck.
+
+### Altas
+
+**I3 — Números ambiguos.** La detección del separador decimal ahora usa evidencia, en este orden:
+1. Muestras inequívocas.
+2. Cruce `cantidad × precio ≈ valor` en cada fila, probando las dos lecturas.
+3. Precio de referencia opcional (`options.referencePrice`, que la app puede alimentar con `@pm/market-data`).
+4. El delimitador `;`, que implica coma decimal.
+
+Si después de todo eso siguen quedando valores como `1.000` o `2,450`, la importación se **bloquea**:
+- `needsConfirmation: [{ kind: 'numberFormat', candidates, suggested, samples, affectedLines }]` y `numberFormatCandidates`;
+- las filas quedan en estado `pending` y `transactions` llega vacío.
+
+La UI vuelve a llamar con `numberFormat`. El idioma de los encabezados y la moneda solo deciden cuál opción se sugiere primero. `allowAmbiguous: true` acepta la sugerencia con un aviso.
+
+Casos del revisor:
+- `1.000;2.450` en un archivo con `;` → 1000 acciones a 2450.
+- `"1,500","2,450"` en un archivo con `,` → bloqueado.
+
+**I4 — Fechas ambiguas.** Cuenta como evidencia:
+- un día mayor que 12;
+- hora con AM/PM;
+- el orden fecha de operación ≤ fecha de liquidación (nuevo campo de mapeo `settleDate`);
+- la monotonía cronológica de las filas.
+
+Si todas las fechas siguen ambiguas: `needsConfirmation` con `kind: 'dateFormat'` y `dateFormatCandidates`. Con encabezados en inglés se sugiere MM/DD primero. Las filas quedan `pending`. `05/05` ya no cuenta como ambigua.
+
+**I5 — Doble conteo B3.**
+- En Movimentação, cada "Transferência - Liquidação" se empareja con la operación ya importada desde Negociação o desde una nota (mismo activo, lado y cantidad) a **0 a 3 días hábiles del calendario B3**. El calendario incluye Carnaval, Viernes Santo, Corpus Christi, 24 y 31 de diciembre y Consciência Negra desde 2024. La fila queda `skipped` con `SETTLEMENT_MATCHED`.
+- `b3SettlementMode` admite `'auto'` (por defecto), `'include'` y `'skip'`.
+- Los posibles duplicados quedan fuera de `transactions` y de la inferencia de proporciones. La bonificación de 13,7 sobre 137 acciones ahora da exactamente 0,1.
+
+**I6 — IBKR descartaba secciones.** El Activity Statement ahora importa:
+- `Transfers` (ACATS/FOP): TRANSFER_IN/OUT con precio y valor de mercado como costo sugerido, con aviso;
+- transferencias de efectivo, como DEPOSIT/WITHDRAWAL;
+- `Transaction Fees`, como FEE asociado al activo.
+
+Cualquier sección con filas `Data` que no se maneja genera `UNHANDLED_SECTION` con nombre y número de filas. Solo se exceptúan las secciones de metadatos. `Open Positions` y `Cash Report` alimentan la conciliación (ver I20).
+
+**I1 — PDF.** Nueva capa `src/pdf/`: pdf.js (`pdfjs-dist` legacy, que funciona en navegador y en Node) → texto con coordenadas → líneas y celdas → tabla alineada con las columnas del encabezado. `sniffKind` reconoce `%PDF`. Analizadores:
+- **`nota-sinacor-pdf`:**
+  - lee cabecera (Nr. nota, Data pregão, corretora), Negócios realizados (C/V, mercado, prazo, especificación, obs, cantidad, precio, valor, D/C) y Resumo Financeiro (liquidação, registro, termo/opções, A.N.A., emolumentos, corretagem/taxa operacional, execução, custódia, ISS/impostos, IRRF y outros);
+  - prorratea los costos por valor y el IRRF entre las ventas;
+  - verifica el resultado contra "Líquido para" (`NOTA_TOTALS_MISMATCH`);
+  - admite varias notas y páginas, y omite opciones y termo;
+  - deduce el ticker desde "PETROBRAS PN N2" con una tabla de emisores y clase (ON/PN/PNA/PNB/UNT/CI) o desde un ticker explícito; si no lo reconoce, devuelve el error `UNKNOWN_SECURITY` y el usuario responde con `securityMap`.
+- **`extracto-co-pdf`:** extractos de Trii, tyba, Davivienda Corredores, Acciones & Valores y Credicorp con tabla de movimientos. Usa el mapeo genérico con valores por defecto colombianos e identifica el corredor como cuenta. Ignora el encabezado repetido en cada página.
+- **`cdt-pdf`:** certificados de CDT. Extrae emisor, número, valor, tasa E.A. o IPC/IBR/DTF + spread, apertura y vencimiento (o plazo en días) y periodicidad. Crea un activo `MANUAL:CDT-…` `fixed_income` con `accrual` (`AccrualSpec` de core) y una compra.
+- PDF no reconocido → `FILE_PDF_UNSUPPORTED`. PDF dañado o con contraseña → `PDF_READ_ERROR`, con mensaje claro.
+
+Confianza honesta:
+- **SINACOR: media.** El formato es estándar, pero el texto extraído varía según cómo genere el PDF cada corredora. La prueba usa un PDF sintético fiel al layout.
+- **Extractos colombianos y CDT: baja.** No hay un formato público. Son analizadores aproximados por etiquetas y columnas y deben validarse con PDF reales de usuarios.
+
+**I2 — Sincronización.** `src/sync/ibkr-flex.ts`:
+- Flujo: `SendRequest` → `GetStatement`, con reintentos ante 1019/1018/1009, `fetch` inyectable y `sleep` configurable.
+- Errores: mensajes en español para los códigos documentados (1012 token vencido, 1015 token inválido, 1014 query inválida…), devueltos como `FlexError`.
+- Conversión: XML → la misma tabla que el Flex CSV (Trades, CashTransactions, Transfers, OpenPositions) → mismo analizador, con `source: 'import:ibkr-flex'`. Por eso un CSV y una sincronización se deduplican entre sí.
+- Pruebas con respuestas grabadas en `test/fixtures/ibkr-flex-ws/`.
+
+Uso recomendado: desde `apps/server`, porque IBKR no envía CORS y así el token no llega al navegador; por ejemplo, con una rutina diaria. Llamada: `syncIbkrFlex({ token, queryId, fetch }, { portfolioId, existingTransactions })`.
+
+### Medias
+
+**I7 — Duplicados entre fuentes y dentro del archivo.**
+- Nuevo estado **`possible_duplicate`**, excluido por defecto, con `duplicateOf` (fuente, fecha, línea, id).
+- Criterio: mismo tipo, activo y moneda; misma cantidad (y precio ±0,5 %) o mismo monto. La ventana es de **±3 días hábiles** si la fuente es otra, el mismo día si la fuente es la misma, e idéntica si es dentro del archivo, salvo que las referencias del corredor sean distintas.
+- Cubre BUY, SELL, TRANSFER, DIVIDEND, INTEREST, DEPOSIT, WITHDRAWAL, FEE, TAX, FX_CONVERSION y SPLIT.
+- La UI acepta con `acceptDuplicates: 'in-file' | 'all' | [líneas]`.
+
+**I8 — Bolsa adivinada.** Ahora se consulta primero lo existente del usuario y luego un catálogo inyectable (`options.catalog`, por ejemplo `CATALOG.instruments` de `@pm/market-data`) por ISIN y símbolo. Además:
+
+| Caso | Resultado |
+|---|---|
+| Tickers de la BVC | Siempre `XBOG`, aunque la fila esté en USD (con `CURRENCY_MISMATCH`) |
+| `CURRENCY_MISMATCH` | Se avisa en **cada** fila, no solo al crear el activo |
+| Acciones de EE. UU. compradas en COP (MGC) | El activo de EE. UU. (`XNAS:AAPL`); la operación se queda en COP (`MGC_FOREIGN_LISTING`) |
+| Ticker de EE. UU. desconocido | `US:ENB`, sin inventar XNAS |
+| Llega después la bolsa real (IBKR NYSE) | Se reutiliza `US:ENB` y se devuelve `instrumentUpdates` |
+| EUR sin ISIN ni bolsa conocida | Error `EXCHANGE_REQUIRED`, que se resuelve con `securityMap: { SAN: 'XMAD' }`; hay una lista de tickers europeos sin ambigüedad |
+
+**I9 — Signo.**
+- DIVIDEND/INTEREST negativo → reversión (monto negativo, aviso).
+- TAX/FEE: la convención de signo se decide por archivo (estilo flujo de caja o positivo). Las palabras devolución, reintegro, reembolso, reversión, estorno y refund fuerzan un monto negativo.
+- "Compra" con cantidad negativa → `QUANTITY_SIGN_CONTRADICTS`.
+
+**I10 — Comisión de FX en IBKR.** Cuando la comisión está en otra moneda, se emite un FEE aparte en la moneda de la comisión (`extraTransactions` de la fila), tanto en el Activity como en Flex.
+
+**I11 — B3: fracciones, JCP y eventos.**
+- "Fração em Ativos" + "Leilão de Fração" → una venta de la fracción con el valor de la subasta.
+- JCP: bruto = neto / 0,85 e IR estimado (`JCP_GROSS_ESTIMATED`).
+- Incorporação, cisão y conversão → `corporateActions` (patas de entrada y salida, cantidades) para el asistente de eventos de la UI.
+
+**I12 — Planilla de nota.**
+- `notaFeesMode: 'auto' | 'per-row' | 'per-note'`.
+- En `auto`, un valor repetido solo se toma como total de la nota si todas las columnas de costos se repiten y los valores de las operaciones difieren. Si los valores son iguales, se avisa `FEES_MODE_AMBIGUOUS`.
+- Hay columnas "Total custos nota".
+- Se leen `Tipo mercado` y `D/C`, y se omiten las opciones (`PETRA250`, `PETR4E250`) y el termo.
+- Las notas distintas con operaciones idénticas no se marcan como duplicadas.
+
+**I13 — Cobertura y vocabulario.**
+- Nuevo preset **Fidelity**, más los PDF anteriores.
+- `listBrokerProfiles()` y `brokerProfile`: XP, Rico, Clear, BTG, Nu Invest, Inter, Tesouro Direto, Avenue, Hapi, Trii, tyba, Davivienda Corredores, Acciones & Valores, Credicorp, CDT, IBKR, Schwab, Fidelity, DEGIRO, T212 y eToro. Indican qué archivo descargar y qué formato lo lee, y aplican cuenta, mercado, moneda y formatos por defecto a los archivos genéricos.
+- Vocabulario de CDT: constitución/apertura = BUY, redención/cancelación/vencimiento = SELL.
+- Se quitan las palabras neutras iniciales (abono, pago, cargo, ingreso por…) y gana la palabra clave que aparece primero: "Dividendo neto de retención" → DIVIDEND.
+- Palabras con sentido por signo (traslado, liquidación, ajuste, transferencia) → BUY/SELL/TRANSFER/DEPOSIT/WITHDRAWAL según el signo.
+- Cash in lieu y leilão de fração → venta (o devolución de capital si no hay cantidad).
+- `classifyTypeDetailed()` expone `refund` y `signBased`.
+
+Para Avenue y Hapi no hay una exportación pública estable: el perfil guía al usuario a la plantilla.
+
+**I14 — Rendimiento.** Índice por tipo, activo y moneda, con cubetas por día. Las fechas se parsean una sola vez.
+
+| Importados | Existentes | Antes | Ahora |
+|---|---|---|---|
+| 10.000 | 10.000 | 35 s | 0,35 s |
+| 50.000 | 50.000 | más de 10 min | ≈ 4 s |
+
+**I15 — AutoFX de DEGIRO.** Los movimientos de cambio (Valuta Creditering/Debitering, FX Credit/Debit, Ingreso/Retirada Cambio de Divisa) se emparejan por fecha y hora en un FX_CONVERSION. Los que no tienen pareja se avisan.
+
+### Bajas
+
+**I16 — `.xls` y HTML.**
+- Lector BIFF8 propio (`src/xls.ts`): contenedor CFB, también con mini stream; SST con CONTINUE; LABELSST, LABEL, NUMBER, RK, MULRK, BOOLERR, FORMULA y STRING; fechas por formato XF.
+- HTML con tablas anidadas (cada una por separado) y `colspan` expandido.
+
+**I17 — Formatos que daban error.** Ahora se aceptan:
+- proporciones `2:1`, `1x10`, `1/10` y `10%`;
+- seriales de Excel como texto (`45292`);
+- sufijos `DR`/`D`/`CR`/`C`;
+- fechas con día de la semana ("Mon Jan 15 2024").
+
+**I18 — Reverse split de Schwab en dos filas.** Se calcula la proporción nuevo/antiguo (0,1).
+
+**I19 — Avisos de fecha innecesarios.** Los presets de formato fijo no avisan ni bloquean: B3, notas, DEGIRO, Schwab, Fidelity, eToro y T212.
+
+**I20 — Conciliación y foto inicial.** `result.reconciliation` incluye posiciones y caja informadas, las diferencias calculadas contra existentes + importados a la fecha del extracto, y el aviso `RECONCILIATION_DIFF`. Fuentes:
+- IBKR `Open Positions` y `Cash Report`;
+- Flex `OpenPositions`;
+- nuevo preset **B3 Posição**, que une todas las hojas.
+
+Con `positionsMode: 'opening'` (+ `asOfDate`) las posiciones se importan como TRANSFER_IN para arrancar el seguimiento mensual. `computeBalances()` está exportada.
+
+## Notas de diseño: sincronización futura
+
+- **B3 Área do Investidor (API).** B3 ofrece APIs de posición, movimientos y proventos a instituciones certificadas como *parceiro* del Canal Eletrônico do Investidor. Requieren contrato, homologación y el consentimiento OAuth del inversionista. Mientras no exista ese contrato, el flujo es:
+  1. descarga mensual guiada de Negociação + Movimentação + Posição (los tres presets ya existen);
+  2. conciliación automática con Posição.
+
+  Cuando haya contrato, un conector `src/sync/b3.ts` debe producir las mismas filas que los presets XLSX para reutilizar la deduplicación por `source`.
+- **Reenvío por correo** (como Sharesight):
+  1. Cada usuario recibe una dirección única `importar+<token>@…`.
+  2. El servidor (`apps/server`) recibe el webhook del proveedor de correo entrante (SES, Postmark o Mailgun), verifica SPF/DKIM y que el remitente esté autorizado, y descarta lo demás.
+  3. Pasa cada adjunto (PDF de nota SINACOR, confirmaciones de IBKR/XP/BTG, extractos) por `importFile`.
+  4. Guarda el resultado como **borrador**: nada se importa sin revisión del usuario, y los `possible_duplicate`/`pending` se muestran en la app.
+
+  La deduplicación por `importHash` hace idempotente el reenvío repetido.
+- **Agregadores** (Belvo/Pluggy para BR y CO, SnapTrade para EE. UU.): implementarlos como `src/sync/<proveedor>.ts`, que convierta su JSON a `DraftTransaction` y llame a `finalizeRows` con `source: 'sync:<proveedor>'`.
+
+## Pendientes tras la ronda 2
+
+- **Validar con archivos reales:**
+  - PDF reales de cada corredora: SINACOR de XP, Clear, BTG, Nu e Inter; extractos de Trii, tyba, Davivienda y A&V; CDT de varios bancos.
+  - La semántica de la tasa de cambio de T212/DEGIRO.
+  - El supuesto de JCP neto en B3.
+- **Tabla de emisores de SINACOR:** cubre unas 70 compañías; las demás piden `securityMap`. Se podría ampliar con la lista de emisores de B3.
+- **Lector `.xls`:** no lee celdas `RSTRING` antiguas (BIFF5) ni hojas protegidas con cifrado.
+- **MGC:** la operación en COP queda sin `fxRateToBase`; el motor la convierte con la TRM del día.
+- **Eventos corporativos (incorporação/cisão):** se entregan como sugerencias; falta el asistente en la UI.

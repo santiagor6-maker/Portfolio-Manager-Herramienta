@@ -193,7 +193,7 @@ async function doRefresh(): Promise<void> {
       for (const r of res.indices ?? []) {
         if (r.ok) {
           await mergeIndexSeries(r.data.series);
-          bump(`index:${r.data.series.id}`, true);
+          bump(`idx_${r.data.series.id}`, true);
         } else bump('indices', false, r.error.message);
       }
       const quotes = res.quotes.flatMap((q, k) =>

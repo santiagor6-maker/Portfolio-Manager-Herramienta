@@ -25,6 +25,8 @@ import { dayToIso, isStrictIsoDate, isoToDay } from './dates';
 import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
 import { accruedLotValues, priceInfo } from './pricing';
+import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
+import { fixedIncomeTax, residenceOf, taxRegimeFor } from './fitax';
 
 export const TYPE_RANK: Record<TransactionType, number> = {
   SPLIT: -1,
@@ -169,8 +171,12 @@ export interface EngineContext {
   observations: Map<string, { days: number[]; prices: number[] }>;
   /** First trade price per day per instrument (intra-day pre-flow valuation). */
   firstTradePrice: Map<number, Map<string, number>>;
-  /** Maturity days of accrual instruments, ascending. */
-  maturities: { day: number; instrumentId: string }[];
+  /** Automatic redemptions: payment day (next business day after maturity), ascending. */
+  maturities: { day: number; maturityDay: number; instrumentId: string }[];
+  /** Trade prints rejected as price observations (C25). */
+  outliers: { tx: Transaction; message: string }[];
+  /** Tax residence (explicit or inferred from the portfolio base currency). */
+  taxResidence: string | undefined;
 }
 
 export function resolveOptions(input: EngineInput, extra?: EngineOptions): ResolvedOptions {
@@ -218,14 +224,63 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   const sorted = sortTransactions(kept);
 
   // Trade prints as price observations (BUY/SELL only; transfer prices are historical costs).
+  // C25: a print that deviates more than `tradePriceTolerance` (default 30 %, widened with the
+  // square root of the gap in months) from BOTH the previous reference (market close or accepted
+  // print) and the next market close is an outlier (typo): not used as a price, reported.
+  // Tiny trades (< 0.5 % of the position) are not used when a market close exists that week.
   const observations = new Map<string, { days: number[]; prices: number[] }>();
   const firstTradePrice = new Map<number, Map<string, number>>();
+  const outliers: EngineContext['outliers'] = [];
+  const tol = raw.tradePriceTolerance ?? 0.3;
+  const held = new Map<string, number>();
+  const marketRef = (inst: Instrument | undefined, id: string, day: number, after: boolean): { day: number; price: number } | undefined => {
+    const pt = after ? undefined : market.pricePointAt(id, day - 1);
+    let p: { day: number; close: number } | undefined = pt;
+    if (after) {
+      // next close within 62 days
+      for (const probe of [day + 1, day + 7, day + 31, day + 62]) {
+        const q = market.pricePointAt(id, probe);
+        if (q && q.day > day) {
+          p = q;
+          break;
+        }
+      }
+    }
+    if (!p) return undefined;
+    const pc = market.priceCurrency(id);
+    const ccy = inst?.currency;
+    let price = p.close;
+    if (pc && ccy && pc !== ccy) {
+      const r = market.fxAt(pc, ccy, p.day) ?? market.fxNearest(pc, ccy, p.day);
+      if (r === undefined) return undefined;
+      price *= r;
+    }
+    return { day: p.day, price };
+  };
+  const deviates = (p: number, ref: { day: number; price: number } | undefined, day: number): boolean | undefined => {
+    if (!ref || !(ref.price > 0)) return undefined;
+    const gap = Math.abs(day - ref.day);
+    if (gap > 400) return undefined;
+    const t = tol * Math.max(1, Math.sqrt(gap / 30));
+    return Math.abs(p / ref.price - 1) > t;
+  };
   if (options.tradePriceObservations) {
     for (const { tx, day } of sorted) {
-      if ((tx.type !== 'BUY' && tx.type !== 'SELL') || !tx.instrumentId || !(num(tx.quantity) > 0)) continue;
-      const inst = instruments.get(tx.instrumentId);
+      const id = tx.instrumentId;
+      if (id && (tx.type === 'SPLIT' || tx.type === 'STOCK_DIVIDEND')) {
+        const f = tx.type === 'SPLIT' ? (tx.subtype ? 1 : num(tx.ratio) || 1) : tx.quantity ? 1 : 1 + num(tx.ratio);
+        held.set(id, (held.get(id) ?? 0) * f + (tx.type === 'STOCK_DIVIDEND' && tx.quantity ? num(tx.quantity) : 0));
+        // previous observations are pre-split: rescale them so the outlier check stays meaningful
+        const o = observations.get(id);
+        if (o && f !== 1) o.prices = o.prices.map((x) => x / f);
+      }
+      if ((tx.type !== 'BUY' && tx.type !== 'SELL') || !id || !(num(tx.quantity) > 0)) continue;
+      const inst = instruments.get(id);
+      const q = num(tx.quantity);
+      const before = held.get(id) ?? 0;
+      held.set(id, before + (tx.type === 'BUY' ? q : -q));
       let p = num(tx.price);
-      if (!(p > 0) && num(tx.amount) > 0) p = (num(tx.amount) / num(tx.quantity)) * mult(inst);
+      if (!(p > 0) && num(tx.amount) > 0) p = (num(tx.amount) / q) * mult(inst);
       if (!(p > 0)) continue;
       const ccy = inst?.currency ?? tx.currency;
       if (tx.currency !== ccy) {
@@ -233,8 +288,18 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         if (r === undefined) continue;
         p *= r;
       }
-      let o = observations.get(tx.instrumentId);
-      if (!o) observations.set(tx.instrumentId, (o = { days: [], prices: [] }));
+      let o = observations.get(id);
+      const prevMarket = marketRef(inst, id, day, false);
+      const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
+      const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
+      const d1 = deviates(p, prevRef, day);
+      const d2 = deviates(p, marketRef(inst, id, day, true), day);
+      if (d1 === true && d2 !== false) {
+        outliers.push({ tx, message: `Trade price ${p} of ${id} deviates more than ${Math.round(tol * 100)} % from the reference ${prevRef!.price.toFixed(4)}; not used as a price observation (typo?)` });
+        continue;
+      }
+      if (before > 0 && q < 0.005 * before && market.pricePointAt(id, day) && day - (market.pricePointAt(id, day) as { day: number }).day <= 7) continue;
+      if (!o) observations.set(id, (o = { days: [], prices: [] }));
       if (o.days[o.days.length - 1] === day) o.prices[o.prices.length - 1] = p;
       else {
         o.days.push(day);
@@ -242,21 +307,45 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       }
       let m = firstTradePrice.get(day);
       if (!m) firstTradePrice.set(day, (m = new Map()));
-      if (!m.has(tx.instrumentId)) m.set(tx.instrumentId, p);
+      if (!m.has(id)) m.set(id, p);
     }
   }
 
+  // C24: maturities are paid on the next business day of the instrument's calendar; a recorded
+  // SELL/TRANSFER_OUT of the instrument within `settlementWindowDays` business days (default 5)
+  // after that day is the real payment and replaces the automatic redemption.
   const maturities: EngineContext['maturities'] = [];
   if (options.autoRedeemAtMaturity) {
-    const used = new Set(sorted.map((s) => s.tx.instrumentId).filter(Boolean) as string[]);
+    const used = new Set(sorted.map((x) => x.tx.instrumentId).filter(Boolean) as string[]);
     for (const id of used) {
-      const m = instruments.get(id)?.accrual?.maturity;
-      if (m && isStrictIsoDate(m)) maturities.push({ day: isoToDay(m), instrumentId: id });
+      const inst = instruments.get(id);
+      const m = inst?.accrual?.maturity;
+      if (!m || !isStrictIsoDate(m)) continue;
+      const cal = calendarForCurrency(inst?.currency);
+      const mDay = isoToDay(m);
+      const payDay = nextBusinessDay(mDay, cal);
+      const windowEnd = addBusinessDays(payDay, inst?.accrual?.settlementWindowDays ?? 5, cal);
+      const recorded = sorted.some((x) => x.tx.instrumentId === id && (x.tx.type === 'SELL' || x.tx.type === 'TRANSFER_OUT') && x.day >= mDay && x.day <= windowEnd);
+      if (!recorded) maturities.push({ day: payDay, maturityDay: mDay, instrumentId: id });
     }
     maturities.sort((a, b) => a.day - b.day);
   }
 
-  return { base, portfolioBase: input.portfolio.baseCurrency, market, instruments, options, raw, sorted, rejected, observations, firstTradePrice, maturities };
+  return {
+    base,
+    portfolioBase: input.portfolio.baseCurrency,
+    taxResidence: residenceOf(input.portfolio.taxResidence, input.portfolio.baseCurrency),
+    market,
+    instruments,
+    options,
+    raw,
+    sorted,
+    rejected,
+    observations,
+    firstTradePrice,
+    maturities,
+    outliers,
+  };
 }
 
 const CASH_EPS = 1e-7;
@@ -301,6 +390,7 @@ export class Ledger {
 
   constructor(readonly ctx: EngineContext) {
     for (const r of ctx.rejected) this.diag(r.tx, NaN, r.code, r.message, 'error');
+    for (const o of ctx.outliers) this.diag(o.tx, isoToDay(o.tx.date), 'TRADE_PRICE_OUTLIER', o.message, 'warning');
   }
 
   get done(): boolean {
@@ -1047,11 +1137,17 @@ export class Ledger {
     const cbBefore = b.costBasisBase;
     const { values } = accruedLotValues(this.ctx, inst, b.lots, day);
     const X = this.X(inst.currency, day);
+    const regime = taxRegimeFor(inst, this.ctx.taxResidence);
     let total = 0;
+    let taxes = 0;
     b.lots.forEach((l, i) => {
-      const v = values[i] ?? 0;
+      const gross = values[i] ?? 0;
+      // Estimated withholding on the yield (C24/C31): IR/IOF in Brazil, 4 % retención in Colombia.
+      const tax = fixedIncomeTax(regime, day - l.openDay, gross - l.quantity * l.unitValue, inst.accrual).total;
+      const v = gross - tax;
       total += v;
-      this.pushRealized({
+      taxes += tax;
+      const r = {
         day,
         instrumentId: id,
         sellDate: tx.date,
@@ -1064,14 +1160,17 @@ export class Ledger {
         costBase: l.quantity * l.unitCostBase,
         gainBase: v * X - l.quantity * l.unitCostBase,
         holdingDays: day - l.openDay,
-      });
+      };
+      this.pushRealized(r);
+      this.realized[this.realized.length - 1]!.estimated = true;
     });
+    if (taxes > 0) this.costs.push({ day, instrumentId: id, feesBase: 0, taxesBase: taxes * X });
     b.extractAll();
     const acc = this.accountQty.get(id);
     if (acc) for (const a of acc.keys()) acc.set(a, 0);
     this.credit(tx, inst.currency, total);
     this.positionFlow(id, day).outBase += total * X;
-    this.diag(tx, day, 'MATURITY_REDEEMED', `${id} redeemed at maturity for ${total.toFixed(2)} ${inst.currency}`, 'info');
+    this.diag(tx, day, 'MATURITY_REDEEMED', `${id} redeemed automatically (estimated) for ${total.toFixed(2)} ${inst.currency}${taxes > 0 ? ` net of an estimated ${taxes.toFixed(2)} withholding` : ''}; record the real payment to replace it`, 'info');
     this.closeAttribution(day, id, b.costBasisBase - cbBefore);
     this.curTx = undefined;
     if (this.ctx.options.sellProceeds === 'withdraw' && total > 0) {
