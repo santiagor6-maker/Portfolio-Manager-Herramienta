@@ -231,3 +231,23 @@ Parámetros nuevos que requieren verificación:
 - valor del punto de futuros;
 - CNPJ;
 - componente inflacionario de 2025 (verificado en fuentes secundarias).
+
+---
+
+## Respuesta a la revisión ronda 3
+
+Revisión: `reviews/tax-r3.md`. Las pruebas de regresión están en `src/review-r3.test.ts`
+(escenarios A1–A12 del revisor). Los scripts `r3-*.ts` del revisor dan los valores esperados.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T38 | alta | **El régimen de la cripto se decide por la custodia, no por la moneda.** `routeCryptoByCustody` usa este orden: override por instrumento (`cryptoCustody`), luego la cuenta o el bróker de cada transacción (`Transaction.account`, mapa `accountCustody`, listas de exchanges brasileños y extranjeros), luego el exchange del instrumento; si no hay información, `desconhecida` (DARF retenido y aviso). La moneda de cotización ya no se usa. Si un mismo activo está en custodias distintas, se separa en instrumentos virtuales `#brasil` y `#exterior`, cada uno con su régimen y su costo medio. "Binance" queda como exterior por defecto, `needs-verification` (`CRYPTO_CUSTODY_META`); "Binance BR" o `accountCustody` la hacen brasileña. A7: BTC-USD en Mercado Bitcoin → DARF 4600 de R$ 30.000 con vencimiento el 30/04/2026 |
+| T39 | media | El vencimiento se calcula por serie **y año**: cada transacción programa el siguiente vencimiento de su serie, así que un ticker reutilizado vuelve a vencer. A3 → +1.000 en 2025-03 y +2.000 en 2026-03 |
+| T40 | media | Opciones semanales: `OPTION_RE` acepta el sufijo `W1`–`W5`; el vencimiento es el viernes de la semana N del mes (o el último viernes si no hay quinto) |
+| T43 | media | Redutor del IRPFM: el exceso de (tasa efectiva de la empresa + tasa IRPFM) sobre el límite nominal (34%, o 40%/45% en el sector financiero, con `issuerLimits`) se descuenta por empresa. Sin `issuerEffectiveRates` el resultado es un rango (`irpfmDueRange`: mínimo con carga de 34% en la empresa, máximo sin redutor). Los dividendos de transición quedan fuera de la base por defecto (`includeTransitionDividends`), marcado `needs-verification` |
+| T44 | media | Lector de XLSX sin dependencias (`readXlsx`/`unzip`, con `DecompressionStream` "deflate-raw"); `officialDocRowsFromTable` mapea los encabezados de la B3 (Área do Investidor: Movimentação y Posição) y de la DIAN (exógena). Funciones `informeFromB3Movimentacao` e `informeFromB3Posicao` (de ahí también salen los CNPJ); conceptos de la exógena por palabra clave (`exogenaConcept`). **El JCP en valor líquido** se reconoce (marcado `liquido`, o detectado cuando coincide con bruto − IRRF) y queda `ok`. El PDF del informe sigue requiriendo exportar a CSV/XLSX: no se agregan dependencias |
+| T35 | baja | Selic de enero de 2026 (1,16%) agregada, con una prueba que garantiza que no hay huecos de 2024-01 a 2026-09 |
+| T41 | baja | `parseOfficialDocCsv` usa `parseLocaleNumber`: "1,234.56" y "1.234,56" dan 1234,56; también acepta negativos |
+| T42 | baja | Los códigos con ceros a la izquierda ("03", "09", "0211") se mantienen como texto al armar las hojas XLSX |
+| T45 | baja | Régimen anterior a 2024: carnê-leão mensual de dividendos e intereses del exterior con la tabla progresiva (hasta abril de 2023 y desde mayo de 2023), crédito por la retención externa y DARF 0190, convertido a la cotización de compra de la primera quincena del mes anterior. `foreignOriginInstruments` (IN SRF 118/2000) calcula la ganancia en moneda extranjera × PTAX de la venta. Supuesto: el carnê-leão se calcula solo sobre estos rendimientos |
+| T46 | baja | Futuros cotizados en US$ (ICF, SJC) se convierten a BRL a la fecha de la operación (`FUTURES_QUOTE_CURRENCY`) |
