@@ -313,6 +313,11 @@ body {
   .table .r {
     text-align: right;
   }
+  .monthly-table th,
+  .monthly-table td {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
   .table-compact th {
     padding: 6px 8px;
   }

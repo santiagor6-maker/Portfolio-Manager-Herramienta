@@ -140,7 +140,7 @@ describe('I6 / I10 / I20 — IBKR transfers, transaction fees, FX commissions, u
   });
 });
 
-describe('I7 / I14 — cross-source and in-file duplicates are blocking choices; scan is linear', () => {
+describe('I7 / I14 — cross-source duplicates are blocking choices, in-file repeats only flagged; scan is linear', () => {
   const ibA = 'Statement,Header,Field Name,Field Value\nStatement,Data,Title,Activity Statement\nAccount Information,Header,Field Name,Field Value\nAccount Information,Data,Base Currency,USD\n' +
     'Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code\n' +
     'Trades,Data,Order,Stocks,USD,AAPL,"2024-01-03, 10:30:00",10,185.1,185,-1851,-1,1852,0,0,O\n' +

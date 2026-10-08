@@ -25,14 +25,15 @@ const TYPE_ORDER: Record<TransactionType, number> = {
   WITHDRAWAL: 13,
 };
 
-/** Stable sort by date, then by type order, then by original position. */
-export function sortTransactions(txs: Transaction[]): Transaction[] {
+/**
+ * Stable sort by date, then by type order, then by original position. With `outBeforeIn`, same-day
+ * TRANSFER_OUT is processed before TRANSFER_IN (custody moves: the cost leaves before it arrives).
+ */
+export function sortTransactions(txs: Transaction[], opts: { outBeforeIn?: boolean } = {}): Transaction[] {
+  const order = (t: TransactionType) => (opts.outBeforeIn && t === 'TRANSFER_OUT' ? 1.5 : TYPE_ORDER[t]);
   return txs
     .map((tx, i) => ({ tx, i }))
-    .sort(
-      (a, b) =>
-        a.tx.date.localeCompare(b.tx.date) || TYPE_ORDER[a.tx.type] - TYPE_ORDER[b.tx.type] || a.i - b.i,
-    )
+    .sort((a, b) => a.tx.date.localeCompare(b.tx.date) || order(a.tx.type) - order(b.tx.type) || a.i - b.i)
     .map((x) => x.tx);
 }
 

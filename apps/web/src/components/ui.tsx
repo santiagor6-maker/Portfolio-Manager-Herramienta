@@ -292,6 +292,9 @@ export function Modal({
   const ref = useRef<HTMLDivElement>(null);
   const hid = useId();
   const { t } = useTranslation();
+  // Keep the latest onClose without re-running the focus effect (a re-run would steal focus).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
@@ -301,13 +304,14 @@ export function Modal({
         el?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [],
       ).filter((n) => !n.hasAttribute('disabled'));
     setTimeout(() => {
+      if (el && el.contains(document.activeElement)) return; // the user is already typing inside
       const first = el?.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[1] ?? focusables()[0];
       first?.focus();
     }, 0);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
       if (e.key === 'Tab') {
         const f = focusables();
@@ -330,7 +334,7 @@ export function Modal({
       document.body.style.overflow = '';
       prev?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">

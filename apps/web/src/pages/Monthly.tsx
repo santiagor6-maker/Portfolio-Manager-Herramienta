@@ -90,7 +90,8 @@ export type ColKey =
 
 export const ALL_COLUMNS: ColKey[] = ['start', 'flows', 'income', 'fees', 'gain', 'end', 'twr', 'cumulative', 'local', 'fx', 'inflation', 'real', 'bench', 'alpha', 'pctIndex'];
 /** Default view: fits at 1440 px with price/FX effects and benchmark visible. */
-export const ESSENTIAL_COLUMNS: ColKey[] = ['flows', 'income', 'gain', 'end', 'twr', 'cumulative', 'local', 'fx', 'real', 'bench', 'alpha'];
+// Real return lives in the Nominal/Real switch (and the complete set) so the essential view fits 1440 px.
+export const ESSENTIAL_COLUMNS: ColKey[] = ['flows', 'income', 'gain', 'end', 'twr', 'cumulative', 'local', 'fx', 'bench', 'alpha'];
 
 export function resolveColumns(setting: string[] | 'essential' | 'complete'): ColKey[] {
   if (setting === 'complete') return ALL_COLUMNS;
@@ -172,7 +173,7 @@ export default function MonthlyPage() {
     fx: { label: t('monthly.col.fxEffect'), hint: t('monthly.col.fxEffectHint'), cell: (r) => <Pct value={r.fxReturn} signed className="text-ink-2" />, total: <Pct value={totals.fx} signed />, csv: (r) => r.fxReturn ?? '', fmt: 'pct' },
     inflation: { label: t('monthly.col.inflation', { index: indexName(a?.inflationIndex) }), cell: (r) => <Pct value={r.inflation} signed className="text-ink-2" />, total: <Pct value={totals.inflation} signed />, csv: (r) => r.inflation ?? '', fmt: 'pct' },
     real: { label: t('monthly.col.real'), hint: t('monthly.col.realHint', { index: indexName(a?.inflationIndex) }), cell: (r) => <Pct value={r.realTwr} signed colored />, total: <Pct value={totals.real} signed colored />, csv: (r) => r.realTwr ?? '', fmt: 'pct' },
-    bench: { label: benchmarkName(bench), cell: (r) => <Pct value={benchValue(r, bench)} signed className="text-ink-2" />, total: <Pct value={totals.bench} signed />, csv: (r) => benchValue(r, bench) ?? '', fmt: 'pct' },
+    bench: { label: benchmarkName(bench).replace(/\s*\(.*\)$/, ''), hint: benchmarkName(bench), cell: (r) => <Pct value={benchValue(r, bench)} signed className="text-ink-2" />, total: <Pct value={totals.bench} signed />, csv: (r) => benchValue(r, bench) ?? '', fmt: 'pct' },
     alpha: {
       label: t('monthly.col.alpha'),
       hint: t('monthly.col.alphaHint'),
@@ -382,7 +383,7 @@ export default function MonthlyPage() {
                         <tr id={`m-${r.month}`} className={clsx(focus === r.month && '[&>td]:!bg-accent-soft')}>
                           <td className="sticky left-0 bg-surface font-medium z-[1]">
                             {formatMonth(r.month, f.locale)}
-                            {(r.partial || r.month === currentMonth) && <span className="chip ml-2 !h-5">{t('monthly.inProgress')}</span>}
+                            {(r.partial || r.month === currentMonth) && <span className="block text-[10.5px] font-normal text-muted leading-tight">{t('monthly.inProgress')}</span>}
                           </td>
                           {cols.map((c) => (
                             <td key={c} className="r">

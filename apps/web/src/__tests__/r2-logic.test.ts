@@ -73,7 +73,7 @@ describe('W2 / W3 / W16 helpers', () => {
     expect(heatColor(0)).toBe('#f3f5f8');
   });
   it('essential monthly columns include price/FX effects and benchmark', () => {
-    expect(ESSENTIAL_COLUMNS).toEqual(expect.arrayContaining(['local', 'fx', 'bench', 'alpha', 'real']));
+    expect(ESSENTIAL_COLUMNS).toEqual(expect.arrayContaining(['local', 'fx', 'bench', 'alpha']));
     expect(resolveColumns(['twr', 'gain'])).toEqual(['gain', 'twr']);
     expect(resolveColumns('complete').length).toBeGreaterThan(ESSENTIAL_COLUMNS.length);
   });

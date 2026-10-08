@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 190 pruebas
+npx vitest run packages/core        # 203 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -121,10 +121,20 @@ manual posterior a la apertura del lote; si no hay, el precio de compra del lote
 mandan y reinician el devengo desde su fecha. Las compras de otros lotes **no** re-anclan, porque cada CDT o
 CDB es su propio contrato. El devengo para en `maturity`.
 
+Cupones e intereses periódicos (ronda 4): un `INTEREST` (o `DIVIDEND/COUPON`) sobre un instrumento con
+devengo **saca el monto bruto del valor devengado**. Cada lote se re-ancla en la fecha de pago en
+`valor devengado − su parte del cupón`. Así el valor, el valor líquido y la redención solo incluyen el interés
+devengado desde el último pago. Ejemplos: un CDT del 12 % con pago trimestral da TWR ≈ 11,1 % (neto de
+retención), no 20,2 %; un bono con cupón semestral vale ≈ 1.100, no 1.148,81. Si el pago supera el
+devengado, se informa `COUPON_EXCEEDS_ACCRUAL`.
+
 Vencimiento (ronda 3):
 - El pago se espera el siguiente día hábil del calendario del instrumento.
-- Si el usuario registra una venta o redención dentro de `settlementWindowDays` días hábiles (5 por defecto),
-  ese registro es el pago real, con su retención, y no hay redención automática.
+- Si el usuario registra una venta o redención **en o después del vencimiento**, ese registro es el pago real,
+  con su retención, y no hay redención automática. Si llega después de `settlementWindowDays` días hábiles
+  (5 por defecto), se informa `LATE_REDEMPTION` (ronda 4). Si el interés del vencimiento ya se registró como
+  `INTEREST`, la redención automática paga solo el capital más lo devengado después, y se informa
+  `INTEREST_ALREADY_RECORDED`.
 - Si no la registra, el motor redime automáticamente al valor devengado, **neto de la retención estimada**,
   y la ganancia realizada queda marcada `estimated`.
 
@@ -135,7 +145,8 @@ Impuestos sobre el rendimiento (`taxRegime`). La regla por defecto sigue la juri
 - **`EXEMPT`**: LCI, LCA, CRI, CRA e incentivadas.
 
 Con eso, `Holding.accruedTaxBase` y `Holding.netMarketValueBase` dan el valor líquido, y
-`Valuation.totalNetMarketValueBase` el total neto.
+`Valuation.totalNetMarketValueBase` el total neto. Los instrumentos con devengo exentos o sin impuesto
+siempre traen neto = bruto e impuesto 0.
 
 ```
 fijo (CDT E.A., prefixado):      F = (1 + tasa)^(t)           t por base de días
@@ -200,9 +211,12 @@ la operación como observación, esto da exactamente el retorno del activo en lo
 solo de fin de mes 100 → 125 con una compra a mitad de mes a 120 ⇒ **+25 %**; 100 → 105 (compra al cierre) →
 110 ⇒ **+10 %**. Un aporte que queda en caja no se lleva el movimiento del día de las posiciones existentes.
 
-Precios de operación atípicos (ronda 3): un precio que se desvía más de `tradePriceTolerance` (30 % por
-defecto, ampliado con la raíz del número de meses de distancia) del cierre o precio anterior **y** del cierre
-siguiente no se usa como precio, y se informa `TRADE_PRICE_OUTLIER`. Tampoco se usan las operaciones de menos
+Precios de operación atípicos (rondas 3 y 4):
+- Un precio que se desvía más de `tradePriceTolerance` (30 % por defecto, el doble en cripto, ampliado con la
+  raíz del número de meses de distancia) del cierre o precio anterior **y** del cierre siguiente no se usa
+  como precio, y se informa `TRADE_PRICE_OUTLIER`.
+- Si no hay cierre posterior que lo contradiga, el movimiento se acepta y se informa `TRADE_PRICE_UNCONFIRMED`
+  para que la UI pida confirmación. Así un fondo que sube 40 % o BTC +45 % se valoran bien. Tampoco se usan las operaciones de menos
 del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
@@ -359,6 +373,11 @@ Caché segura (ronda 3):
   `baseCurrency` se reflejan siempre.
 - Todo lo que se devuelve es una copia nueva: la UI puede ordenar, invertir o mutar sin efectos.
 - Cuando cambian los precios hay que pasar un nuevo `MarketData`; los de `createMarketData` son inmutables.
+  Un `MarketData` propio que cambia en sitio debe incrementar `revision` (ronda 4). Sin `revision`, nunca se
+  usa la caché para él.
+- El hash es incremental: cada fila guarda sus valores y solo se re-hashean las que cambiaron. Con 30.000
+  movimientos cuesta ~5 ms por llamada.
+- **Para la web se recomienda un `createEngine(input)` explícito**: ~0,5 ms por resumen, sin hash.
 
 Con 30.000 movimientos y 150 instrumentos (escenario S6), los 11 resúmenes tardan ~0,7 s, incluido el hash
 de contenido en cada llamada; en la ronda 1 eran 1,74 s.
@@ -492,3 +511,26 @@ Ningún campo existente cambió de significado. Los cambios de comportamiento so
 - los atípicos no se usan como precio;
 - la caja de financiación es la de la misma cuenta;
 - BUS/252 usa feriados.
+
+## Respuesta a la revisión ronda 3
+
+Revisión: `reviews/core-r3.md`; estos cambios forman la **ronda 4** del motor. Los escenarios del revisor
+(`r3-a`, `r3-b`, `r3-c`) quedaron como pruebas en `src/review-r3.test.ts`. Total: **203 pruebas**, que pasan
+también con `TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. `apps/web` (54 pruebas) pasa, y los paquetes
+dependientes compilan sin errores. Los scripts de las rondas 1–3 del revisor pasan, salvo los tres esperados
+que el revisor aceptó como cambios de diseño (F1, F4, F8).
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C36 Cupones e intereses contados dos veces | Alta | Un `INTEREST`/`COUPON` sobre un instrumento con devengo saca el bruto del valor devengado y re-ancla cada lote en la fecha de pago (`LotState.anchorDay`). El valor, el neto de impuestos y la redención automática solo cubren lo devengado desde el último pago. H1: TWR 11,1 % (antes 20,2 %), exacto frente a la cadena calculada a mano. H2: 1.097,58 ≈ 1.100 (antes 1.148,81). G3c: caja 11,155 M (antes 12,31 M) con `INTEREST_ALREADY_RECORDED`. |
+| C37 Atípicos rechazaban movimientos reales | Media | Se rechaza solo con evidencia de los dos lados (precio anterior **y** cierre siguiente). Sin cierre posterior se acepta con `TRADE_PRICE_UNCONFIRMED`. La tolerancia es el doble para cripto. G4: fondo +40 % → 15.400 y TWR 40 %. G4b: BTC +45 % → 45 %. R2 (error de digitación) sigue rechazado. |
+| C38 TWR por posición en cambio de ticker o fusión | Media | La entrega se valora al **último cierre propio de la empresa de origen** (menos el efectivo de la fusión); la diferencia con el precio de la resultante es el retorno de la resultante. G2: OLD 0 / 0 %, NEW +100 / 10 %, coherentes con el retorno en dinero. |
+| C39 Redención registrada tarde | Baja | Cualquier venta o redención registrada en o después del vencimiento reemplaza la estimación; fuera de la ventana se informa `LATE_REDEMPTION`. G3a: caja 11.152.000, sin `OVERSELL`. |
+| C40 Exentos sin valor líquido | Baja | Todo instrumento con devengo trae `accruedTaxBase = 0` y `netMarketValueBase = valor` cuando es exento o sin impuesto, y `Valuation.totalNetMarketValueBase` existe siempre que haya renta fija. |
+| C41 `MarketData` mutable y costo del hash | Baja | Nuevo campo opcional `MarketData.revision`, incluido en el hash; un `MarketData` propio sin `revision` nunca usa la caché (H5: 1.500 tras la nueva cotización). El hash es incremental por fila y sin cierres en el camino caliente: 30.000 movimientos pasan de ~25–45 ms a ~5 ms por llamada, y siguen detectando ediciones en sitio. Se documenta `createEngine` como la vía recomendada para la web. |
+
+Cambios aditivos al contrato:
+- `MarketData` agrega `revision?`.
+- `LotState` agrega `anchorDay?`; es interno.
+- Diagnósticos nuevos: `TRADE_PRICE_UNCONFIRMED`, `LATE_REDEMPTION`, `INTEREST_ALREADY_RECORDED` y
+  `COUPON_EXCEEDS_ACCRUAL`.
