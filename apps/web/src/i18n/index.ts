@@ -31,6 +31,8 @@ void i18n.use(initReactI18next).init({
   fallbackLng: 'es',
   interpolation: { escapeValue: false },
   returnNull: false,
+  // Resources are bundled: never suspend (a suspension would remount the whole layout).
+  react: { useSuspense: false },
 });
 
 export default i18n;

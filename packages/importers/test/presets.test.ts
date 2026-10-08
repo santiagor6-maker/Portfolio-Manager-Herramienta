@@ -104,9 +104,10 @@ describe('B3 — Movimentação (xlsx)', async () => {
     expect(byLine(r, 16)).toMatchObject({ status: 'error' });
     expect(byLine(r, 16).issues[0]!.code).toBe('SPLIT_RATIO_UNKNOWN');
   });
-  it('treats Tesouro Direto as a manual fixed-income instrument and skips non-flows', () => {
-    expect(tx(r, 13)).toMatchObject({ type: 'BUY', instrumentId: 'MANUAL:TESOURO-IPCA-2035', quantity: 0.5 });
-    expect(r.instruments.find((i) => i.id === 'MANUAL:TESOURO-IPCA-2035')).toMatchObject({ assetClass: 'fixed_income', pricing: 'manual' });
+  it('maps Tesouro Direto to TD: ids and skips non-flows', () => {
+    // Tesouro Direto → market-data's TD:<code>-<maturity> id, priced automatically (I28).
+    expect(tx(r, 13)).toMatchObject({ type: 'BUY', instrumentId: 'TD:NTNBP-2035-05-15', quantity: 0.5 });
+    expect(r.instruments.find((i) => i.id === 'TD:NTNBP-2035-05-15')).toMatchObject({ exchange: 'TD', assetClass: 'fixed_income', pricing: 'auto', providerSymbols: { tesouro: 'Tesouro IPCA+|2035-05-15' } });
     for (const line of [12, 14, 15, 18]) expect(byLine(r, line).status).toBe('skipped');
     expect(tx(r, 17)).toMatchObject({ type: 'SELL', instrumentId: 'BVMF:ITSA4', quantity: 0.4, amount: 3.8 }); // leilão de fração
     expect(r.warnings.some((w) => w.code === 'B3_SETTLEMENT_DATE')).toBe(true);

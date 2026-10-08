@@ -93,15 +93,33 @@ export function itemsToLines(page: number, items: PdfItem[]): PdfLine[] {
   return lines.sort((a, b) => b.y - a.y);
 }
 
-export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown): Promise<PdfDocument> {
+/** Thrown when the PDF is encrypted and the password is missing (`reason: 'required'`) or wrong. */
+export class PdfPasswordError extends Error {
+  constructor(readonly reason: 'required' | 'incorrect') {
+    super(reason === 'required' ? 'PDF protected with a password' : 'Incorrect PDF password');
+    this.name = 'PdfPasswordError';
+  }
+}
+
+export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown, password?: string): Promise<PdfDocument> {
   const pdfjs = (pdfjsModule as PdfJsLike | undefined) ?? (await loadPdfJs());
-  const doc = await pdfjs.getDocument({
+  const params: Record<string, unknown> = {
     data: bytes.slice(), // pdf.js may transfer/detach the buffer
     isEvalSupported: false,
     useSystemFonts: false,
     disableFontFace: true,
     verbosity: 0,
-  }).promise;
+  };
+  if (password) params.password = password;
+  let doc: PdfDocProxy;
+  try {
+    doc = await pdfjs.getDocument(params).promise;
+  } catch (e) {
+    const err = e as { name?: string; code?: number };
+    // pdf.js PasswordException: code 1 = NEED_PASSWORD, 2 = INCORRECT_PASSWORD.
+    if (err?.name === 'PasswordException') throw new PdfPasswordError(err.code === 2 ? 'incorrect' : 'required');
+    throw e;
+  }
   const lines: PdfLine[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);

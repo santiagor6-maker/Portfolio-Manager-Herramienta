@@ -35,8 +35,10 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
   });
   it('allocates the Resumo Financeiro costs pro-rata and IRRF to sales', () => {
     const n1 = r.transactions.filter((t) => t.note === 'Nota 12345678');
-    expect(n1.reduce((s, t) => s + (t.fees ?? 0), 0)).toBeCloseTo(6.58, 8); // 1,22 + 0,22 + 4,90 + 0,24
-    expect(n1[0]!.fees).toBeCloseTo((6.58 * 2345) / 4437.04, 6);
+    // 1,22 + 0,22 + 4,90 + 0,24 = 6,58 spread over ALL trades incl. the skipped option (value 50): its
+    // share is dropped instead of being loaded onto the spot trades (I25).
+    expect(n1.reduce((s, t) => s + (t.fees ?? 0), 0)).toBeCloseTo((6.58 * 4437.04) / 4487.04, 6);
+    expect(n1[0]!.fees).toBeCloseTo((6.58 * 2345) / 4487.04, 6);
     expect(n1.find((t) => t.type === 'SELL')!.taxes).toBe(0.09);
     expect(r.transactions.find((t) => t.note === 'Nota 87654321' && t.type === 'SELL')).toMatchObject({ taxes: 0.06, account: 'CLEAR CORRETORA - GRUPO XP' });
     expect(n1[0]!.account).toBe('XP INVESTIMENTOS CCTVM S/A');

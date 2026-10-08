@@ -24,8 +24,9 @@ describe('M23 mergers and conversions never serve another company as the old one
   it('alias table distinguishes renames from mergers with verified ratios and cash', () => {
     expect(findAlias('BRFS3')).toMatchObject({ kind: 'merger', toId: 'BVMF:MBRF3', ratio: 0.8521, effective: '2025-09-23', lastTradingDay: '2025-09-22' });
     expect(findAlias('MRFG3.SA')).toMatchObject({ kind: 'rename', toId: 'BVMF:MBRF3', ratio: 1 });
-    expect(findAlias('CPLE6')).toMatchObject({ kind: 'conversion', toId: 'BVMF:CPLE3', ratio: 1, cashPerShare: 0.7749, cashPayDate: '2025-12-30', effective: '2025-12-22' });
-    expect(findAlias('NTCO3')).toMatchObject({ kind: 'rename', toId: 'BVMF:NATU3', effective: '2025-07-02' });
+    expect(findAlias('CPLE6')).toMatchObject({ kind: 'conversion', toId: 'BVMF:CPLE5', ratio: 1, effective: '2025-11-10', lastTradingDay: '2025-11-07' });
+    expect(findAlias('CPLE5')).toMatchObject({ kind: 'conversion', toId: 'BVMF:CPLE3', ratio: 1, cashPerShare: 0.7749, cashPayDate: '2025-12-30', effective: '2025-12-22', lastTradingDay: '2025-12-19' });
+    expect(findAlias('NTCO3')).toMatchObject({ kind: 'conversion', toId: 'BVMF:NATU3', effective: '2025-07-02' });
   });
 
   it('BRFS3 history is NOT Marfrig/MBRF history: empty own series + MERGER 0.8521 -> MBRF3', async () => {
@@ -57,9 +58,11 @@ describe('M23 mergers and conversions never serve another company as the old one
     expect(h.actions.find((a) => a.subtype === 'MERGER')).toMatchObject({ date: '2025-09-23', ratio: 0.8521 });
   });
 
-  it('CPLE6: conversion 1:1 into CPLE3 plus R$0.7749 cash per share', async () => {
+  it('Copel chain: CPLE6 -> CPLE5 (2025-11-10), then CPLE5 -> 1 CPLE3 + R$0.7749 (2025-12-22)', async () => {
     const { service } = createTestService();
-    const h = await service.history({ symbol: 'CPLE6.SA', from: '2025-12-01', to: '2026-01-31' });
+    const c6 = await service.history({ symbol: 'CPLE6.SA', from: '2025-10-01', to: '2026-01-31' });
+    expect(c6.actions).toEqual([expect.objectContaining({ type: 'SPLIT', subtype: 'MERGER', ratio: 1, targetInstrumentId: 'BVMF:CPLE5', date: '2025-11-10' })]);
+    const h = await service.history({ symbol: 'CPLE5.SA', from: '2025-12-01', to: '2026-01-31' });
     expect(h.actions).toEqual([
       expect.objectContaining({ type: 'SPLIT', subtype: 'MERGER', ratio: 1, targetInstrumentId: 'BVMF:CPLE3', date: '2025-12-22' }),
       expect.objectContaining({ type: 'DIVIDEND', subtype: 'EXTRAORDINARY', amountPerShare: 0.7749, payDate: '2025-12-30', date: '2025-12-22' }),
@@ -191,13 +194,13 @@ describe('M25 index failures map to proper errors; IPCA has a second source; las
 
 // ------------------------------------------------------------------------------------------ M26
 describe('M26 Tesouro Direto coupons', () => {
-  it('coupon dates follow the maturity month (NTN-B May/Nov, Aug/Feb; NTN-F Jan/Jul), next weekday', () => {
+  it('coupon dates follow the maturity month (NTN-B May/Nov, Aug/Feb; NTN-F Jan/Jul), next B3 business day', () => {
     const b35 = couponDates('2035-05-15');
     expect(b35).toContain('2025-05-15');
     expect(b35).toContain('2025-11-17'); // 15-Nov-2025 is a Saturday
     expect(b35.at(-1)).toBe('2035-05-15');
-    expect(couponDates('2030-08-15').filter((d) => d.startsWith('2026'))).toEqual(['2026-02-16', '2026-08-17']);
-    expect(couponDates('2031-01-01').filter((d) => d.startsWith('2025'))).toEqual(['2025-01-01', '2025-07-01']);
+    expect(couponDates('2030-08-15').filter((d) => d.startsWith('2026'))).toEqual(['2026-02-18', '2026-08-17']); // Carnival 16-17 Feb 2026
+    expect(couponDates('2031-01-01').filter((d) => d.startsWith('2025'))).toEqual(['2025-01-02', '2025-07-01']); // 1-Jan holiday
   });
 
   it('NTN-B VNA from the IPCA (R$1000 on 2000-07-15, updated each 15th)', () => {
@@ -233,7 +236,7 @@ describe('M26 Tesouro Direto coupons', () => {
     const td = new TesouroProvider({ http: new HttpClient({ fetch, sleep: async () => undefined }), now: () => NOW, ipca: async () => ipca });
     const f = await td.dailyHistory({ instrumentId: 'TD:NTNF-2035-01-01', exchange: 'TD', symbol: 'NTNF-2035', yahoo: '' }, '2025-01-01', '2025-12-31');
     expect(f.dividends).toEqual([
-      { date: '2025-01-01', payDate: '2025-01-01', amount: NTNF_COUPON, kind: 'COUPON' },
+      { date: '2025-01-02', payDate: '2025-01-02', amount: NTNF_COUPON, kind: 'COUPON' },
       { date: '2025-07-01', payDate: '2025-07-01', amount: NTNF_COUPON, kind: 'COUPON' },
     ]);
     const b = await td.dailyHistory({ instrumentId: 'TD:NTNB-2045-05-15', exchange: 'TD', symbol: 'NTNB-2045', yahoo: '' }, '2025-01-01', '2025-12-31');

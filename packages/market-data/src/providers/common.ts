@@ -1,4 +1,4 @@
-import type { CurrencyCode, ISODate, PricePoint, ProviderId } from '@pm/core';
+import { calendars, dates as coreDates, type CurrencyCode, type ISODate, type PricePoint, type ProviderId } from '@pm/core';
 import { addDays, daysBetween, isISODate } from '../dates';
 import { MarketDataError } from '../errors';
 import { HttpError } from '../http';
@@ -52,14 +52,9 @@ export function rangeToken(from: ISODate, today: ISODate, tokens: readonly [stri
   return tokens[tokens.length - 1]![0];
 }
 
-/** Next weekday after a date (B3 ex-date = first trading day after the "data com"). */
+/** First B3 business day after a date (B3 ex-date = first trading day after the "data com"). */
 export function nextWeekday(d: ISODate): ISODate {
-  let x = addDays(d, 1);
-  for (;;) {
-    const wd = new Date(`${x}T00:00:00Z`).getUTCDay();
-    if (wd !== 0 && wd !== 6) return x;
-    x = addDays(x, 1);
-  }
+  return coreDates.dayToIso(calendars.nextBusinessDay(coreDates.isoToDay(addDays(d, 1)), 'BR'));
 }
 
 /** YYYYMMDD -> ISO. */

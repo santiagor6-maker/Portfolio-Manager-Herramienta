@@ -6,7 +6,7 @@
  * Valuation price = "PU Venda Manhã" (what the investor receives on early redemption); falls back
  * to "PU Base". Not reachable from the build container: tested with a fixture in that format.
  */
-import type { IndexPoint, Instrument, ISODate, PricePoint, ProviderId } from '@pm/core';
+import { calendars, dates as coreDates, type IndexPoint, type Instrument, type ISODate, type PricePoint, type ProviderId } from '@pm/core';
 import { HOUR, type TieredCache } from '../cache';
 import { addDays, fromDMY, todayISO } from '../dates';
 import { MarketDataError } from '../errors';
@@ -192,19 +192,15 @@ export const NTNB_COUPON_FACTOR = 0.02956301;
 
 const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
 
-function nextWeekday(d: ISODate): ISODate {
-  let x = d;
-  for (;;) {
-    const wd = new Date(`${x}T00:00:00Z`).getUTCDay();
-    if (wd !== 0 && wd !== 6) return x;
-    x = addDays(x, 1);
-  }
+/** First B3/ANBIMA business day on or after `d` (core calendars, review R3 M31). */
+export function nextBusinessDayBR(d: ISODate): ISODate {
+  return coreDates.dayToIso(calendars.nextBusinessDay(coreDates.isoToDay(d), 'BR'));
 }
 
 /**
  * Coupon dates: the maturity day/month and the date six months apart, every year up to maturity,
- * moved to the next weekday (B3 holidays are not modelled). NTN-B 2035 (15/05): May and November;
- * NTN-B 2030 (15/08): February and August; NTN-F (01/01): January and July.
+ * moved to the next B3/ANBIMA business day (15-Nov Republic Day, 1-Jan...). NTN-B 2035 (15/05):
+ * May and November; NTN-B 2030 (15/08): February and August; NTN-F (01/01): January and July.
  */
 export function couponDates(maturity: ISODate): ISODate[] {
   const day = maturity.slice(8, 10);
@@ -214,7 +210,7 @@ export function couponDates(maturity: ISODate): ISODate[] {
   for (let y = 2000; y <= Number(maturity.slice(0, 4)); y++) {
     for (const mm of months) {
       const d = `${y}-${String(mm).padStart(2, '0')}-${day}`;
-      if (d <= maturity) out.push(nextWeekday(d));
+      if (d <= maturity) out.push(nextBusinessDayBR(d));
     }
   }
   return out;

@@ -21,8 +21,6 @@ export const EXCHANGES: Record<string, ExchangeInfo> = {
   XASE: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'NYSE American' },
   BATS: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'Cboe BZX' },
   OTC: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'OTC' },
-  /** US listing whose exact exchange is unknown (Yahoo needs no suffix for US symbols). */
-  US: { country: 'US', currency: 'USD', yahooSuffix: '', name: 'EE. UU. (bolsa por confirmar)' },
   XMEX: { country: 'MX', currency: 'MXN', yahooSuffix: '.MX', name: 'BMV' },
   XSGO: { country: 'CL', currency: 'CLP', yahooSuffix: '.SN', name: 'Bolsa de Santiago' },
   XLIM: { country: 'PE', currency: 'PEN', yahooSuffix: '.LM', name: 'BVL' },
@@ -52,7 +50,7 @@ export const EXCHANGES: Record<string, ExchangeInfo> = {
   MANUAL: { country: 'INTL', currency: 'USD', name: 'Manual' },
 };
 
-export const US_EXCHANGES = new Set(['XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'OTC', 'US']);
+export const US_EXCHANGES = new Set(['XNYS', 'XNAS', 'ARCX', 'XASE', 'BATS', 'OTC']);
 
 /** Yahoo suffix → MIC (for symbols such as `PETR4.SA`, `SAP.DE`, eToro `BARC.L`). */
 export const YAHOO_SUFFIX_TO_MIC: Record<string, ExchangeCode> = {
@@ -229,3 +227,37 @@ export const EU_TICKERS: Record<string, ExchangeCode> = {
   ASML: 'XAMS', INGA: 'XAMS', ADYEN: 'XAMS', HEIA: 'XAMS', PRX: 'XAMS', IWDA: 'XAMS', VWRL: 'XAMS',
   ENEL: 'XMIL', ISP: 'XMIL', UCG: 'XMIL', ENI: 'XMIL', RACE: 'XMIL', STLAM: 'XMIL',
 };
+
+/** Tesouro Direto title type → code used by @pm/market-data ids (`TD:<code>-<maturity>`). */
+const TESOURO_CODES: [RegExp, string][] = [
+  [/^tesouro ipca\+? com juros semestrais/i, 'NTNB'],
+  [/^tesouro ipca\+?/i, 'NTNBP'],
+  [/^tesouro prefixado com juros semestrais/i, 'NTNF'],
+  [/^tesouro prefixado/i, 'LTN'],
+  [/^tesouro selic/i, 'LFT'],
+  [/^tesouro igpm\+? com juros semestrais/i, 'NTNC'],
+];
+
+/**
+ * "Tesouro IPCA+ 2035" → { id: 'TD:NTNBP-2035-05-15', ... }. B3 prints only the maturity year; the
+ * day follows the Treasury's calendar (LFT 1-Mar; LTN/NTN-F/NTN-C 1-Jan; NTN-B/NTN-B Principal
+ * 15-May in odd years, 15-Aug in even years). Renda+/Educa+ (maturity not derivable) → undefined.
+ */
+export function tesouroId(product: string): { id: string; code: string; maturity: string; tipo: string } | undefined {
+  const p = product.trim().replace(/\s+/g, ' ');
+  const hit = TESOURO_CODES.find(([re]) => re.test(p));
+  if (!hit) return undefined;
+  const full = /(\d{2})\/(\d{2})\/(\d{4})/.exec(p);
+  const year = /\b(20\d{2})\b/.exec(p)?.[1];
+  if (!full && !year) return undefined;
+  const code = hit[1];
+  let maturity: string;
+  if (full) maturity = `${full[3]}-${full[2]}-${full[1]}`;
+  else {
+    const y = Number(year);
+    const md = code === 'LFT' ? '03-01' : code === 'LTN' || code === 'NTNF' || code === 'NTNC' ? '01-01' : y % 2 ? '05-15' : '08-15';
+    maturity = `${y}-${md}`;
+  }
+  const tipo = p.replace(/\s*\b(20\d{2})\b.*$/, '').replace(/\s*\d{2}\/\d{2}\/\d{4}.*$/, '').trim();
+  return { id: `TD:${code}-${maturity}`, code, maturity, tipo };
+}

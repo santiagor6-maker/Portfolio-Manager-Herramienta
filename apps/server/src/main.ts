@@ -9,6 +9,7 @@
  *   (DELETE /api/cache without token from a direct loopback socket),
  *   CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
  *   MD_CUSTOM_FEEDS_FILE (JSON array of user-defined feeds),
+ *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12): local price snapshot,
  *   provider keys: BRAPI_TOKEN, TWELVEDATA_API_KEY, FMP_API_KEY, EODHD_API_TOKEN,
  *   ALPHAVANTAGE_API_KEY (+ALPHAVANTAGE_PREMIUM=1), STOOQ_API_KEY, COINGECKO_API_KEY, SOCRATA_APP_TOKEN.
  */
@@ -66,6 +67,20 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  providers: ${JSON.stringify(service.providers())}`);
   if (hostname === '0.0.0.0' && !env.API_TOKEN) console.warn('  WARNING: listening on all interfaces without API_TOKEN');
 });
+
+// Local price snapshot (review R3, M2): periodically record the current-year closes of the
+// catalog's BVC and London instruments, served if every live provider fails later.
+const snapshotExchanges = (env.SNAPSHOT_EXCHANGES ?? 'XBOG,XLON').split(',').map((x) => x.trim()).filter((x) => x && x !== 'none');
+if (snapshotExchanges.length) {
+  const hours = Number(env.SNAPSHOT_HOURS ?? 12);
+  const run = async () => {
+    const started = Date.now();
+    const r = await service.recordSnapshot(snapshotExchanges);
+    console.log(`snapshot ${snapshotExchanges.join(',')}: ${r.ok} recorded, ${r.failed.length} failed in ${Math.round((Date.now() - started) / 1000)}s`);
+  };
+  setTimeout(() => void run().catch((e) => console.error('snapshot failed', e)), 30_000).unref();
+  setInterval(() => void run().catch((e) => console.error('snapshot failed', e)), hours * 3_600_000).unref();
+}
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {

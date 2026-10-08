@@ -10,7 +10,7 @@ import { InstrumentResolver } from './instruments';
 import { getBrokerProfile } from './profiles';
 import { suggestMapping } from './mapping';
 import { exchangeCurrency } from './markets';
-import { extractPdf, pdfToTable } from './pdf/extract';
+import { extractPdf, PdfPasswordError, pdfToTable } from './pdf/extract';
 import { PDF_PARSERS } from './pdf/parsers';
 import { ParseContext, type PresetDefinition } from './presets/common';
 import { extractoColombianoPreset } from './presets/extracto-co';
@@ -109,10 +109,14 @@ function failure(detection: DetectionInfo, issue: ImportIssue, extra: Partial<Im
 async function importPdf(read: ReadResult, options: ImportOptions, detection: DetectionInfo, locale: Locale): Promise<ImportResult> {
   let doc;
   try {
-    doc = await extractPdf(read.bytes!, options.pdfjs);
+    doc = await extractPdf(read.bytes!, options.pdfjs, options.pdfPassword);
   } catch (e) {
+    if (e instanceof PdfPasswordError) {
+      return failure(detection, makeIssue(locale, e.reason === 'required' ? 'PDF_PASSWORD_REQUIRED' : 'PDF_PASSWORD_INCORRECT', 'error'), { needsPassword: e.reason });
+    }
     return failure(detection, makeIssue(locale, 'PDF_READ_ERROR', 'error', { detail: e instanceof Error ? e.message : String(e) }));
   }
+  if (!doc.lines.length) return failure(detection, makeIssue(locale, 'PDF_NO_TEXT', 'error'));
   const table = pdfToTable(doc);
   const forced = options.presetId ? PDF_PARSERS.find((p) => p.id === options.presetId) : undefined;
   const scored = PDF_PARSERS.map((p) => ({ p, s: p.detect(doc) })).sort((a, b) => b.s - a.s)[0];
@@ -529,6 +533,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
         const res = resolver.resolve(draft.instrument);
         if (res && 'error' in res) {
           row.issues.push(ctx.issue(res.error.code, 'error', res.error.params, row.line));
+          if (res.error.code === 'EXCHANGE_REQUIRED') ctx.askSecurity(String(res.error.params.symbol), row.line, res.suggestions ?? []);
           w.invalid = true;
         } else if (res) {
           w.instrumentId = res.instrument.id;
@@ -723,6 +728,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   if (instrumentUpdates.length) result.instrumentUpdates = instrumentUpdates;
   if (ctx.corporateActions.length) result.corporateActions = ctx.corporateActions;
+  if (ctx.unknownSecurities.length) result.unknownSecurities = ctx.unknownSecurities;
   if (reconciliation) result.reconciliation = reconciliation;
   return result;
 }

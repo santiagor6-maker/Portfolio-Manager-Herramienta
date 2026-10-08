@@ -1,0 +1,36 @@
+{
+  "part": "tax",
+  "round": 4,
+  "score": 8,
+  "competitorName": "Gorila",
+  "competitorScore": 7,
+  "approved": false,
+  "fixed": ["T35", "T38", "T39", "T40", "T41", "T42", "T43", "T44", "T45", "T46"],
+  "gaps": [
+    {"id": "T47", "severity": "alta", "text": "Una venta de cripto sin cuenta o con la cuenta escrita distinto ('MercadoBitcoin S.A.') cae en una porción virtual sin saldo: la ganancia (R$ 250.000, DARF de R$ 37.500) no tributa en ningún reporte y Bens e Direitos sigue mostrando el BTC vendido, con solo un error OVERSELL."},
+    {"id": "T48", "severity": "media", "text": "Un traslado de cripto entre custodios (Mercado Bitcoin → Binance o → billetera Ledger) pierde el costo de adquisición: ganancia de 450.000 en vez de 250.000 y R$ 30.000 de impuesto de más."},
+    {"id": "T49", "severity": "baja", "text": "El reconocimiento del venue exige el nombre exacto: 'MercadoBitcoin S.A.', 'Coinbase Pro', 'OKX Brasil' y 'Bitso' no se reconocen."},
+    {"id": "T50", "severity": "baja", "text": "En Bens e Direitos, la cripto custodiada en el exterior toma la localización del instrumento (US para BTC-USD de Yahoo) y no la del custodio."},
+    {"id": "T51", "severity": "baja", "text": "Un export de Movimentação de la B3 con fechas como número de serie de Excel se descarta sin aviso (itens vacío), por lo que la conciliación queda falseada."}
+  ],
+  "matrix": [
+    {"feature": "Apuración mensual B3 (exención de R$ 20 mil, swing/day trade, FII, corto)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Compensación de pérdidas por categoría", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "DARF pagable (Sicalc, estado, multa e intereses, conciliación por código)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Opciones (vencimiento por serie y año, semanales, ejercicio), futuros, aluguel", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Renta fija y fondos (tabla regresiva, IOF, exentos, come-cotas)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Cripto (GCAP, exención de R$ 35 mil, custodia por cuenta, traslados entre custodios)", "ours": "partial", "others": {"Sharesight": "partial", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Proventos con línea DIRPF (dividendos, JCP, FII, aluguel; Lei 15.270)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "IRPFM con redutor (Lei 15.270)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Bens e Direitos (CNPJ, campos del exterior por activo)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Exterior Lei 14.754 y régimen anterior a 2024 (GCAP, carnê-leão)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Reporte Colombia (Formulario 210 con casillas, 160, Arts. 36-1, 153, 241, 254-1)", "ours": "yes", "others": {"Sharesight": "no", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Diferencia en cambio realizada y componente inflacionario (Colombia)", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Chequeo de retención de EE.UU. y riesgo de impuesto de sucesiones", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "partial", "Ghostfolio": "no"}},
+    {"feature": "Parámetros por año con fuente legal y estado de verificación", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "no", "Kinvo": "no", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Simulación de venta e impuesto no realizado", "ours": "yes", "others": {"Sharesight": "yes", "Gorila": "partial", "Kinvo": "no", "Portfolio Performance": "partial", "Ghostfolio": "no"}},
+    {"feature": "Exportación para el contador (XLSX/CSV, modelo para PDF)", "ours": "yes", "others": {"Sharesight": "yes", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "partial", "Ghostfolio": "partial"}},
+    {"feature": "Conciliación con documentos oficiales (informe, export B3, pré-preenchida, exógena, 1042-S)", "ours": "yes", "others": {"Sharesight": "partial", "Gorila": "partial", "Kinvo": "partial", "Portfolio Performance": "no", "Ghostfolio": "no"}},
+    {"feature": "Ingesta directa de datos oficiales (conexión B3/DIAN sin archivo)", "ours": "no", "others": {"Sharesight": "partial", "Gorila": "yes", "Kinvo": "yes", "Portfolio Performance": "no", "Ghostfolio": "no"}}
+  ]
+}

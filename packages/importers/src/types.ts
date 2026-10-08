@@ -198,6 +198,8 @@ export interface ImportResult {
    * `options.numberFormat` set to the user's choice (or `allowAmbiguous: true`).
    */
   needsConfirmation?: ConfirmationRequest[];
+  /** The PDF is password protected: ask the user and retry with `pdfPassword`. */
+  needsPassword?: 'required' | 'incorrect';
   /** Shortcut: candidates when the date order needs confirmation (suggested first). */
   dateFormatCandidates?: DateFormat[];
   /** Shortcut: candidates when the decimal separator needs confirmation (suggested first). */
@@ -206,8 +208,21 @@ export interface ImportResult {
   reconciliation?: Reconciliation;
   /** Corporate events that need the user's input (incorporação, cisão...). */
   corporateActions?: CorporateActionSuggestion[];
+  /**
+   * Securities the importer could not identify with certainty (SINACOR specifications, EUR tickers listed
+   * on several venues). The UI asks the user, stores the answers and passes them back as `securityMap`.
+   */
+  unknownSecurities?: UnknownSecurity[];
   /** Suggested updates to existing instruments (e.g. a guessed US exchange now known). */
   instrumentUpdates?: { id: string; changes: Partial<Instrument>; reason: string }[];
+}
+
+export interface UnknownSecurity {
+  /** Text to map (e.g. "MINERVA ON NM", or "SAN" for a ticker without venue). Use it as key in `securityMap`. */
+  key: string;
+  lines: number[];
+  /** Candidate answers (tickers or MICs), best first, possibly empty. */
+  suggestions: string[];
 }
 
 export interface ConfirmationRequest {
@@ -221,6 +236,11 @@ export interface ConfirmationRequest {
   samples: { line: number; value: string; readings: Record<string, string> }[];
   /** Lines of rows whose values change with the choice. */
   affectedLines: number[];
+  /**
+   * 'file' (default): one answer for the whole file (`dateFormat` / `numberFormat`), every row waits.
+   * 'rows': only `affectedLines` wait; answer per line with `rowNumberFormats`.
+   */
+  scope?: 'file' | 'rows';
 }
 
 export interface ReportedPosition {
@@ -386,6 +406,16 @@ export interface ImportOptions {
   brokerProfile?: string;
   /** pdf.js module to use (defaults to a dynamic import of `pdfjs-dist/legacy/build/pdf.mjs`). */
   pdfjs?: unknown;
+  /**
+   * Password for protected PDFs (XP, Clear and Rico protect notas with the first digits of the CPF).
+   * When missing/wrong the result has `needsPassword` and the UI asks the user.
+   */
+  pdfPassword?: string;
+  /**
+   * Per-line answers for rows whose numbers are ambiguous only for that row (e.g. a USD row in a COP
+   * statement with ';' delimiter): `{ 12: 'dot' }`.
+   */
+  rowNumberFormats?: Record<number, NumberFormat>;
 }
 
 export interface PresetInfo {

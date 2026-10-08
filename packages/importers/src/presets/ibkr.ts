@@ -8,7 +8,7 @@
  */
 import type { AssetClass, TransactionType } from '@pm/core';
 import { IBKR_EXCHANGES } from '../markets';
-import type { Cell, DraftTransaction, InstrumentHint, ParsedRow, RawTable } from '../types';
+import type { Cell, CorporateActionSuggestion, DraftTransaction, InstrumentHint, ParsedRow, RawTable } from '../types';
 import { cellToString, normalizeText } from '../util';
 import { parseDate } from '../dates';
 import { HeaderIndex, type ParseContext, type PresetDefinition } from './common';
@@ -463,10 +463,12 @@ export const ibkrFlexPreset: PresetDefinition = {
     const dividends: { row: ParsedRow; d: DraftTransaction }[] = [];
     const taxes: { row: ParsedRow; d: DraftTransaction }[] = [];
     const flexReported: NonNullable<ParseContext['reported']> = { source: 'ibkr-flex', positions: [], cash: [] };
+    const corpSeen = new Set<string>();
+    const hasExecutions = table.rows.some((r) => r.some((c) => cellToString(c).toUpperCase() === 'EXECUTION'));
     table.rows.forEach((r, idx) => {
       const first = cellToString(r[0]);
       if (FLEX_MARKERS.has(first)) return;
-      if (isFlexHeader(r)) {
+      if (first === 'FlexSection' || isFlexHeader(r)) {
         h = new HeaderIndex(r);
         return;
       }
@@ -491,6 +493,64 @@ export const ibkrFlexPreset: PresetDefinition = {
         if (ex) ih.exchange = ex;
       }
       const ref = getS('TransactionID', 'TradeID', 'IBExecID', 'ActionID');
+      const section = getS('FlexSection');
+      // Summary rows duplicate the detail rows (I22): keep the most granular level only.
+      const lod = getS('LevelOfDetail').toUpperCase();
+      if (lod === 'SUMMARY' && !h.has('MarkPrice', 'PositionValue')) {
+        row.skipped = true;
+        return;
+      }
+      if (lod && ['SYMBOL_SUMMARY', 'ASSET_SUMMARY', 'CLOSED_LOT'].includes(lod)) {
+        row.skipped = true;
+        return;
+      }
+      if (lod === 'ORDER' && hasExecutions) {
+        row.skipped = true;
+        return;
+      }
+      if (section === 'SalesTax' || (!section && h.has('SalesTax') && !h.has('TradePrice'))) {
+        const tdate = ctx.date(get('Date', 'DateTime', 'ReportDate'), row);
+        const v = ctx.num(get('SalesTax', 'Amount'), row, 'amount');
+        if (!tdate || v === undefined) return;
+        row.draft = { date: tdate, type: 'TAX', currency, amount: -v, note: getS('Description') || 'Sales tax' };
+        if (ref) row.draft.brokerRef = ref;
+        return;
+      }
+      if (section === 'CorporateAction' || (!section && h.has('ActionID') && h.has('Type') && h.has('Description') && !h.has('Amount'))) {
+        const cdate = ctx.date(get('DateTime', 'ReportDate', 'Date'), row);
+        if (!cdate) return;
+        const desc = getS('Description');
+        const code = getS('Type').toUpperCase();
+        const qty = ctx.num(get('Quantity'), row, 'quantity');
+        const split = /split\s+(\d+(?:\.\d+)?)\s+for\s+(\d+(?:\.\d+)?)/i.exec(desc);
+        if (code === 'FS' || code === 'RS' || split) {
+          const ratio = split ? Number(split[1]) / Number(split[2]) : undefined;
+          const key = `${symbol}|${cdate}|${ratio ?? qty}`;
+          if (corpSeen.has(key) || !ih) {
+            row.skipped = true;
+            return;
+          }
+          corpSeen.add(key);
+          const d: DraftTransaction = { date: cdate, type: 'SPLIT', currency, instrument: ih, note: desc };
+          if (ratio) d.ratio = ratio;
+          else if (qty !== undefined) d.deltaShares = code === 'RS' ? -Math.abs(qty) : qty;
+          if (ref) d.brokerRef = ref;
+          row.draft = d;
+          return;
+        }
+        if ((code === 'SD' || /stock dividend/i.test(desc)) && qty && ih) {
+          row.draft = { date: cdate, type: 'STOCK_DIVIDEND', currency, instrument: ih, deltaShares: Math.abs(qty), note: desc, ...(ref ? { brokerRef: ref } : {}) };
+          return;
+        }
+        const kind = code === 'SO' ? 'spinoff' : code === 'TC' || code === 'TO' || code === 'TM' ? 'merger' : code === 'IC' ? 'symbol_change' : 'other';
+        const leg: CorporateActionSuggestion['legs'][number] = { direction: (qty ?? 0) < 0 ? 'out' : 'in' };
+        if (symbol) leg.symbol = symbol;
+        if (qty !== undefined) leg.quantity = Math.abs(qty);
+        if (desc) leg.name = desc;
+        ctx.corporateActions.push({ line: row.line, date: cdate, kind, description: desc || code, legs: [leg] });
+        ctx.skip(row, 'CORPORATE_ACTION_PENDING', { value: (desc || code).slice(0, 60) }, 'warning');
+        return;
+      }
       if (h.has('MarkPrice', 'PositionValue') && h.has('Position')) {
         // Open positions (reconciliation / opening snapshot).
         const qty = ctx.num(get('Position', 'Quantity'), row, 'quantity');

@@ -283,6 +283,14 @@ export class MarketDataService {
       return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(y), target: this.target(y) };
     }
     if (!isValidSymbol(key)) throw new MarketDataError('BAD_REQUEST', `Invalid symbol "${key}"`);
+    // B3 tickers typed without suffix (CPLE3, TAEE11, BOVA11, MXRF11): 4 letters + 1-2 digits is the
+    // B3 pattern and never a US ticker, so look them up on B3 instead of the US (review R3, M30).
+    if (/^[A-Z]{4}\d{1,2}$/i.test(key)) {
+      const sa = `${key.toUpperCase()}.SA`;
+      const saAlias = findAlias(sa);
+      if (saAlias) return this.resolve(sa);
+      return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(sa), target: this.target(sa) };
+    }
     const y = key.toUpperCase();
     return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(y), target: this.target(y) };
   }
@@ -512,7 +520,9 @@ export class MarketDataService {
       for (let yy = y; yy <= yb; yy++) {
         const chunk = sliceHistory(h, `${yy}-01-01`, `${yy}-12-31`);
         const ttl = h.degraded ? 5 * MINUTE : chunkTtl(chunk, yy, today, gEnd);
-        await this.cache.set(key(yy), chunk, ttl, { persist: !h.degraded });
+        // Current-year chunks are persisted too: they are the local price snapshot served when
+        // every live provider fails (review R3, M2).
+        await this.cache.set(key(yy), chunk, ttl, { persist: h.degraded ? false : 'always' });
         chunks.set(yy, chunk);
       }
       y = yb + 1;
@@ -562,12 +572,62 @@ export class MarketDataService {
         fallbacks.push({ source: String(p.id), error: errorMessage(e) });
       }
     }
-    const notFound = fallbacks.every((f) => /not found|no prices|no data|delisted|unsupported/i.test(f.error));
+    // Last resort: the as-traded closes this server recorded earlier (per-year chunks kept in the
+    // persistent store), even if expired. Independent of the live providers being up.
+    if (r.target.yahoo) {
+      const snap = await this.snapshot(r.target.yahoo, from, to);
+      if (snap) return { h: snap, fallbacks };
+      fallbacks.push({ source: 'snapshot', error: 'no locally recorded prices for this range' });
+    }
+    const notFound = fallbacks.every((f) => /not found|no prices|no data|delisted|unsupported|no locally recorded/i.test(f.error));
     const suggest = this.catalog.search(r.target.symbol, 1)[0]?.id;
     throw new MarketDataError(notFound ? 'NOT_FOUND' : 'UPSTREAM_ERROR', `No price source could serve ${r.target.instrumentId}`, {
       fallbacks,
       ...(suggest && suggest !== r.target.instrumentId ? { suggest } : {}),
     });
+  }
+
+  /** Locally recorded Yahoo chunks (possibly expired) covering [from, to], or undefined. */
+  private async snapshot(symbol: string, from: ISODate, to: ISODate): Promise<ProviderHistory | undefined> {
+    const parts: ProviderHistory[] = [];
+    for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) {
+      const c = await this.cache.getStale<ProviderHistory>(`hist:${YEAR_CHUNK_VERSION}:yahoo:${symbol}:${y}`);
+      if (c) parts.push(c);
+    }
+    const points = parts.flatMap((p) => p.points).filter((p) => p.date >= from && p.date <= to);
+    if (!points.length) return undefined;
+    const last = parts[parts.length - 1]!;
+    const lastDate = points[points.length - 1]!.date;
+    return {
+      ...last,
+      points,
+      dividends: parts.flatMap((p) => p.dividends).filter((d) => d.date >= from && d.date <= to),
+      splits: parts.flatMap((p) => p.splits).filter((s) => s.date >= from && s.date <= to),
+      session: undefined,
+      source: 'snapshot',
+      notes: [...new Set([...parts.flatMap((p) => p.notes), `live providers unavailable: closes recorded locally by this server (last ${lastDate})`])],
+    };
+  }
+
+  /**
+   * Record the current-year closes of catalog instruments of the given exchanges into the local
+   * snapshot (persisted chunks). Run periodically by the server (SNAPSHOT_EXCHANGES), so BVC and
+   * London keep a keyless fallback independent of Yahoo's uptime.
+   */
+  async recordSnapshot(exchanges: string[], opts: { from?: ISODate } = {}): Promise<{ ok: number; failed: string[] }> {
+    const from = opts.from ?? `${this.today().slice(0, 4)}-01-01`;
+    const failed: string[] = [];
+    let ok = 0;
+    for (const inst of this.catalog.instruments.filter((i) => exchanges.includes(i.exchange))) {
+      try {
+        const h = await this.history({ symbol: inst.id, from });
+        if (h.series.source === 'yahoo') ok++;
+        else failed.push(`${inst.id} (${h.series.source})`);
+      } catch (e) {
+        failed.push(`${inst.id}: ${errorMessage(e).slice(0, 60)}`);
+      }
+    }
+    return { ok, failed };
   }
 
   private async otherDaily(r: Resolved, from: ISODate, to: ISODate): Promise<MarketResult> {
@@ -735,7 +795,25 @@ export class MarketDataService {
       actions.push(...h.splits.map((s) => classifySplit(a.fromYahoo, { date: s.date, numerator: s.numerator ?? Math.round(s.ratio * 1000), denominator: s.denominator ?? 1000 }, a.fromId)));
     }
     if (a.effective && a.effective >= from && a.effective <= to) {
-      actions.push({ instrumentId: a.fromId, date: a.effective, type: 'SPLIT', subtype: 'MERGER', ratio: a.ratio, targetInstrumentId: a.toId, source: 'catalog', note: a.note });
+      if (a.components?.length) {
+        // Units split into several securities: the first component replaces the unit (MERGER),
+        // the others arrive alongside it (SPINOFF). The cost split is unknown -> review.
+        a.components.forEach((c, i) =>
+          actions.push({
+            instrumentId: a.fromId,
+            date: a.effective!,
+            type: 'SPLIT',
+            subtype: i === 0 ? 'MERGER' : 'SPINOFF',
+            ratio: c.ratio,
+            targetInstrumentId: c.toId,
+            reviewRequired: true,
+            source: 'catalog',
+            note: a.note,
+          }),
+        );
+      } else {
+        actions.push({ instrumentId: a.fromId, date: a.effective, type: 'SPLIT', subtype: 'MERGER', ratio: a.ratio, targetInstrumentId: a.toId, source: 'catalog', note: a.note });
+      }
       if (a.cashPerShare) {
         actions.push({
           instrumentId: a.fromId,

@@ -6,7 +6,7 @@
  *    Grupamento, Bonificação em Ativos, Amortização, Vencimento/Resgate (Tesouro, CDB), etc.
  */
 import type { TransactionType } from '@pm/core';
-import { B3_TICKER_RE_STRICT } from '../markets';
+import { B3_TICKER_RE_STRICT, tesouroId } from '../markets';
 import type { DraftTransaction, InstrumentHint, ParsedRow } from '../types';
 import { businessDaysBetween } from '../calendars';
 import { normalizeText, round } from '../util';
@@ -23,6 +23,19 @@ const MOV_GROUPS = [
 /** "PETR4 - PETROLEO BRASILEIRO S.A. PETROBRAS" → { symbol: 'PETR4', name: '...' }; Tesouro/CDB → name only. */
 export function parseB3Product(product: string): InstrumentHint {
   const p = product.trim();
+  // Tesouro Direto → the TD:<code>-<maturity> ids that @pm/market-data prices automatically.
+  const td = tesouroId(p);
+  if (td) {
+    return {
+      name: p,
+      currency: 'BRL',
+      create: {
+        id: td.id, symbol: `${td.code}-${td.maturity.slice(0, 4)}`, name: `${td.tipo} ${td.maturity.slice(0, 4)}`, exchange: 'TD',
+        currency: 'BRL', country: 'BR', assetClass: 'fixed_income', sector: 'Government',
+        providerSymbols: { tesouro: `${td.tipo}|${td.maturity}` }, pricing: 'auto',
+      },
+    };
+  }
   const m = /^([A-Z0-9]{4}\d{1,2}F?)\s*-\s*(.+)$/.exec(p);
   if (m && B3_TICKER_RE_STRICT.test(m[1]!)) return { symbol: m[1]!, name: m[2]!.trim(), exchange: 'BVMF', currency: 'BRL' };
   if (B3_TICKER_RE_STRICT.test(p)) return { symbol: p, exchange: 'BVMF', currency: 'BRL' };

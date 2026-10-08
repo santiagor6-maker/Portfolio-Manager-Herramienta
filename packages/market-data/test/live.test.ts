@@ -289,12 +289,15 @@ describe.skipIf(!LIVE)('LIVE contract tests for providers validated only with sy
   const unreachable = (e: unknown) =>
     /403|ENOTFOUND|ECONN|fetch failed|forbidden|egress|allowlist|timeout|timed out/i.test(`${String((e as Error)?.message ?? e)} ${JSON.stringify((e as { details?: unknown })?.details ?? '')}`);
 
+  // CONTRACT_STRICT=1 (CI / a machine with access): an unreachable service is a FAILURE, so the
+  // contract really validates the formats instead of passing silently (review R3, M15).
+  const STRICT = process.env.CONTRACT_STRICT === '1';
   const contract = async (name: string, run: () => Promise<void>) => {
     try {
       await run();
       console.log(`[contract] ${name}: OK`);
     } catch (e) {
-      if (unreachable(e)) console.log(`[contract] ${name}: UNREACHABLE from here (${String((e as Error).message).slice(0, 80)})`);
+      if (unreachable(e) && !STRICT) console.log(`[contract] ${name}: UNREACHABLE from here (${String((e as Error).message).slice(0, 80)})`);
       else throw e;
     }
   };
@@ -359,6 +362,38 @@ describe.skipIf(!LIVE)('LIVE round 3', () => {
       const q = await service.quote('SAP.DE');
       console.log(`[M20] SAP.DE history last ${JSON.stringify(sap.series.points.at(-1))} lastTrade=${sap.series.lastTradeDate}; quote ${q.date} ${q.price}`);
       expect(sap.series.points.at(-1)!.date).toBe(q.date);
+    },
+    T,
+  );
+});
+
+describe.skipIf(!LIVE)('LIVE round 4', () => {
+  const service = new MarketDataService();
+  it(
+    'every rename alias has continuous monthly history since 2019; NATU3 June-2025 not phantom; B3 bare tickers',
+    async () => {
+      const { TICKER_ALIASES } = await import('../src/index');
+      for (const a of TICKER_ALIASES.filter((x) => x.kind === 'rename')) {
+        const h = await service.history({ symbol: a.fromYahoo, from: '2019-01-01', to: '2026-09-30', interval: '1mo' });
+        const months = new Set(h.series.points.map((p) => p.date.slice(0, 7)));
+        const missing: string[] = [];
+        for (let y = 2019; y <= 2026; y++) for (let m = 1; m <= 12; m++) {
+          const k = `${y}-${String(m).padStart(2, '0')}`;
+          if (k <= '2026-09' && !months.has(k)) missing.push(k);
+        }
+        console.log(`[continuity] ${a.fromYahoo} -> ${a.toId}: ${h.series.points.length} months, missing ${missing.length} ${missing.slice(0, 6).join(',')}`);
+        expect(missing).toEqual([]);
+      }
+      const natu = await service.history({ symbol: 'NATU3.SA', from: '2025-05-01', to: '2025-08-31', interval: '1mo' });
+      console.log(`[M28] NATU3 ${JSON.stringify(natu.series.points)} notes=${JSON.stringify(natu.notes)}`);
+      expect(natu.series.points.every((p) => p.close < 20)).toBe(true);
+      const ntco = await service.history({ symbol: 'NTCO3', from: '2025-01-01', to: '2025-12-31', interval: '1mo' });
+      console.log(`[M28] NTCO3 delisted=${ntco.delisted?.kind} points=${ntco.series.points.length} actions=${JSON.stringify(ntco.actions.map((a) => [a.date, a.subtype, a.targetInstrumentId]))}`);
+      for (const s of ['CPLE3', 'TAEE11', 'SAPR11']) {
+        const q = await service.quote(s);
+        console.log(`[M30] ${s} -> ${q.instrumentId} ${q.price} ${q.currency}`);
+        expect(q.instrumentId.startsWith('BVMF:')).toBe(true);
+      }
     },
     T,
   );

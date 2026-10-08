@@ -183,11 +183,11 @@ describe('I8 — exchange resolution does not fragment positions', () => {
     expect(byLine(r, 4).issues.map((i) => i.code)).toEqual(['MGC_FOREIGN_LISTING']);
     expect(byLine(r, 5)).toMatchObject({ status: 'error' });
     expect(byLine(r, 5).issues[0]!.code).toBe('EXCHANGE_REQUIRED');
-    expect(byLine(r, 6).transaction!.instrumentId).toBe('US:ENB');
+    expect(byLine(r, 6).transaction!.instrumentId).toBe('XNYS:ENB'); // market-data default for unknown US venues (I28)
     const fixed = await importText('date,type,symbol,quantity,price,currency\n2024-01-02,BUY,SAN,10,4,EUR\n', { ...O, securityMap: { SAN: 'XMAD' } });
     expect(fixed.transactions[0]!.instrumentId).toBe('XMAD:SAN');
   });
-  it('Schwab ENB (guessed) then IBKR NYSE → same instrument + suggested exchange update', async () => {
+  it('Schwab ENB (guessed XNYS) then IBKR → one instrument; a different real venue is suggested as update', async () => {
     const sch = await importText('"Date","Action","Symbol","Description","Quantity","Price","Fees & Comm","Amount"\n"01/05/2024","Buy","ENB","ENBRIDGE INC","10","$35.00","","-$350.00"\n', O);
     const ib = 'Statement,Header,Field Name,Field Value\nStatement,Data,Title,Activity Statement\n' +
       'Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code\n' +
@@ -195,8 +195,12 @@ describe('I8 — exchange resolution does not fragment positions', () => {
       'Financial Instrument Information,Header,Asset Category,Symbol,Description,Conid,Security ID,Listing Exch,Multiplier,Type,Code\n' +
       'Financial Instrument Information,Data,Stocks,ENB,ENBRIDGE INC,9,CA29250N1050,NYSE,1,COMMON,\n';
     const r = await importText(ib, { ...O, existingTransactions: sch.transactions, existingInstruments: sch.instruments });
-    expect(r.transactions[0]!.instrumentId).toBe('US:ENB');
-    expect(r.instrumentUpdates).toEqual([{ id: 'US:ENB', changes: { exchange: 'XNYS' }, reason: 'exchange:XNYS' }]);
+    expect(r.transactions[0]!.instrumentId).toBe('XNYS:ENB');
+    expect(r.instrumentUpdates).toBeUndefined();
+    // Venue known later and different from the guess → same instrument, suggested exchange fix.
+    const r2 = await importText(ib.replace('CA29250N1050,NYSE', 'CA29250N1050,NASDAQ'), { ...O, existingTransactions: sch.transactions, existingInstruments: sch.instruments });
+    expect(r2.transactions[0]!.instrumentId).toBe('XNYS:ENB');
+    expect(r2.instrumentUpdates).toEqual([{ id: 'XNYS:ENB', changes: { exchange: 'XNAS' }, reason: 'exchange:XNAS' }]);
   });
   it('uses an injected catalog (ISIN / symbol) before guessing', async () => {
     const catalog = [{ id: 'XMAD:SAN', symbol: 'SAN', name: 'Banco Santander', exchange: 'XMAD', currency: 'EUR', country: 'ES', assetClass: 'equity' as const, isin: 'ES0113900J37', providerSymbols: { yahoo: 'SAN.MC' } }];

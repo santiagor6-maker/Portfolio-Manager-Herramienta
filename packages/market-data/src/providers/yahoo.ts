@@ -24,7 +24,7 @@
 import type { FxPoint, ISODate, PricePoint, ProviderId } from '@pm/core';
 import type { TieredCache } from '../cache';
 import { TTL } from '../cache';
-import { addDays, dateInZone, todayISO, toEpochSeconds } from '../dates';
+import { addDays, dateInZone, daysBetween, todayISO, toEpochSeconds } from '../dates';
 import { MarketDataError, errorMessage } from '../errors';
 import { HttpError, type HttpClient } from '../http';
 import { cleanPrice, combine, dedupeByDate, roundSig, sliceRange } from '../series';
@@ -332,6 +332,47 @@ export function repairHundredfoldGlitches(points: PricePoint[]): { points: Price
 }
 
 /**
+ * Generic filter for carried-forward phantom closes in the MIDDLE of a series (review R3, M28):
+ * Yahoo's NATU3 series jumps from 2019-12-18 (36.86, Natura Cosméticos) to 2025-06-26..07-01 with
+ * four zero-volume bars repeating 36.86, before the first real 2025 trade at 10.19. Rules (only
+ * for series that report volume):
+ *  A. a zero-volume bar repeating exactly the last traded close after more than 30 days without
+ *     any traded bar is dropped;
+ *  B. zero-volume bars before the first traded bar of the window are dropped when they are more
+ *     than 25 % away from that first traded close (a stale carry, not a quiet market).
+ * Ordinary illiquid days (zero volume, previous close, within days of a trade) are kept.
+ */
+export function dropStaleZeroVolume(
+  points: readonly PricePoint[],
+  volume: ReadonlyMap<ISODate, number | null | undefined>,
+): { points: PricePoint[]; dropped: number } {
+  const traded = (p: PricePoint) => (volume.get(p.date) ?? 0) > 0;
+  const firstTraded = points.find(traded);
+  if (!firstTraded) return { points: [...points], dropped: 0 };
+  const out: PricePoint[] = [];
+  let lastReal: PricePoint | undefined;
+  let dropped = 0;
+  for (const p of points) {
+    if (traded(p)) {
+      lastReal = p;
+      out.push(p);
+      continue;
+    }
+    if (!lastReal) {
+      if (Math.abs(p.close / firstTraded.close - 1) > 0.25) {
+        dropped++;
+        continue;
+      }
+    } else if (Math.abs(p.close - lastReal.close) <= 1e-9 * Math.abs(lastReal.close) && daysBetween(lastReal.date, p.date) > 30) {
+      dropped++;
+      continue;
+    }
+    out.push(p);
+  }
+  return { points: out, dropped };
+}
+
+/**
  * Build an as-traded history from a chart response. `splits` must contain every split after
  * `from` that Yahoo applied (range events + full split history).
  */
@@ -356,6 +397,8 @@ export function buildHistory(
   const ts = r.timestamp ?? [];
   const q = r.indicators?.quote?.[0];
   const closes = q?.close ?? [];
+  const volumes = q?.volume;
+  const volByDate = new Map<ISODate, number | null | undefined>();
   let raw: PricePoint[] = [];
   let phantom = 0;
   const missingCloseDates: ISODate[] = [];
@@ -381,9 +424,15 @@ export function buildHistory(
       continue;
     }
     raw.push({ date, close: c });
+    if (volumes) volByDate.set(date, volumes[i]);
   }
   if (phantom) notes.push(`dropped ${phantom} phantom bar(s) dated after the last trade on ${lastTradeDate}`);
   raw = dedupeByDate(raw);
+  if (volumes) {
+    const f = dropStaleZeroVolume(raw, volByDate);
+    if (f.dropped) notes.push(`dropped ${f.dropped} zero-volume bar(s) repeating a stale close (no trades for a long period)`);
+    raw = f.points;
+  }
 
   if (cur.divisor !== 1) {
     const rep = repairHundredfoldGlitches(raw);

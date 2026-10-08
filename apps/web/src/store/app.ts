@@ -34,6 +34,9 @@ interface AppState {
   setMarket(patch: Partial<MarketState>): void;
 }
 
+/** Settings the user changed before the stored ones finished loading (they win over the stored values). */
+const changedBeforeReady = new Set<keyof AppSettings>();
+
 export const useApp = create<AppState>((set) => ({
   ready: false,
   settings: DEFAULT_SETTINGS,
@@ -41,9 +44,18 @@ export const useApp = create<AppState>((set) => ({
   market: { status: 'idle', sources: {}, failedSymbols: [] },
   onboardingOpen: false,
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
-  setReady: (settings) => set({ ready: true, settings }),
+  setReady: (settings) =>
+    set((s) => {
+      const merged = { ...settings };
+      for (const k of changedBeforeReady) (merged as Record<string, unknown>)[k] = s.settings[k];
+      changedBeforeReady.clear();
+      return { ready: true, settings: merged };
+    }),
   setSetting: (key, value) => {
-    set((s) => ({ settings: { ...s.settings, [key]: value } }));
+    set((s) => {
+      if (!s.ready) changedBeforeReady.add(key);
+      return { settings: { ...s.settings, [key]: value } };
+    });
     void saveSetting(key, value);
     if (key === 'theme') {
       try {

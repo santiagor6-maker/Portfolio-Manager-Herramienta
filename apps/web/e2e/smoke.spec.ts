@@ -30,7 +30,12 @@ test('currency switch re-renders figures', async ({ page }) => {
   await page.goto('/');
   await waitForData(page);
   const before = await page.getByTestId('kpis').innerText();
-  await page.getByTestId('currency-switch').selectOption('USD');
+  const sel = page.getByTestId('currency-switch');
+  // Startup status updates re-render the header; make sure the selection has been applied.
+  await expect(async () => {
+    await sel.selectOption('USD');
+    await expect(sel).toHaveValue('USD', { timeout: 1000 });
+  }).toPass();
   // Non-local dollar currencies are disambiguated with their ISO code in es-CO: "USD 97.733,74".
   await expect(page.getByTestId('kpis')).toContainText(/USD\s\d{1,3}(\.\d{3})*,\d{2}/);
   await expect(page.locator('main')).not.toHaveAttribute('aria-busy', 'true');

@@ -12,6 +12,7 @@ import type {
   DateFormat,
   InstrumentHint,
   ReportedPosition,
+  UnknownSecurity,
   ImportIssue,
   ImportOptions,
   Locale,
@@ -43,6 +44,14 @@ export class ParseContext {
   /** Broker-reported positions/cash (reconciliation). */
   reported?: { source: string; asOf?: string; positions: (ReportedPosition & { hint?: InstrumentHint })[]; cash: { currency: string; amount: number }[] };
   readonly corporateActions: CorporateActionSuggestion[] = [];
+  readonly unknownSecurities: UnknownSecurity[] = [];
+
+  /** Record a security the user must identify (merged by key). */
+  askSecurity(key: string, line: number, suggestions: string[] = []): void {
+    const q = this.unknownSecurities.find((x) => x.key === key);
+    if (q) q.lines.push(line);
+    else this.unknownSecurities.push({ key, lines: [line], suggestions });
+  }
 
   constructor(
     readonly table: RawTable,
@@ -116,6 +125,15 @@ export class ParseContext {
         if (m && !d) mdy += 3;
       }
     }
+    // Language/currency hint: decides the suggestion, never the answer.
+    const lang = opts.headerRow !== undefined ? headerLanguage(this.table.rows[opts.headerRow] ?? []) : undefined;
+    const sample = this.table.rows.slice(from, from + 50).flat().map((c) => cellToString(c).toUpperCase());
+    const latam = sample.some((c) => c === 'COP' || c === 'BRL' || c === 'R$');
+    const usd = sample.some((c) => /^(USD|US\$)$/.test(c));
+    const hinted: DateFormat | undefined = lang === 'es' || latam ? 'DMY' : lang === 'en' || usd ? 'MDY' : undefined;
+    // Chronological monotony is weak evidence (statements grouped by security are not chronological):
+    // it may only confirm the hinted order, and only with enough rows.
+    const MIN_ROWS_FOR_MONOTONY = 8;
     if (cs[0] !== undefined) {
       const seq = (f: DateFormat) => cells.filter((x) => x.v !== null && cellToString(x.v) !== '').map((x) => parseDate(x.v, f)).filter((d): d is string => !!d);
       const inversions = (xs: string[]) => {
@@ -127,19 +145,20 @@ export class ParseContext {
         }
         return Math.min(asc, desc);
       };
-      const iD = inversions(seq('DMY'));
+      const dSeq = seq('DMY');
+      const iD = inversions(dSeq);
       const iM = inversions(seq('MDY'));
-      if (iD === 0 && iM > 0) dmy += 2;
-      if (iM === 0 && iD > 0) mdy += 2;
+      if (dSeq.length >= MIN_ROWS_FOR_MONOTONY) {
+        if (iD === 0 && iM > 1 && hinted !== 'MDY') dmy += 2;
+        if (iM === 0 && iD > 1 && hinted !== 'DMY') mdy += 2;
+      }
     }
     if (dmy !== mdy) {
       this.dateFormat = dmy > mdy ? 'DMY' : 'MDY';
       this.fileIssues.push(this.issue('DATE_FORMAT_INFERRED', 'info', { format: dateFormatLabel(this.dateFormat) }));
       return this.dateFormat;
     }
-    const lang = opts.headerRow !== undefined ? headerLanguage(this.table.rows[opts.headerRow] ?? []) : undefined;
-    const usd = this.table.rows.slice(from, from + 50).some((r) => r.some((c) => /^(USD|US\$)$/i.test(cellToString(c))));
-    const suggested: DateFormat = lang === 'en' && usd ? 'MDY' : lang === 'en' ? 'MDY' : hint === 'YMD' ? 'DMY' : hint;
+    const suggested: DateFormat = hinted ?? (hint === 'YMD' ? 'DMY' : hint);
     this.dateFormat = suggested;
     const affected = cells.filter((x) => isAmbiguousDate(x.v));
     if (this.options.allowAmbiguous) {
@@ -151,7 +170,7 @@ export class ParseContext {
       kind: 'dateFormat',
       candidates: [suggested, other],
       suggested,
-      reason: lang === 'en' ? 'Encabezados en inglés: se sugiere MM/DD/AAAA.' : 'Encabezados en español/portugués: se sugiere DD/MM/AAAA.',
+      reason: suggested === 'MDY' ? 'Encabezados en inglés / USD: se sugiere MM/DD/AAAA.' : 'Encabezados en español/portugués o COP/BRL: se sugiere DD/MM/AAAA.',
       samples: affected.slice(0, 5).map((x) => ({
         line: x.line,
         value: cellToString(x.v),

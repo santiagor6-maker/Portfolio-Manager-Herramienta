@@ -46,6 +46,8 @@ export interface Resolution {
 
 export interface ResolveError {
   error: ResolveNote;
+  /** Candidate answers for the user (e.g. MICs where the symbol exists). */
+  suggestions?: string[];
 }
 
 const FIXED_INCOME_RE = /\b(tesouro|cdb|lci|lca|cdt|debenture|cri|cra|lf|tes|bono|bond|ntn|lft|ltn)\b/;
@@ -101,6 +103,7 @@ export class InstrumentResolver {
   private readonly catalogById = new Map<string, Instrument>();
   private readonly catalogByIsin = new Map<string, Instrument>();
   private readonly catalogBySymbol = new Map<string, Instrument[]>();
+  private readonly catalogByName = new Map<string, Instrument[]>();
   private readonly securityMap = new Map<string, string>();
 
   constructor(
@@ -113,6 +116,8 @@ export class InstrumentResolver {
       if (i.isin) this.catalogByIsin.set(i.isin.toUpperCase(), i);
       const k = i.symbol.toUpperCase();
       this.catalogBySymbol.set(k, [...(this.catalogBySymbol.get(k) ?? []), i]);
+      const n = normalizeText(i.name);
+      this.catalogByName.set(n, [...(this.catalogByName.get(n) ?? []), i]);
     }
     for (const [k, v] of Object.entries(opts.securityMap ?? {})) this.securityMap.set(normalizeText(k), v.trim());
   }
@@ -155,7 +160,8 @@ export class InstrumentResolver {
   private usExchange(symbol: string, notes: ResolveNote[]): ExchangeCode {
     const known = this.knownUsExchange(symbol);
     if (known) return known;
-    const ex = this.opts.defaultUsExchange ?? 'US';
+    // Same default as @pm/market-data (parseYahooSymbol): unknown US listings are XNYS; Yahoo needs no suffix.
+    const ex = this.opts.defaultUsExchange ?? 'XNYS';
     notes.push({ code: 'EXCHANGE_GUESSED', params: { symbol, exchange: ex } });
     return ex;
   }
@@ -240,6 +246,13 @@ export class InstrumentResolver {
     }
 
     if (!symbol && hint.name) {
+      // Funds / Tesouro / CDT names: exact name match in the user's instruments or the catalog
+      // (e.g. @pm/market-data FIC:… and TD:… instruments) before falling back to a manual instrument.
+      const n = normalizeText(hint.name);
+      const mine = [...this.byId.values()].filter((i) => normalizeText(i.name) === n);
+      if (mine.length === 1) return this.existing(mine[0]!);
+      const cat = this.catalogByName.get(n);
+      if (cat && cat.length === 1) return this.adopt(cat[0]!);
       symbol = slugSymbol(hint.name);
       exchange = exchange ?? 'MANUAL';
     }
@@ -261,7 +274,10 @@ export class InstrumentResolver {
         notes.push({ code: 'MGC_FOREIGN_LISTING', params: { symbol, id: `${exchange}:${symbol}` } });
       } else if (currency === 'EUR' && !country) {
         exchange = EU_TICKERS[symbol];
-        if (!exchange) return { error: { code: 'EXCHANGE_REQUIRED', params: { symbol, currency } } };
+        if (!exchange) {
+          const cands = [...new Set(catHits.map((i) => i.exchange))];
+          return { error: { code: 'EXCHANGE_REQUIRED', params: { symbol, currency } }, suggestions: cands.length ? cands : ['XMAD', 'XETR', 'XPAR', 'XAMS', 'XMIL'] };
+        }
       } else if (currency && CURRENCY_EXCHANGE[currency] && !(currency === 'COP' && country === 'US')) exchange = CURRENCY_EXCHANGE[currency];
       else if (country === 'US' || currency === 'USD') exchange = this.usExchange(symbol, notes);
       else if (country === 'CO') exchange = 'XBOG';
@@ -290,16 +306,21 @@ export class InstrumentResolver {
     if (notes.some((n) => n.code === 'EXCHANGE_GUESSED') && same.length === 1) {
       return { ...this.existing(same[0]!), notes: keepNotes, foreignListing };
     }
-    // A pseudo 'US:' instrument exists and now the real exchange is known → reuse + suggest refinement.
-    if (EXCHANGES[exchange]?.country === 'US' && exchange !== 'US') {
-      const pseudo = this.byId.get(`US:${symbol}`);
-      if (pseudo) {
-        const r = this.existing(pseudo);
-        return {
-          ...r,
-          notes: [{ code: 'EXCHANGE_REFINED', params: { id: pseudo.id, exchange } }],
-          update: { id: pseudo.id, changes: { exchange }, reason: `exchange:${exchange}` },
-        };
+    // All US venues share the same Yahoo symbol: one instrument per US symbol. If the user's instrument
+    // sits on another US MIC (e.g. an earlier guess) reuse it and, when the venue is now known, suggest the fix.
+    if (US_EXCHANGES.has(exchange) && same.length) {
+      const prev = same.find((i) => US_EXCHANGES.has(i.exchange));
+      if (prev) {
+        const guessed = notes.some((n) => n.code === 'EXCHANGE_GUESSED');
+        const r = prev === this.created.get(prev.id) ? { instrument: prev, isNew: true, notes: [] as ResolveNote[] } : this.existing(prev);
+        if (!guessed && prev.exchange !== exchange) {
+          return {
+            ...r,
+            notes: [{ code: 'EXCHANGE_REFINED', params: { id: prev.id, exchange } }],
+            update: { id: prev.id, changes: { exchange }, reason: `exchange:${exchange}` },
+          };
+        }
+        return { ...r, notes: keepNotes };
       }
     }
 

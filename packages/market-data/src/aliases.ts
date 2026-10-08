@@ -31,6 +31,11 @@ export interface TickerAlias {
   cashPayDate?: ISODate;
   /** ISINs of the old security (so statements with ISINs still resolve). */
   isins?: string[];
+  /**
+   * Units / certificates split into several securities (Copel CPLE11 = 1 CPLE3 + 4 CPLE6): one
+   * component per receiving security. `toId`/`ratio` repeat the main component.
+   */
+  components?: { toId: string; ratio: number }[];
   note: string;
 }
 
@@ -47,8 +52,12 @@ export const TICKER_ALIASES: readonly TickerAlias[] = [
   { kind: 'rename', fromId: 'BVMF:EMBR3', fromYahoo: 'EMBR3.SA', toId: 'BVMF:EMBJ3', toYahoo: 'EMBJ3.SA', ratio: 1, note: 'Embraer: novo código EMBJ3' },
   { kind: 'rename', fromId: 'BVMF:CCRO3', fromYahoo: 'CCRO3.SA', toId: 'BVMF:MOTV3', toYahoo: 'MOTV3.SA', ratio: 1, note: 'CCR -> Motiva (mudança de nome e código)' },
   {
-    kind: 'rename', fromId: 'BVMF:NTCO3', fromYahoo: 'NTCO3.SA', toId: 'BVMF:NATU3', toYahoo: 'NATU3.SA', ratio: 1, effective: '2025-07-02', lastTradingDay: '2025-07-01',
-    note: 'Natura &Co Holding incorporada por Natura Cosméticos: 1 NATU3 por NTCO3, sem diluição; NATU3 negocia desde 2025-07-02',
+    // Not a rename at the provider: Yahoo has NO NTCO3 history (2020-2025) and its NATU3 series
+    // jumps from Natura Cosméticos 2019 to 2025-07-02 through zero-volume bars repeating the 2019
+    // close (36.86) — review R3, M28. Treated as a conversion: NTCO3 keeps its own (unavailable)
+    // history and becomes NATU3 1:1 on 2025-07-02.
+    kind: 'conversion', fromId: 'BVMF:NTCO3', fromYahoo: 'NTCO3.SA', toId: 'BVMF:NATU3', toYahoo: 'NATU3.SA', ratio: 1, effective: '2025-07-02', lastTradingDay: '2025-07-01',
+    note: 'Natura &Co Holding incorporada por Natura Cosméticos: 1 NATU3 por NTCO3, sem diluição; NATU3 negocia desde 2025-07-02 (o provedor não tem o histórico de NTCO3)',
   },
   {
     kind: 'rename', fromId: 'BVMF:MRFG3', fromYahoo: 'MRFG3.SA', toId: 'BVMF:MBRF3', toYahoo: 'MBRF3.SA', ratio: 1, effective: '2025-09-23', lastTradingDay: '2025-09-22',
@@ -59,12 +68,23 @@ export const TICKER_ALIASES: readonly TickerAlias[] = [
     note: 'BRF incorporada pela Marfrig (MBRF): 0,8521 MBRF3 por BRFS3. O histórico de MBRF3 é o da Marfrig, não o da BRF',
   },
   {
-    kind: 'conversion', fromId: 'BVMF:CPLE6', fromYahoo: 'CPLE6.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2025-12-22', cashPerShare: 0.7749, cashPayDate: '2025-12-30',
-    note: 'Copel (migração ao Novo Mercado): cada PNB virou 1 ON (CPLE3) + 1 PNC resgatada compulsoriamente por R$ 0,7749 (pago em 2025-12-30)',
+    // Copel chain (review R3, M29): CPLE6 (PNB) last traded 2025-11-07 and became CPLE5 (PNA) on
+    // 2025-11-10; CPLE5 last traded 2025-12-19 and became 1 CPLE3 + 1 PNC (CPLE7) on 2025-12-22,
+    // the PNC being redeemed for R$0.7749 (paid 2025-12-30).
+    kind: 'conversion', fromId: 'BVMF:CPLE6', fromYahoo: 'CPLE6.SA', toId: 'BVMF:CPLE5', toYahoo: 'CPLE5.SA', ratio: 1, effective: '2025-11-10', lastTradingDay: '2025-11-07',
+    note: 'Copel PNB (CPLE6) convertida em PNA (CPLE5) 1:1 em 2025-11-10; depois CPLE5 -> CPLE3 + R$ 0,7749 em 2025-12-22',
   },
   {
-    kind: 'conversion', fromId: 'BVMF:CPLE5', fromYahoo: 'CPLE5.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2025-12-22', cashPerShare: 0.7749, cashPayDate: '2025-12-30',
+    kind: 'conversion', fromId: 'BVMF:CPLE5', fromYahoo: 'CPLE5.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2025-12-22', lastTradingDay: '2025-12-19', cashPerShare: 0.7749, cashPayDate: '2025-12-30',
     note: 'Copel (migração ao Novo Mercado): cada PNA virou 1 ON (CPLE3) + 1 PNC resgatada compulsoriamente por R$ 0,7749 (pago em 2025-12-30)',
+  },
+  {
+    kind: 'conversion', fromId: 'BVMF:CPLE11', fromYahoo: 'CPLE11.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2023-12-26', lastTradingDay: '2023-12-22',
+    components: [
+      { toId: 'BVMF:CPLE3', ratio: 1 },
+      { toId: 'BVMF:CPLE6', ratio: 4 },
+    ],
+    note: 'Units Copel (CPLE11 = 1 CPLE3 + 4 CPLE6) desfeitas em 2023-12-26 (último pregão 2023-12-22); confirme o rateio do custo entre ON e PNB',
   },
 ];
 

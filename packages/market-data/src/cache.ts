@@ -164,7 +164,22 @@ export class TieredCache {
     return m ? { entry: m, tier: 'memory' } : undefined;
   }
 
-  async set<T>(key: string, value: T, ttlMs: number, opts: { persist?: boolean } = {}): Promise<void> {
+  /**
+   * Value regardless of expiry (memory first, then store), for last-resort fallbacks such as the
+   * locally recorded price snapshot. Undefined if never stored.
+   */
+  async getStale<T>(key: string): Promise<T | undefined> {
+    const m = this.memory.peek(key);
+    if (m) return m.value as T;
+    try {
+      return (await this.store?.get(key))?.value as T | undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** persist: false = memory only; 'always' = persist even short-lived entries (snapshots). */
+  async set<T>(key: string, value: T, ttlMs: number, opts: { persist?: boolean | 'always' } = {}): Promise<void> {
     const storedAt = this.now();
     const entry: CacheEntry<T> = {
       value,
@@ -172,7 +187,7 @@ export class TieredCache {
       expiresAt: Number.isFinite(ttlMs) ? storedAt + ttlMs : null,
     };
     this.memory.set(key, entry);
-    if (this.store && opts.persist !== false && ttlMs >= this.persistMinTtlMs) {
+    if (this.store && opts.persist !== false && (opts.persist === 'always' || ttlMs >= this.persistMinTtlMs)) {
       try {
         await this.store.set(key, entry);
       } catch {
@@ -207,7 +222,7 @@ export class TieredCache {
     key: string,
     ttl: number | ((value: T) => number),
     loader: () => Promise<T>,
-    opts: { persist?: boolean } = {},
+    opts: { persist?: boolean | 'always' } = {},
   ): Promise<LoadResult<T>> {
     const found = await this.lookup(key);
     if (found && this.fresh(found.entry)) return { value: found.entry.value as T, from: found.tier };

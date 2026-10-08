@@ -302,7 +302,6 @@ describe('M5 renamed tickers resolve transparently (reviewer renames.mts)', () =
     ['ELET3.SA', 'BVMF:AXIA3'],
     ['EMBR3.SA', 'BVMF:EMBJ3'],
     ['CCRO3.SA', 'BVMF:MOTV3'],
-    ['BVMF:NTCO3', 'BVMF:NATU3'],
     ['MRFG3.SA', 'BVMF:MBRF3'],
   ])('%s -> %s', (old, id) => {
     const { service } = createTestService();

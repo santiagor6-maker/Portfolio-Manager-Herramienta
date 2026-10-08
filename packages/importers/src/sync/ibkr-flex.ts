@@ -135,47 +135,87 @@ const ATTR_TO_COLUMN: Record<string, string> = {
   company: 'TransferCompany',
 };
 
-const SECTIONS = ['Trade', 'CashTransaction', 'Transfer', 'OpenPosition'];
+const SECTIONS = ['Trade', 'CashTransaction', 'Transfer', 'OpenPosition', 'CorporateAction', 'SalesTax'];
+/** Elements that never carry transactions. */
+const META_ELEMENTS = new Set([
+  'FlexQueryResponse', 'FlexStatements', 'FlexStatement', 'FlexStatementResponse', 'AccountInformation', 'ConversionRate',
+  'CashReportCurrency', 'EquitySummaryByReportDateInBase', 'ChangeInNAV', 'Lot', 'Order', 'SymbolSummary', 'AssetSummary',
+  'MTMPerformanceSummaryUnderlying', 'FIFOPerformanceSummaryUnderlying', 'SecurityInfo', 'ChangeInDividendAccrual', 'OpenDividendAccrual',
+  'InterestAccrualsCurrency', 'TierInterestDetail', 'NetStockPosition', 'PriorPeriodPosition',
+]);
 
-/** Convert a Flex XML statement to a CSV-like table (header row per section, like a multi-section Flex CSV). */
-export function flexXmlToTable(xml: string): RawTable {
+export interface FlexXmlTable {
+  table: RawTable;
+  /** Elements with records that are not imported (name → count). */
+  unhandled: Map<string, number>;
+}
+
+function attrsOf(s: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const ar = /(\w+)="([^"]*)"/g;
+  let a: RegExpExecArray | null;
+  while ((a = ar.exec(s))) attrs[a[1]!] = decodeXml(a[2]!);
+  return attrs;
+}
+
+/**
+ * Convert a Flex XML statement to a CSV-like table (header row per section, like a multi-section Flex
+ * CSV) with a `FlexSection` column. Summary rows are dropped so nothing is counted twice:
+ * CashTransaction keeps DETAIL rows, Trade keeps EXECUTION rows (ORDER rows only when there are no
+ * executions), OpenPosition keeps SUMMARY rows.
+ */
+export function flexXmlToTables(xml: string): FlexXmlTable {
   const rows: Cell[][] = [];
   const lines: number[] = [];
   let line = 0;
   for (const el of SECTIONS) {
     const re = new RegExp(`<${el}\\s([^>]*?)/?>`, 'g');
-    const records: Record<string, string>[] = [];
+    let records: Record<string, string>[] = [];
     let m: RegExpExecArray | null;
-    while ((m = re.exec(xml))) {
-      const attrs: Record<string, string> = {};
-      const ar = /(\w+)="([^"]*)"/g;
-      let a: RegExpExecArray | null;
-      while ((a = ar.exec(m[1]!))) attrs[a[1]!] = decodeXml(a[2]!);
-      // Open positions: keep summary rows only.
-      if (el === 'OpenPosition' && attrs.levelOfDetail && attrs.levelOfDetail !== 'SUMMARY') continue;
-      records.push(attrs);
+    while ((m = re.exec(xml))) records.push(attrsOf(m[1]!));
+    const lod = (r: Record<string, string>) => (r.levelOfDetail ?? '').toUpperCase();
+    if (el === 'OpenPosition') records = records.filter((r) => !r.levelOfDetail || lod(r) === 'SUMMARY');
+    if (el === 'CashTransaction') records = records.filter((r) => !r.levelOfDetail || lod(r) === 'DETAIL');
+    if (el === 'Trade') {
+      const hasExec = records.some((r) => lod(r) === 'EXECUTION');
+      records = records.filter((r) => !r.levelOfDetail || (hasExec ? lod(r) === 'EXECUTION' : lod(r) === 'ORDER'));
     }
     if (!records.length) continue;
     const keys = [...new Set(records.flatMap((r) => Object.keys(r)))];
     if (!keys.includes('accountId')) keys.unshift('accountId');
-    rows.push(keys.map((k) => ATTR_TO_COLUMN[k] ?? k.charAt(0).toUpperCase() + k.slice(1)));
+    rows.push(['FlexSection', ...keys.map((k) => ATTR_TO_COLUMN[k] ?? k.charAt(0).toUpperCase() + k.slice(1))]);
     lines.push(++line);
     for (const r of records) {
-      rows.push(keys.map((k) => r[k] ?? ''));
+      rows.push([el, ...keys.map((k) => r[k] ?? '')]);
       lines.push(++line);
     }
   }
-  return { name: 'flex.xml', rows, lines };
+  // Any other element with attributes is reported (never silently ignored).
+  const unhandled = new Map<string, number>();
+  const any = /<([A-Z]\w*)\s[^>]*?\/?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = any.exec(xml))) {
+    const name = m[1]!;
+    if (SECTIONS.includes(name) || META_ELEMENTS.has(name)) continue;
+    unhandled.set(name, (unhandled.get(name) ?? 0) + 1);
+  }
+  return { table: { name: 'flex.xml', rows, lines }, unhandled };
+}
+
+/** @deprecated use flexXmlToTables (kept for compatibility). */
+export function flexXmlToTable(xml: string): RawTable {
+  return flexXmlToTables(xml).table;
 }
 
 /** Import an already-downloaded Flex XML statement. */
 export async function importFlexXml(xml: string, options: ImportOptions): Promise<ImportResult> {
-  const table = flexXmlToTable(xml);
+  const { table, unhandled } = flexXmlToTables(xml);
   const detection: DetectionInfo = {
     fileKind: 'unknown', presetId: 'ibkr-flex-sync', presetLabel: 'Interactive Brokers — Flex Web Service', presetConfidence: 'medium', score: 1,
   };
   const ctx = new ParseContext(table, { account: 'Interactive Brokers', ...options }, 'ibkr-flex');
   const rows = ibkrFlexPreset.parse(table, ctx);
+  for (const [section, count] of unhandled) ctx.fileIssues.push(ctx.issue('UNHANDLED_SECTION', 'warning', { section, count }));
   detection.dateFormat = ctx.dateFormat;
   detection.numberFormat = ctx.numberFormat;
   // Same source id as the Flex CSV so a CSV import and a sync de-duplicate exactly.
