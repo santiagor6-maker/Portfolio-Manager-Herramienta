@@ -116,7 +116,7 @@ test('phone width + dark theme', async ({ page }) => {
   await expect(page.getByTestId('monthly-heatmap')).toBeVisible();
   await shot(page, 'monthly-phone');
   await page.goto('/posiciones');
-  await expect(page.getByTestId('positions-table')).toBeVisible();
+  await expect(page.getByTestId('positions-cards')).toBeVisible();
   await shot(page, 'positions-phone');
   await page.goto('/');
   await page.getByTestId('menu-button').click();
