@@ -354,6 +354,15 @@ describe('I13 / I29 / I20', () => {
     expect(txs(r)).toEqual([expect.objectContaining({ type: 'INTEREST', amount: 2.4 })]);
     expect(byLine(r, 5).issues[0]!.code).toBe('MONEY_MARKET_SWEEP');
   });
+  it('neutral words (Traslado, Liquidación, Transferência) are classified by sign, and flagged when the file has no signs', async () => {
+    const head = 'Fecha;Operación;Especie;Cantidad;Precio;Valor;Moneda\n';
+    const signed = await importText(`${head}15/01/2024;Traslado;ECOPETROL;100;;;COP\n16/01/2024;Liquidación;ECOPETROL;-100;2.400;240.000;COP\n17/01/2024;Transferência;;;;-50.000;COP\n`, O);
+    expect(txs(signed).map((t) => t.type)).toEqual(['TRANSFER_IN', 'SELL', 'WITHDRAWAL']);
+    expect(signed.warnings.some((w) => w.code === 'DIRECTION_ASSUMED')).toBe(false);
+    const unsigned = await importText(`${head}15/01/2024;Traslado;ECOPETROL;100;;;COP\n17/01/2024;Transferência;;;;50.000;COP\n`, O);
+    expect(txs(unsigned).map((t) => t.type)).toEqual(['TRANSFER_IN', 'DEPOSIT']);
+    expect(byLine(unsigned, 2).issues.map((i) => i.code)).toContain('DIRECTION_ASSUMED');
+  });
   it('the holdings section of a PDF statement feeds reconciliation, not movements', async () => {
     const cols = [40, 100, 185, 260, 320, 390, 460, 520];
     const row = (y: number, cells: string[]): PdfText[] => cells.map((c, i) => [cols[i]!, y, c] as PdfText).filter((x) => x[2] !== '');
