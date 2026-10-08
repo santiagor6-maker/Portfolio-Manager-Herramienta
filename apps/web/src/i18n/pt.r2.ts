@@ -50,7 +50,7 @@ export const ptR2: typeof esR2 = {
     pctOfIndexHint: 'Rentabilidade da carteira dividida pela do índice (100 % = igual ao CDI/IBR).',
     indexWas: '{{index}} do período: {{value}}',
     indexUntil: 'dados até {{month}}',
-    inflationEstimated: 'inflação estimada a partir de {{month}}',
+    inflationEstimated: 'inflação publicada até {{month}}, restante estimado',
     noIndex: 'Sem CDI/IBR carregado',
     inflationLine: 'Inflação ({{index}})',
     notAnnualized: 'Períodos menores que um ano não são anualizados',

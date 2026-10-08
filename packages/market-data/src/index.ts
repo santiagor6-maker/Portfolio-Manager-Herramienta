@@ -14,6 +14,7 @@ export * from './http';
 export * from './cache';
 export * from './catalog';
 export * from './aliases';
+export * from './frozen';
 export * from './corporate';
 export * from './templates';
 export * from './fx-router';

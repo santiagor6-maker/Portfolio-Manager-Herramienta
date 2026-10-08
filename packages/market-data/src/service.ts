@@ -15,6 +15,7 @@ import { InstrumentCatalog } from './catalog';
 import { classifySplit } from './corporate';
 import { addDays, daysBetween, isISODate, todayISO } from './dates';
 import { MarketDataError, errorMessage } from './errors';
+import { validateFrozen, type FrozenHistory } from './frozen';
 import { FxRouter } from './fx-router';
 import { HttpClient, type FetchLike, type HttpClientOptions } from './http';
 import { IndexService, INDEX_IDS } from './indices';
@@ -106,6 +107,8 @@ export interface MarketDataServiceOptions {
   priceProviders?: PriceProvider[];
   keys?: ProviderKeys;
   customFeeds?: CustomFeedInstrument[];
+  /** Recorded histories of securities that no longer trade (see frozen.ts). */
+  frozenHistories?: FrozenHistory[];
   yahooBaseUrl?: string;
   /** @deprecated use keys.socrata */
   trmAppToken?: string;
@@ -152,6 +155,7 @@ export class MarketDataService {
   private readonly maxBatchPoints: number;
   private readonly maxRangeDays: number;
   private readonly fxProviderIds: string[];
+  private readonly frozen = new Map<string, FrozenHistory>();
 
   constructor(opts: MarketDataServiceOptions = {}) {
     this.now = opts.now ?? (() => new Date());
@@ -220,6 +224,10 @@ export class MarketDataService {
       ecbBaseUrl: opts.urls?.ecb,
       sidraBaseUrl: opts.urls?.sidra,
     });
+    for (const f of opts.frozenHistories ?? []) {
+      const v = validateFrozen(f);
+      this.frozen.set(v.instrumentId, v);
+    }
     this.quoteTtlMs = opts.quoteTtlMs ?? TTL.QUOTE;
     this.maxBatch = opts.limits?.maxBatchItems ?? BATCH_LIMIT;
     this.maxBatchPoints = opts.limits?.maxBatchPoints ?? BATCH_POINTS_LIMIT;
@@ -769,7 +777,21 @@ export class MarketDataService {
     const notes = [`${a.fromId} deixou de negociar: ${a.note}`];
     let h: ProviderHistory | undefined;
     let fallbacks: MarketResult['fallbacks'] = [];
-    if (from <= end) {
+    const frozen = this.frozen.get(a.fromId.toUpperCase());
+    if (frozen && from <= end) {
+      const pts = frozen.points.filter((p) => p.date >= from && p.date <= end);
+      h = {
+        providerSymbol: a.fromYahoo,
+        currency: frozen.currency,
+        points: pts,
+        dividends: (frozen.dividends ?? []).filter((d) => d.date >= from && d.date <= end),
+        splits: [],
+        notes: [`recorded history of ${a.fromId} (${frozen.source}), frozen: the security no longer trades`],
+        basis: 'as-traded',
+        ...(pts.length ? { lastTradeDate: pts[pts.length - 1]!.date } : {}),
+        source: 'frozen',
+      };
+    } else if (from <= end) {
       try {
         const m = await this.marketDaily({ ...r, kind: 'market' }, from, end);
         h = m.h;

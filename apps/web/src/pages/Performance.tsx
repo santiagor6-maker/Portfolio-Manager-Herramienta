@@ -132,6 +132,9 @@ export default function PerformancePage() {
           sub={
             <span className="text-xs text-muted">
               {si?.inflation !== undefined ? t('perf.inflationWas', { index: indexName(inflation), value: formatPct(si.inflation, f.locale, { signed: true }) }) : t('perf.noInflation')}
+              {si?.inflationEstimated && si.inflationThrough ? (
+                <span data-testid="inflation-estimated"> · {t('perf.inflationEstimated', { month: formatMonth(si.inflationThrough.slice(0, 7), f.locale) })}</span>
+              ) : null}
             </span>
           }
           hint={t('perf.realHint')}

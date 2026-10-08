@@ -132,6 +132,12 @@ export default function PositionsPage() {
       cell: (r) => (
         <div>
           <Money value={r.marketValueBase} className="font-semibold" />
+          {r.estimated && <span className="chip !text-warn !border-warn/30 ml-1 !text-[10px]">{t('pos.estimated')}</span>}
+          {r.netMarketValueBase !== undefined && (
+            <div className="text-[11px] text-muted" title={t('pos.netHint')} data-testid="net-value">
+              {t('pos.netEstimated', { value: formatMoney(r.netMarketValueBase, f.currency, f.locale, { privacy: f.privacy }) })}
+            </div>
+          )}
           {r.currency !== f.currency && (
             <div className="text-[11px] text-muted">
               <Money value={r.marketValue} currency={r.currency} />

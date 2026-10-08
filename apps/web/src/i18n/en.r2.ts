@@ -50,7 +50,7 @@ export const enR2: typeof esR2 = {
     pctOfIndexHint: 'Portfolio return divided by the rate index return (100 % = same as CDI/IBR).',
     indexWas: '{{index}} over the period: {{value}}',
     indexUntil: 'data until {{month}}',
-    inflationEstimated: 'inflation estimated after {{month}}',
+    inflationEstimated: 'inflation published until {{month}}, rest estimated',
     noIndex: 'No CDI/IBR loaded',
     inflationLine: 'Inflation ({{index}})',
     notAnnualized: 'Periods shorter than one year are not annualized',
