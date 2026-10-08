@@ -115,6 +115,13 @@ export function officialDocRowsFromTable(rows: CsvCell[][]): OfficialDocRow[] {
   const num = (v: unknown) =>
     typeof v === 'number' ? v : v === undefined || v === '' || v === '-' ? undefined : parseLocaleNumber(String(v).replace(/^R\$|^\$|^COP|^USD/i, '').trim());
   const str = (i: number, r: CsvCell[]) => (i >= 0 && r[i] !== undefined && r[i] !== '' && r[i] !== null ? String(r[i]) : undefined);
+  /** Dates: Excel serial numbers (base 1899-12-30) become ISO dates (T51). */
+  const date = (i: number, r: CsvCell[]) => {
+    const v = i >= 0 ? r[i] : undefined;
+    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{5}(\.\d+)?$/.test(v.trim()) ? Number(v) : undefined;
+    if (n !== undefined && n > 20000 && n < 80000) return excelSerialToIso(n);
+    return str(i, r);
+  };
   return rows
     .slice(headerIdx + 1)
     .filter((r) => r.some((x) => x !== '' && x !== undefined && x !== null))
@@ -127,6 +134,11 @@ export function officialDocRowsFromTable(rows: CsvCell[][]): OfficialDocRow[] {
       imposto: num(c.imposto >= 0 ? r[c.imposto] : undefined),
       quantidade: num(c.quantidade >= 0 ? r[c.quantidade] : undefined),
       codigo: str(c.codigo, r),
-      periodo: str(c.periodo, r),
+      periodo: date(c.periodo, r),
     }));
+}
+
+/** Excel serial date (1900 date system, base 1899-12-30) → ISO date. */
+export function excelSerialToIso(serial: number): string {
+  return new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000).toISOString().slice(0, 10);
 }

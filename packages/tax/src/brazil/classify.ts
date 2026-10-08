@@ -1,4 +1,5 @@
-import type { Instrument } from '@pm/core';
+import type { Instrument, Transaction } from '@pm/core';
+import { daysBetween } from '../common/dates';
 import type { ParamMeta, TaxInput, TaxIssue } from '../common/types';
 
 /**
@@ -57,45 +58,68 @@ export type CryptoCustody = 'brasil' | 'exterior' | 'desconhecida';
 
 const norm = (s: string) => s.toUpperCase().normalize('NFD').replace(/[^A-Z0-9]/g, '');
 
-/** Exchanges/brokers with a Brazilian entity (CNPJ): custody in Brazil → GCAP monthly. Extend via accountCustody. */
-const BR_CRYPTO_VENUES = new Set(
-  [
-    'MERCADOBITCOIN', 'MB', 'FOXBIT', 'NOVADAX', 'BITPRECO', 'BITYPRECO', 'BRASILBITCOIN', 'RIPIO', 'RIPIOBR', 'XPCRIPTO', 'XP',
-    'XPINVESTIMENTOS', 'NUBANK', 'NUCRIPTO', 'NUBANKCRIPTO', 'BTGMYNT', 'MYNT', 'BTG', 'BTGPACTUAL', 'HASHDEXBR', 'INTER', 'BANCOINTER',
-    'PICPAY', 'MERCADOPAGO', 'BINANCEBR', 'BINANCEBRASIL', 'COINEXT', 'ITAU', 'ITAUCRIPTO', 'RICO', 'CLEAR', 'GENIAL', 'AVENUEBR',
-  ].map(norm),
-);
-/** Foreign exchanges/custodians (Lei 14.754/2023 annual regime). */
-const FOREIGN_CRYPTO_VENUES = new Set(
-  ['BINANCE', 'BINANCECOM', 'COINBASE', 'KRAKEN', 'BYBIT', 'OKX', 'KUCOIN', 'BITFINEX', 'GEMINI', 'BITSTAMP', 'CRYPTOCOM', 'GATEIO', 'HTX', 'HUOBI', 'BITGET', 'MEXC', 'NEXO', 'REVOLUT'].map(norm),
-);
+/** Venues matched exactly (short names that would be ambiguous as prefixes). */
+const BR_EXACT = new Set(['MB', 'XP', 'BTG', 'INTER', 'RICO', 'CLEAR', 'ITAU', 'NU']);
+/** Brazilian venues (CNPJ in Brazil) matched by prefix of the normalized name (T49). */
+const BR_PREFIXES = [
+  'MERCADOBITCOIN', 'FOXBIT', 'NOVADAX', 'BITPRECO', 'BITYPRECO', 'BRASILBITCOIN', 'RIPIO', 'XPCRIPTO', 'XPINVEST', 'NUBANK', 'NUCRIPTO',
+  'BTGMYNT', 'MYNT', 'BTGPACTUAL', 'HASHDEX', 'BANCOINTER', 'PICPAY', 'MERCADOPAGO', 'COINEXT', 'ITAUCRIPTO', 'GENIAL', 'BITSO', 'TRUTHERBR',
+];
+/** Foreign venues (Lei 14.754 when the account is the global one) matched by prefix. */
+const FOREIGN_PREFIXES = [
+  'BINANCE', 'COINBASE', 'KRAKEN', 'BYBIT', 'OKX', 'KUCOIN', 'BITFINEX', 'GEMINI', 'BITSTAMP', 'CRYPTOCOM', 'GATEIO', 'HTX', 'HUOBI', 'BITGET',
+  'MEXC', 'NEXO', 'REVOLUT',
+];
+/** Self-custody wallets: custody location unknown → DARF withheld until confirmed. */
+const WALLET_PREFIXES = ['SELF', 'WALLET', 'CARTEIRA', 'LEDGER', 'TREZOR', 'COLD', 'METAMASK', 'EXODUS', 'TRUSTWALLET', 'ELECTRUM'];
+
+/** Country of foreign crypto venues (Bens e Direitos location, T50). '' = several entities, ask the user. */
+export const CRYPTO_VENUE_COUNTRY: Record<string, string> = {
+  COINBASE: 'US', KRAKEN: 'US', GEMINI: 'US', BITSTAMP: 'LU', CRYPTOCOM: 'SG', BYBIT: 'AE', OKX: 'SC', KUCOIN: 'SC', BITFINEX: 'VG',
+  BITGET: 'SC', MEXC: 'SC', NEXO: 'CH', REVOLUT: 'LT', BINANCE: '',
+};
 
 export const CRYPTO_CUSTODY_META: ParamMeta = {
   status: 'needs-verification',
-  source: 'Listas internas de exchanges com/sem entidade no Brasil (IN RFB 1.888/2019; Lei 14.754/2023)',
-  checkedOn: '2026-10-07',
+  source: 'Listas internas de exchanges com/sem entidade no Brasil e país de cada venue (IN RFB 1.888/2019; Lei 14.754/2023)',
+  checkedOn: '2026-10-08',
   note:
     '"Binance" sem sufixo é tratada como exterior, mas a Binance opera no Brasil com entidade local: se a conta é a brasileira, ' +
-    'informe accountCustody { "Binance": "brasil" } (ou use a conta "Binance BR").',
+    'informe accountCustody { "Binance": "brasil" } (ou use a conta "Binance BR"). Bitso e OKX Brasil considerados brasileiros. ' +
+    'País dos venues estrangeiros a conferir (Binance sem país definido).',
 };
 
-/** Custody implied by a venue/account name (broker, exchange or wallet label), if recognised. */
+/** Normalized venue key for a name: 'MercadoBitcoin S.A.' → 'MERCADOBITCOIN', 'Coinbase Pro' → 'COINBASE'. */
+export function cryptoVenueKey(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const n = norm(name);
+  if (!n) return undefined;
+  return [...BR_PREFIXES, ...FOREIGN_PREFIXES, ...WALLET_PREFIXES].find((p) => n.startsWith(p)) ?? (BR_EXACT.has(n) ? n : undefined);
+}
+
+/** Custody implied by a venue/account name (broker, exchange or wallet label), if recognised (fuzzy, T49). */
 export function cryptoCustodyForVenue(name: string | undefined, accountCustody?: Record<string, CryptoCustody>): CryptoCustody | undefined {
   if (!name) return undefined;
   const n = norm(name);
+  if (!n) return undefined;
   if (accountCustody) {
-    for (const [k, v] of Object.entries(accountCustody)) if (norm(k) === n) return v;
+    for (const [k, v] of Object.entries(accountCustody)) {
+      const nk = norm(k);
+      if (nk && (n === nk || n.startsWith(nk) || nk.startsWith(n))) return v;
+    }
   }
-  if (BR_CRYPTO_VENUES.has(n)) return 'brasil';
-  if (FOREIGN_CRYPTO_VENUES.has(n)) return 'exterior';
-  if (/^(SELF|WALLET|CARTEIRA|LEDGER|TREZOR|COLD|METAMASK)/.test(n)) return 'desconhecida';
+  if (WALLET_PREFIXES.some((p) => n.startsWith(p))) return 'desconhecida';
+  if (BR_EXACT.has(n) || BR_PREFIXES.some((p) => n.startsWith(p))) return 'brasil';
+  if (FOREIGN_PREFIXES.some((p) => n.startsWith(p))) {
+    // 'Binance BR', 'Binance Brasil', 'OKX Brasil': local entity
+    return /(BRASIL|BRAZIL|BR)$/.test(n) || /BRASIL/.test(n) ? 'brasil' : 'exterior';
+  }
   return undefined;
 }
 
 /**
  * Custody of a crypto-asset from the instrument alone (explicit override or the exchange in the
- * instrument id). The quote currency is NOT a custody signal (T38): BTC-USD from Yahoo may be held at
- * Mercado Bitcoin. Prefer `routeCryptoByCustody`, which also reads `Transaction.account`.
+ * instrument id). The quote currency is NOT a custody signal (T38).
  */
 export function cryptoCustodyOf(inst: Instrument, overrides?: Record<string, CryptoCustody>): CryptoCustody {
   const o = overrides?.[inst.id];
@@ -108,67 +132,188 @@ export interface CryptoRouting {
   input: TaxInput;
   /** Custody per (possibly virtual) instrument id. */
   custody: Record<string, CryptoCustody>;
+  /** Original cost carried by matched transfers between custodians (by TRANSFER_IN id) — T48. */
+  transferBasis: Record<string, { openDate: string; totalCost: number; fxRate: number }>;
+  /** Sales routed by holdings with ambiguous custody: tax as Brazil, DARF withheld (T47). */
+  unconfirmedSales: Set<string>;
+  /** Country of the venue holding each (virtual) crypto instrument ('' unknown) — T50. */
+  venueCountry: Record<string, string>;
   issues: TaxIssue[];
 }
 
 /**
- * Decides the regime of each crypto transaction by CUSTODY (T38): instrument override, then the
- * transaction's account/broker (`Transaction.account`, `accountCustody` map, known Brazilian/foreign
- * venues), then the instrument's exchange; otherwise 'desconhecida' (DARF withheld + warning).
- * When one asset is held at venues with different regimes, it is split into virtual instruments
- * `${id}#brasil` / `${id}#exterior` so each part follows its own regime and cost basis.
+ * Decides the regime of each crypto transaction by CUSTODY, following where the UNITS are (T38, T47, T48):
+ * - inflows go to the custody of their account/venue (instrument override > account > instrument exchange);
+ * - outflows (sales/transfers out) consume the custody named by the account when it holds the units;
+ *   otherwise the custody that actually holds them (no account, unrecognised or misspelled label);
+ *   when several custodies hold units, the sale is taxed as Brazil (conservative) with the DARF withheld;
+ * - TRANSFER_OUT / TRANSFER_IN pairs (same asset, quantity within 2%, up to 10 days apart) carry the
+ *   average cost (in the asset currency and in BRL) from the source custody to the destination.
+ * When units live in more than one custody, the instrument is split into `${id}#<custody>` parts.
  */
 export function routeCryptoByCustody(
   input: TaxInput,
-  opts: { cryptoCustody?: Record<string, CryptoCustody>; accountCustody?: Record<string, CryptoCustody> } = {},
+  opts: {
+    cryptoCustody?: Record<string, CryptoCustody>;
+    accountCustody?: Record<string, CryptoCustody>;
+    /** BRL per unit of currency at a date (e.g. PTAX de compra); default market.fx. */
+    brlRate?: (ccy: string, date: string) => number | undefined;
+  } = {},
 ): CryptoRouting {
-  const custody: Record<string, CryptoCustody> = {};
+  const custody: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
   const issues: TaxIssue[] = [];
+  const transferBasis: CryptoRouting['transferBasis'] = {};
+  const unconfirmedSales = new Set<string>();
+  const venueCountry: Record<string, string> = {};
   const cryptos = new Map(input.instruments.filter((i) => i.assetClass === 'crypto').map((i) => [i.id, i]));
-  if (!cryptos.size) return { input, custody: { ...(opts.cryptoCustody ?? {}) }, issues };
-  const txCustody = new Map<string, CryptoCustody>();
-  const byInst = new Map<string, Set<CryptoCustody>>();
-  for (const t of input.transactions) {
-    const inst = t.instrumentId ? cryptos.get(t.instrumentId) : undefined;
-    if (!inst) continue;
-    const c =
-      opts.cryptoCustody?.[inst.id] ??
-      cryptoCustodyForVenue(t.account, opts.accountCustody) ??
-      cryptoCustodyForVenue(inst.exchange, opts.accountCustody) ??
-      'desconhecida';
-    txCustody.set(t.id, c);
-    byInst.set(inst.id, (byInst.get(inst.id) ?? new Set()).add(c));
+  if (!cryptos.size) return { input, custody, transferBasis, unconfirmedSales, venueCountry, issues };
+  const brl = (ccy: string, date: string) => (ccy === 'BRL' ? 1 : (opts.brlRate?.(ccy, date) ?? input.market.fx(ccy, 'BRL', date) ?? 0));
+  const sorted = [...input.transactions]
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => t.instrumentId && cryptos.has(t.instrumentId))
+    .sort((a, b) => a.t.date.localeCompare(b.t.date) || a.i - b.i)
+    .map(({ t }) => t);
+  const isIn = (t: Transaction) => t.type === 'BUY' || t.type === 'TRANSFER_IN' || t.type === 'STOCK_DIVIDEND';
+  const isOut = (t: Transaction) => t.type === 'SELL' || t.type === 'TRANSFER_OUT';
+
+  // Match transfer pairs.
+  const pairOf = new Map<string, string>(); // out id -> in id
+  const inMatched = new Set<string>();
+  for (const out of sorted.filter((t) => t.type === 'TRANSFER_OUT')) {
+    const q = out.quantity ?? 0;
+    const cand = sorted.find(
+      (t) =>
+        t.type === 'TRANSFER_IN' &&
+        !inMatched.has(t.id) &&
+        t.instrumentId === out.instrumentId &&
+        t.date >= out.date &&
+        daysBetween(out.date, t.date) <= 10 &&
+        (t.quantity ?? 0) <= q * 1.000001 &&
+        (t.quantity ?? 0) >= q * 0.98,
+    );
+    if (cand) {
+      pairOf.set(out.id, cand.id);
+      inMatched.add(cand.id);
+    }
   }
+
+  const txBucket = new Map<string, CryptoCustody>();
+  for (const [id, inst] of cryptos) {
+    const forced = opts.cryptoCustody?.[id];
+    const units: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
+    const costFx: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
+    const costBrl: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
+    const lastVenue: Partial<Record<CryptoCustody, string>> = {};
+    const carry = new Map<string, { fx: number; brl: number }>(); // in id -> carried cost
+    const label = (t: Transaction): CryptoCustody | undefined =>
+      forced ?? cryptoCustodyForVenue(t.account, opts.accountCustody) ?? (t.account ? undefined : cryptoCustodyForVenue(inst.exchange, opts.accountCustody));
+    for (const t of sorted.filter((x) => x.instrumentId === id)) {
+      const q = t.quantity ?? 0;
+      if (isIn(t)) {
+        const b = label(t) ?? 'desconhecida';
+        if (!forced && t.account && !cryptoCustodyForVenue(t.account, opts.accountCustody)) {
+          issues.push({
+            level: 'warning',
+            code: 'CRYPTO_VENUE_UNKNOWN',
+            transactionId: t.id,
+            instrumentId: id,
+            message: `Conta "${t.account}" não reconhecida para ${inst.symbol}: custódia desconhecida (DARF retido). Informe accountCustody.`,
+          });
+        }
+        txBucket.set(t.id, b);
+        const c = carry.get(t.id);
+        const fx = c ? c.fx : (t.amount ?? q * (t.price ?? 0)) + (t.fees ?? 0);
+        const br = c ? c.brl : fx * brl(t.currency, t.date);
+        if (c) transferBasis[t.id] = { openDate: t.date, totalCost: c.fx, fxRate: c.fx > 0 ? c.brl / c.fx : 0 };
+        units[b] += t.type === 'STOCK_DIVIDEND' && t.quantity === undefined ? 0 : q;
+        costFx[b] += fx;
+        costBrl[b] += br;
+        const vk = cryptoVenueKey(t.account ?? inst.exchange);
+        if (vk) lastVenue[b] = vk;
+      } else if (isOut(t)) {
+        const named = label(t);
+        let b: CryptoCustody;
+        const holders = (Object.keys(units) as CryptoCustody[]).filter((k) => units[k] > 1e-12);
+        if (named && units[named] >= q - 1e-9) b = named;
+        else if (holders.length === 1) {
+          b = holders[0]!;
+          if (named !== b) {
+            issues.push({
+              level: 'info',
+              code: 'CRYPTO_OUTFLOW_ROUTED_TO_HOLDINGS',
+              transactionId: t.id,
+              instrumentId: id,
+              message: `${t.type === 'SELL' ? 'Venda' : 'Saída'} de ${inst.symbol} ${t.account ? `com conta "${t.account}"` : 'sem conta'} atribuída à custódia onde estão as unidades (${b}).`,
+            });
+          }
+        } else if (holders.length > 1) {
+          b = named && units[named] > 1e-12 ? named : units.brasil > 1e-12 ? 'brasil' : holders.sort((x, y) => units[y] - units[x])[0]!;
+          if (!named || units[named] < q - 1e-9) {
+            if (t.type === 'SELL') unconfirmedSales.add(t.id);
+            issues.push({
+              level: 'warning',
+              code: 'CRYPTO_SALE_CUSTODY_AMBIGUOUS',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `${inst.symbol} tem unidades em mais de uma custódia (${holders.join(', ')}) e a ${t.type === 'SELL' ? 'venda' : 'saída'} de ${t.date} ` +
+                `não indica de qual: atribuída a "${b}" (regra conservadora); DARF retido até confirmar a conta.`,
+            });
+          }
+        } else b = named ?? 'desconhecida';
+        txBucket.set(t.id, b);
+        const share = units[b] > 1e-12 ? Math.min(1, q / units[b]) : 0;
+        const outFx = costFx[b] * share;
+        const outBrl = costBrl[b] * share;
+        units[b] = Math.max(0, units[b] - q);
+        costFx[b] -= outFx;
+        costBrl[b] -= outBrl;
+        const inId = pairOf.get(t.id);
+        if (inId) carry.set(inId, { fx: outFx, brl: outBrl });
+      } else {
+        txBucket.set(t.id, label(t) ?? (Object.keys(units) as CryptoCustody[]).find((k) => units[k] > 1e-12) ?? 'desconhecida');
+        if (t.type === 'SPLIT') for (const k of Object.keys(units) as CryptoCustody[]) units[k] *= t.ratio ?? 1;
+      }
+    }
+    const used = new Set(sorted.filter((t) => t.instrumentId === id).map((t) => txBucket.get(t.id)!));
+    const country = (b: CryptoCustody) => (b === 'exterior' ? (CRYPTO_VENUE_COUNTRY[lastVenue[b] ?? ''] ?? '') : b === 'brasil' ? 'BR' : '');
+    if (used.size <= 1) {
+      const b = [...used][0] ?? forced ?? cryptoCustodyOf(inst, opts.cryptoCustody);
+      custody[id] = b;
+      venueCountry[id] = country(b);
+    } else {
+      for (const b of used) {
+        custody[`${id}#${b}`] = b;
+        venueCountry[`${id}#${b}`] = country(b);
+      }
+      issues.push({
+        level: 'info',
+        code: 'CRYPTO_SPLIT_BY_CUSTODY',
+        instrumentId: id,
+        message: `${inst.symbol} está em custódias diferentes (${[...used].join(', ')}): cada parte segue seu regime; transferências entre elas levam o custo.`,
+      });
+    }
+  }
+  const splitIds = new Set(Object.keys(custody).filter((k) => k.includes('#')).map((k) => k.split('#')[0]!));
+  if (!splitIds.size) return { input, custody, transferBasis, unconfirmedSales, venueCountry, issues };
   const extra: Instrument[] = [];
-  for (const [id, set] of byInst) {
-    if (set.size === 1) {
-      custody[id] = [...set][0]!;
-      continue;
-    }
-    const inst = cryptos.get(id)!;
-    for (const c of set) {
-      extra.push({ ...inst, id: `${id}#${c}`, name: `${inst.name} (${c})` });
-      custody[`${id}#${c}`] = c;
-    }
-    issues.push({
-      level: 'info',
-      code: 'CRYPTO_SPLIT_BY_CUSTODY',
-      instrumentId: id,
-      message: `${inst.symbol} está em custódias diferentes (${[...set].join(', ')}): cada parte segue seu regime e custo médio próprios.`,
-    });
+  for (const k of Object.keys(custody)) {
+    if (!k.includes('#')) continue;
+    const base = cryptos.get(k.split('#')[0]!)!;
+    extra.push({ ...base, id: k, name: `${base.name} (${custody[k]})` });
   }
-  for (const [id, inst] of cryptos) if (!custody[id] && !byInst.has(id)) custody[id] = opts.cryptoCustody?.[id] ?? cryptoCustodyOf(inst);
-  if (!extra.length) return { input, custody, issues };
-  const split = new Set(extra.map((e) => e.id.split('#')[0]!));
   return {
     input: {
       ...input,
       instruments: [...input.instruments, ...extra],
       transactions: input.transactions.map((t) =>
-        t.instrumentId && split.has(t.instrumentId) ? { ...t, instrumentId: `${t.instrumentId}#${txCustody.get(t.id)}` } : t,
+        t.instrumentId && splitIds.has(t.instrumentId) ? { ...t, instrumentId: `${t.instrumentId}#${txBucket.get(t.id)}` } : t,
       ),
     },
     custody,
+    transferBasis,
+    unconfirmedSales,
+    venueCountry,
     issues,
   };
 }

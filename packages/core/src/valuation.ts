@@ -144,6 +144,7 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
   const missingIndex = new Set<string>();
   const estimatedIndex = new Set<string>();
   let accruedTaxTotal = 0;
+  let hasFixedIncome = false;
   const missingFx = new Set<CurrencyCode>();
   for (const [id, book] of ledger.books) {
     const q = book.quantity;
@@ -202,7 +203,13 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     }
     // C31: estimated tax on the accrued yield (IR regressivo + IOF in Brazil, 4 % retención in Colombia)
     const regime = inst.accrual ? taxRegimeFor(inst) : 'NONE';
-    if (regime !== 'NONE' && regime !== 'EXEMPT') {
+    if (inst.accrual && (regime === 'NONE' || regime === 'EXEMPT')) {
+      // C40: exempt / untaxed fixed income: net = gross, tax 0 (fields always present)
+      h.accruedTaxBase = 0;
+      h.netMarketValueBase = pv.mvBase;
+      hasFixedIncome = true;
+    } else if (regime !== 'NONE' && regime !== 'EXEMPT') {
+      hasFixedIncome = true;
       let tax = 0;
       book.lots.forEach((l, i) => {
         const v = pv.lotValues?.[i] ?? (q !== 0 ? (pv.mv * l.quantity) / q : 0);
@@ -252,7 +259,7 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
   };
   if (stalePrices.length) v.stalePrices = stalePrices.sort();
   if (estimatedIndex.size) v.estimatedIndex = Array.from(estimatedIndex).sort();
-  if (accruedTaxTotal !== 0) v.totalNetMarketValueBase = total - accruedTaxTotal;
+  if (hasFixedIncome || accruedTaxTotal !== 0) v.totalNetMarketValueBase = total - accruedTaxTotal;
   if (missingIndex.size) v.missingIndex = Array.from(missingIndex).sort();
   return v;
 }

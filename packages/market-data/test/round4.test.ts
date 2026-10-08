@@ -91,6 +91,50 @@ describe('M29 Copel chain with real dates, CPLE11 units', () => {
   });
 });
 
+describe('M29 frozen histories of securities that no longer trade', () => {
+  const brfs3 = {
+    instrumentId: 'BVMF:BRFS3',
+    currency: 'BRL',
+    source: 'brapi 2025-10-01',
+    points: [
+      { date: '2025-09-19', close: 21.5 },
+      { date: '2025-09-22', close: 21.1 },
+      { date: '2025-09-23', close: 21.1 }, // after the last trading day: must be cut
+      { date: '2025-09-18', close: 21.9 },
+      { date: 'bad', close: 1 },
+      { date: '2025-09-17', close: -1 },
+    ],
+    dividends: [{ date: '2025-09-19', amount: 0.25 }],
+  };
+
+  it('validateFrozen sorts, dedupes and drops invalid rows; rejects a malformed file', async () => {
+    const { validateFrozen } = await import('../src/index');
+    const v = validateFrozen(brfs3);
+    expect(v.points.map((p) => p.date)).toEqual(['2025-09-18', '2025-09-19', '2025-09-22', '2025-09-23']);
+    expect(() => validateFrozen({ instrumentId: 'x', points: [] })).toThrow(/Invalid frozen/);
+  });
+
+  it('BRFS3 is served from its frozen history, cut at 2025-09-22, with the merger into MBRF3', async () => {
+    const { service } = createTestService({}, { frozenHistories: [brfs3 as never] });
+    const h = await service.history({ symbol: 'BRFS3.SA', from: '2025-09-01', to: '2025-10-31' });
+    expect(h.series.source).toBe('frozen');
+    expect(h.series.points.map((p) => p.date)).toEqual(['2025-09-18', '2025-09-19', '2025-09-22']);
+    expect(h.series.points.at(-1)!.close).toBe(21.1);
+    expect(h.delisted).toMatchObject({ kind: 'merger', lastTradingDay: '2025-09-22' });
+    expect(h.actions).toEqual(expect.arrayContaining([expect.objectContaining({ subtype: 'MERGER', targetInstrumentId: 'BVMF:MBRF3', ratio: 0.8521 })]));
+    expect(h.notes?.join(' ')).toMatch(/frozen/);
+  });
+
+  it('record-frozen CSV import reads pt-BR exports (semicolons, DD/MM/YYYY, decimal comma)', async () => {
+    const { pointsFromCsv } = await import('../scripts/record-frozen');
+    const csv = 'Data;Abertura;Fechamento\n07/11/2025;12,10;12,34\n06/11/2025;12,00;1.012,50\n';
+    expect(pointsFromCsv(csv, 'DD/MM/YYYY')).toEqual([
+      { date: '2025-11-07', close: 12.34 },
+      { date: '2025-11-06', close: 1012.5 },
+    ]);
+  });
+});
+
 describe('M30 bare B3 tickers are looked up on B3, never as US symbols', () => {
   it.each([
     ['CPLE3', 'CPLE3.SA', 'BVMF:CPLE3'],

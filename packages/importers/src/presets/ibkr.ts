@@ -121,10 +121,12 @@ export const ibkrActivityPreset: PresetDefinition = {
     const headers = new Map<string, HeaderIndex>();
     const info = new Map<string, FinInfo>();
     let periodEnd: string | undefined;
+    const accountIds: string[] = ['Interactive Brokers'];
     // First pass: instrument information (appears at the end of the statement).
     for (const r of table.rows) {
       const section = cellToString(r[0]);
       const kind = cellToString(r[1]);
+      if (section === 'Account Information' && kind === 'Data' && cellToString(r[2]) === 'Account') accountIds.push(cellToString(r[3]));
       if (section === 'Statement' && kind === 'Data' && cellToString(r[2]) === 'Period') {
         const end = cellToString(r[3]).split(/\s+-\s+/).pop();
         const iso = end ? parseDate(end, 'MDY') : undefined;
@@ -407,6 +409,7 @@ export const ibkrActivityPreset: PresetDefinition = {
     if (reported.positions.length || reported.cash.length) {
       const asOf = ctx.options.asOfDate ?? periodEnd;
       if (asOf) reported.asOf = asOf;
+      reported.accountIds = accountIds.filter(Boolean);
       ctx.reported = reported;
     }
     return rows;
@@ -677,6 +680,9 @@ export const ibkrFlexPreset: PresetDefinition = {
     mergeWithholding(ctx, dividends, taxes);
     if (flexReported.positions.length) {
       if (ctx.options.asOfDate) flexReported.asOf = ctx.options.asOfDate;
+      const ids = new Set(['Interactive Brokers']);
+      for (const r of table.rows) for (const c of r) if (/^U\d{5,10}$/.test(cellToString(c))) ids.add(cellToString(c));
+      flexReported.accountIds = [...ids];
       ctx.reported = flexReported;
     }
     return rows;

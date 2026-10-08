@@ -144,12 +144,15 @@ export function accruedLotValues(
   const values = lots.map((l) => {
     let unit: number;
     let anchor: number;
-    if (info && info.day >= l.openDay) {
+    const own = l.anchorDay ?? l.openDay;
+    // A market/manual price re-anchors when it is newer than the lot's own anchor (a price on
+    // the day of a coupon reset does not override the ex-coupon value).
+    if (info && (l.anchorDay !== undefined ? info.day > own : info.day >= own)) {
       unit = info.price / mult;
       anchor = info.day;
     } else {
       unit = l.unitValue;
-      anchor = l.openDay;
+      anchor = own;
     }
     let f = accrualFactor(ctx, inst, anchor, day);
     if (f === undefined) {

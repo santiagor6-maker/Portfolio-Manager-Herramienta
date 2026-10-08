@@ -31,7 +31,14 @@ test('W1: fast Enter in the ticker search never creates a phantom manual instrum
 test('W1/W4: manual instruments are an explicit flow with accrual (CDT) fields', async ({ page }) => {
   await page.goto('/movimientos?nuevo=1');
   const dialog = page.getByRole('dialog');
-  await page.locator('#f-instrument').fill('CDT Banco Ejemplo');
+  await expect(dialog).toBeVisible();
+  const input = page.locator('#f-instrument');
+  // The modal moves focus on open; retry until the listbox stays open with the create option.
+  await expect(async () => {
+    await input.click();
+    await input.fill('CDT Banco Ejemplo');
+    await expect(page.getByRole('option', { name: /Crear activo manual/ })).toBeVisible({ timeout: 3000 });
+  }).toPass();
   await page.getByRole('option', { name: /Crear activo manual/ }).click();
   const editor = dialog.getByTestId('manual-instrument');
   await expect(editor).toBeVisible();

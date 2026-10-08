@@ -661,7 +661,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     if (!w.status) w.status = 'ok';
   }
 
-  const pending = ctx.confirmations.length > 0;
+  const pending = ctx.confirmations.some((c) => (c.scope ?? 'file') === 'file');
   const stats = emptyStats();
   const currencies = new Set<string>();
   const transactions: Transaction[] = [];
@@ -677,7 +677,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     else if (row.skipped || !ws.length) status = 'skipped';
     else if (main?.status === 'duplicate') status = 'duplicate';
     else if (main?.status === 'possible_duplicate') status = 'possible_duplicate';
-    else status = pending ? 'pending' : 'ok';
+    else status = pending || row.pending ? 'pending' : 'ok';
     if (status === 'ok' && pending) status = 'pending';
     const out: ImportRow = { line: row.line, status, issues: row.issues };
     if (row.sheet) out.sheet = row.sheet;
@@ -705,7 +705,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   stats.currencies = [...currencies].sort();
 
-  const reconciliation = ctx.reported ? reconcile(ctx, resolver, [...existingTx, ...transactions]) : undefined;
+  const reconciliation = ctx.reported ? reconcile(ctx, resolver, [...sameAccount(existingTx, source, ctx), ...transactions]) : undefined;
   const allIssues = [...ctx.fileIssues, ...parsed.flatMap((r) => r.issues)];
   const errors = allIssues.filter((i) => i.severity === 'error');
   const warnings = allIssues.filter((i) => i.severity !== 'error');
@@ -719,7 +719,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   stats.matchedInstruments = resolver.matchedCount();
 
   const result: ImportResult = { detection, transactions: pending ? [] : transactions, instruments, rows: outRows, warnings, errors, stats };
-  if (pending) {
+  if (ctx.confirmations.length) {
     result.needsConfirmation = ctx.confirmations;
     const dc = ctx.confirmations.find((c) => c.kind === 'dateFormat');
     const nc = ctx.confirmations.find((c) => c.kind === 'numberFormat');
@@ -731,6 +731,31 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   if (ctx.unknownSecurities.length) result.unknownSecurities = ctx.unknownSecurities;
   if (reconciliation) result.reconciliation = reconciliation;
   return result;
+}
+
+/** Source family: statements of one broker reconcile against every import of that broker. */
+function sourceFamily(source: string | undefined): string | undefined {
+  if (!source) return undefined;
+  if (source.startsWith('import:ibkr')) return 'ibkr';
+  if (/^import:(b3-|nota-)/.test(source)) return 'b3';
+  if (source.startsWith('import:degiro')) return 'degiro';
+  return source;
+}
+
+/**
+ * Existing transactions that belong to the statement's account (I20): same account/institution when
+ * both sides have one, the statement's account ids (e.g. IBKR U1234567), or the same broker family
+ * for transactions without account. Other brokers' holdings never enter the comparison.
+ */
+function sameAccount(existing: Transaction[], source: string, ctx: ParseContext): Transaction[] {
+  const acct = ctx.options.account;
+  const ids = ctx.reported?.accountIds ?? [];
+  const fam = sourceFamily(source);
+  return existing.filter((t) => {
+    if (t.account && acct) return accountsCompatible(t.account, acct);
+    if (t.account && ids.some((a) => accountsCompatible(a, t.account))) return true;
+    return sourceFamily(t.source) === fam;
+  });
 }
 
 function reconcile(ctx: ParseContext, resolver: InstrumentResolver, all: Transaction[]): Reconciliation {

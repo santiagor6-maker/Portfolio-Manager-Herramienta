@@ -42,7 +42,14 @@ export class ParseContext {
   /** Pending format confirmations (block the import until answered). */
   readonly confirmations: ConfirmationRequest[] = [];
   /** Broker-reported positions/cash (reconciliation). */
-  reported?: { source: string; asOf?: string; positions: (ReportedPosition & { hint?: InstrumentHint })[]; cash: { currency: string; amount: number }[] };
+  reported?: {
+    source: string;
+    asOf?: string;
+    /** Broker account ids of the statement (IBKR U1234567...), to reconcile per account. */
+    accountIds?: string[];
+    positions: (ReportedPosition & { hint?: InstrumentHint })[];
+    cash: { currency: string; amount: number }[];
+  };
   readonly corporateActions: CorporateActionSuggestion[] = [];
   readonly unknownSecurities: UnknownSecurity[] = [];
 

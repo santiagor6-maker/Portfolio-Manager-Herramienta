@@ -291,6 +291,11 @@ export interface MarketData {
    * (normalized to 1 at the first point; returns between two dates = ratio of levels).
    */
   indexLevel?(indexId: IndexId, date: ISODate): number | undefined;
+  /**
+   * Optional (round 4): bump when a custom implementation changes its data in place. The API
+   * cache keys on it; custom implementations without it are never cached.
+   */
+  revision?: number;
 }
 
 /** One observation of a rate or inflation index. */

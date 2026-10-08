@@ -75,7 +75,18 @@ export const fidelityPreset: PresetDefinition = {
       if (!date) continue;
       const symbol = str(raw, c.symbol).toUpperCase();
       const d: DraftTransaction = { date, type: 'BUY', currency: 'USD' };
-      const inst = symbol && !/^(SPAXX|FDRXX|FZFXX|CORE)\**$/.test(symbol) ? { symbol: symbol.replace(/\*+$/, ''), name: str(raw, c.desc), currency: 'USD', country: 'US' } : undefined;
+      // Core position (money market sweep: SPAXX, FDRXX, FZFXX…) is cash: its buys/reinvestments/sales
+      // only move cash in and out of the sweep; its dividends are interest on cash.
+      const core = /^(SPAXX|FDRXX|FZFXX|SPRXX|FCASH|CORE)\**$/.test(symbol) || /money market/i.test(str(raw, c.desc));
+      if (core && (rule === 'BUY' || rule === 'SELL')) {
+        ctx.skip(row, 'MONEY_MARKET_SWEEP', { symbol: symbol.replace(/\*+$/, '') });
+        continue;
+      }
+      const inst = symbol && !core ? { symbol: symbol.replace(/\*+$/, ''), name: str(raw, c.desc), currency: 'USD', country: 'US' } : undefined;
+      if (core && rule === 'DIVIDEND') {
+        row.draft = { date, type: 'INTEREST', currency: 'USD', amount: Math.abs(amount ?? 0), note: action };
+        continue;
+      }
       if (rule === 'TRANSFER') {
         if (!inst || !qty) continue;
         d.type = qty > 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT';

@@ -121,6 +121,8 @@ export interface ParsedRow {
   skipped?: boolean;
   /** Additional transactions produced by the same source row (e.g. an FX trade's commission in another currency). */
   extra?: DraftTransaction[];
+  /** Waits for a row-scoped confirmation (see ConfirmationRequest.scope = 'rows'). */
+  pending?: boolean;
 }
 
 /**

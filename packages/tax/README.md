@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 152 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3)
+npx vitest run packages/tax      # 162 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -251,3 +251,18 @@ Revisión: `reviews/tax-r3.md`. Las pruebas de regresión están en `src/review-
 | T42 | baja | Los códigos con ceros a la izquierda ("03", "09", "0211") se mantienen como texto al armar las hojas XLSX |
 | T45 | baja | Régimen anterior a 2024: carnê-leão mensual de dividendos e intereses del exterior con la tabla progresiva (hasta abril de 2023 y desde mayo de 2023), crédito por la retención externa y DARF 0190, convertido a la cotización de compra de la primera quincena del mes anterior. `foreignOriginInstruments` (IN SRF 118/2000) calcula la ganancia en moneda extranjera × PTAX de la venta. Supuesto: el carnê-leão se calcula solo sobre estos rendimientos |
 | T46 | baja | Futuros cotizados en US$ (ICF, SJC) se convierten a BRL a la fecha de la operación (`FUTURES_QUOTE_CURRENCY`) |
+
+---
+
+## Respuesta a la revisión ronda 4
+
+Revisión: `reviews/tax-r4.md`. Las pruebas de regresión están en `src/review-r4.test.ts`
+(escenarios K1–K9 y r4-k1b del revisor).
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T47 | alta | **La custodia sigue a las unidades, no a la etiqueta.** `routeCryptoByCustody` recorre cada activo en orden cronológico y lleva unidades y costo por custodia. Una venta o salida consume la custodia nombrada si tiene las unidades. Si no hay cuenta, si la etiqueta no se reconoce o si está mal escrita, consume la única custodia que tiene unidades (`CRYPTO_OUTFLOW_ROUTED_TO_HOLDINGS`). Si hay unidades en varias custodias, tributa como Brasil (regla conservadora), retiene el DARF y avisa (`CRYPTO_SALE_CUSTODY_AMBIGUOUS`). Ninguna venta queda fuera de los reportes y Bens e Direitos refleja la venta. K1 y r4-k1b → DARF 4600 de R$ 37.500 |
+| T48 | media | Los pares `TRANSFER_OUT`/`TRANSFER_IN` del mismo activo (cantidad ±2% por comisión de red, hasta 10 días) trasladan el costo medio de la custodia de origen, en moneda y en BRL (a PTAX de compra si se informa). Los reportes de Brasil y del exterior lo usan como costo del `TRANSFER_IN`. K3 (MB → Binance) → costo R$ 200.000 e impuesto R$ 37.500; K4 (MB → Ledger) → costo trasladado y DARF retenido |
+| T49 | baja | Reconocimiento difuso de venues: prefijos sobre el nombre normalizado ("MercadoBitcoin S.A.", "mercado-bitcoin", "Coinbase Pro"), entidad local por sufijo ("OKX Brasil", "Binance BR"), Bitso como brasileña, billeteras (Ledger, Trezor, MetaMask…) como custodia desconocida. `accountCustody` acepta coincidencia por prefijo. Listas `needs-verification` |
+| T50 | baja | Bens e Direitos de cripto en el exterior usa el país del custodio (`CRYPTO_VENUE_COUNTRY`: Coinbase y Kraken US, Bitstamp LU, Bybit AE…). Si el venue tiene varias entidades (Binance) o no se reconoce, la localización queda vacía y se avisa con `CRYPTO_LOCATION_UNKNOWN` |
+| T51 | baja | Las fechas en número de serie de Excel (base 1899-12-30) se convierten en `officialDocRowsFromTable` (`excelSerialToIso`). `informeFromB3Movimentacao` informa las filas con valor sin fecha (`IMPORT_ROWS_WITHOUT_DATE`) y las movimentaciones no usadas (`IMPORT_ROWS_IGNORED`); `reconcileBrazil` propaga esos avisos |

@@ -345,6 +345,65 @@ const R2: Catalog = {
 };
 Object.assign(ISSUE_MESSAGES, R2);
 
+const R3: Catalog = {
+  CDT_INVALID_DATES: {
+    es: 'Fechas del CDT inconsistentes: el vencimiento ({maturity}) debe ser posterior a la apertura ({issueDate}); revisa el certificado.',
+    pt: 'Datas do CDT inconsistentes: o vencimento ({maturity}) deve ser posterior à abertura ({issueDate}).',
+    en: 'Inconsistent CDT dates: maturity ({maturity}) must be after the issue date ({issueDate}).',
+  },
+  CDT_RATE_NOMINAL: {
+    es: 'Tasa nominal convertida a efectiva anual: {rate}.',
+    pt: 'Taxa nominal convertida para efetiva anual: {rate}.',
+    en: 'Nominal rate converted to effective annual: {rate}.',
+  },
+  CDT_WITHHOLDING: {
+    es: 'Retención en la fuente sobre rendimientos: {rate}% (se aplica al cobrar intereses).',
+    pt: 'Retenção na fonte sobre rendimentos: {rate}% (aplicada ao receber juros).',
+    en: 'Withholding tax on interest: {rate}% (applied when interest is paid).',
+  },
+  DAY_TRADE: {
+    es: 'Operación day trade (Obs. D).',
+    pt: 'Operação day trade (Obs. D).',
+    en: 'Day-trade operation (Obs. D).',
+  },
+  FEES_OF_SKIPPED: {
+    es: 'Costos de operaciones omitidas (opciones/termo) no cargados al contado: {amount}.',
+    pt: 'Custos de operações ignoradas (opções/termo) não atribuídos ao à vista: {amount}.',
+    en: 'Costs of skipped trades (options/forwards) not charged to spot trades: {amount}.',
+  },
+  MONEY_MARKET_SWEEP: {
+    es: 'Movimiento del fondo de liquidez {symbol} (efectivo de la cuenta); no es una inversión.',
+    pt: 'Movimentação do fundo de liquidez {symbol} (caixa da conta); não é um investimento.',
+    en: 'Core money-market {symbol} sweep (account cash); not an investment.',
+  },
+  NOTE_WITHOUT_TRADES: {
+    es: 'Se detectó una nota de corretagem ({nota}) pero no se pudieron leer sus operaciones; revisa el formato o súbela como planilla.',
+    pt: 'Foi detectada uma nota de corretagem ({nota}) mas não foi possível ler as operações; verifique o formato.',
+    en: 'A brokerage note ({nota}) was detected but its trades could not be read; check the layout.',
+  },
+  PDF_NO_TEXT: {
+    es: 'El PDF no contiene texto (¿escaneado?). No hay OCR: descarga el PDF original desde tu corredor.',
+    pt: 'O PDF não contém texto (escaneado?). Sem OCR: baixe o PDF original da corretora.',
+    en: 'The PDF has no text (scanned?). OCR is not supported: download the original PDF from your broker.',
+  },
+  PDF_PASSWORD_REQUIRED: {
+    es: 'El PDF está protegido con contraseña (en XP, Clear y Rico suelen ser los primeros dígitos del CPF). Ingrésala para continuar.',
+    pt: 'O PDF está protegido por senha (na XP, Clear e Rico costumam ser os primeiros dígitos do CPF). Informe-a para continuar.',
+    en: 'The PDF is password protected (XP, Clear and Rico usually use the first CPF digits). Enter it to continue.',
+  },
+  PDF_PASSWORD_INCORRECT: {
+    es: 'La contraseña del PDF no es correcta.',
+    pt: 'A senha do PDF está incorreta.',
+    en: 'Incorrect PDF password.',
+  },
+  ROW_NUMBER_AMBIGUOUS: {
+    es: 'El valor "{value}" en {currency} es ambiguo en este archivo (¿decimal o miles?); confirma la fila.',
+    pt: 'O valor "{value}" em {currency} é ambíguo neste arquivo (decimal ou milhar?); confirme a linha.',
+    en: 'Value "{value}" in {currency} is ambiguous in this file (decimal or thousands?); confirm the row.',
+  },
+};
+Object.assign(ISSUE_MESSAGES, R3);
+
 export function formatMessage(code: string, locale: Locale = 'es', params?: Record<string, string | number>): string {
   const entry = ISSUE_MESSAGES[code];
   const template = entry ? entry[locale] : code;

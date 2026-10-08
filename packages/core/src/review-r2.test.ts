@@ -379,7 +379,10 @@ describe('C31 — net-of-tax value of fixed income', () => {
     const g10 = early.marketValue! - 10_000;
     expect(early.accruedTaxBase).toBeCloseTo(g10 * 0.66 + g10 * (1 - 0.66) * 0.225, 9);
     const lci = { ...inp, instruments: [{ ...cdb, accrual: { ...cdb.accrual!, taxRegime: 'EXEMPT' as const } }] };
-    expect(valuePortfolio(lci, '2024-07-01').holdings[0]!.accruedTaxBase).toBeUndefined();
+    const lv = valuePortfolio(lci, '2024-07-01');
+    expect(lv.holdings[0]!.accruedTaxBase).toBe(0); // C40: exempt -> tax 0, net = gross
+    expect(lv.holdings[0]!.netMarketValueBase).toBe(lv.holdings[0]!.marketValueBase);
+    expect(lv.totalNetMarketValueBase).toBe(lv.totalMarketValueBase);
   });
 
   it('Colombian CDT: 4 % retención on the accrued interest; valuation total net', () => {

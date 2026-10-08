@@ -125,7 +125,7 @@ describe('I6 / I10 / I20 — IBKR transfers, transaction fees, FX commissions, u
     expect(r.reconciliation!.positions.map((p) => [p.instrumentId, p.quantity])).toEqual([['XNAS:AAPL', 40], ['XLON:VOD', 100]]);
   });
   it('reports differences against existing transactions', async () => {
-    const extra = { id: 'x', portfolioId: 'p1', date: '2024-01-10', type: 'BUY' as const, instrumentId: 'XNAS:AAPL', quantity: 5, price: 180, currency: 'USD', amount: 900 };
+    const extra = { id: 'x', portfolioId: 'p1', date: '2024-01-10', type: 'BUY' as const, instrumentId: 'XNAS:AAPL', quantity: 5, price: 180, currency: 'USD', amount: 900, source: 'import:ibkr-flex' };
     const r2 = await importFixture('ibkr-activity-transfers.csv', { existingTransactions: [extra] });
     expect(r2.reconciliation!.positionDifferences).toEqual([{ instrumentId: 'XNAS:AAPL', symbol: 'AAPL', reported: 40, computed: 45, difference: -5 }]);
     expect(r2.warnings.some((w) => w.code === 'RECONCILIATION_DIFF')).toBe(true);

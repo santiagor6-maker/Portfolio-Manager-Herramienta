@@ -21,6 +21,8 @@ export interface BrInformeRendimentos {
   }[];
   /** Custody position at 31/12. */
   posicoes?: { ticker: string; quantidade: number; cnpjEmpresa?: string }[];
+  /** Problems found while importing (rows without date, unknown movement types...). */
+  issues?: TaxIssue[];
 }
 
 /** Data of the pre-filled DIRPF (declaração pré-preenchida). */
@@ -41,7 +43,7 @@ export interface BrReconciliation {
 }
 
 const b3Ticker = (s?: string) => (s ?? '').split(/\s+-\s+|\s/)[0]?.trim().toUpperCase() ?? '';
-const yearOfBr = (d?: string) => (d ? (/(\d{4})-\d{2}-\d{2}/.exec(d)?.[1] ?? /\d{2}\/\d{2}\/(\d{4})/.exec(d)?.[1]) : undefined);
+const yearOfBr = (d?: string) => (d ? (/(\d{4})-\d{2}-\d{2}/.exec(d)?.[1] ?? /\d{1,2}\/\d{1,2}\/(\d{4})/.exec(d)?.[1]) : undefined);
 
 /**
  * B3 Área do Investidor "Movimentação" export (XLSX/CSV, read with readXlsx/parseCsv +
@@ -49,8 +51,16 @@ const yearOfBr = (d?: string) => (d ? (/(\d{4})-\d{2}-\d{2}/.exec(d)?.[1] ?? /\d
  */
 export function informeFromB3Movimentacao(rows: OfficialDocRow[], ano: number): BrInformeRendimentos {
   const itens: BrInformeRendimentos['itens'] = [];
+  const issues: TaxIssue[] = [];
+  const ignored = new Map<string, number>();
+  let noDate = 0;
   for (const r of rows) {
-    if (yearOfBr(r.periodo) !== String(ano)) continue;
+    const y = yearOfBr(r.periodo);
+    if (!y) {
+      if (r.valor) noDate++;
+      continue;
+    }
+    if (y !== String(ano)) continue;
     const t = r.tipo.toLowerCase();
     const tipo = /juros\s+sobre\s+capital/.test(t)
       ? 'JCP'
@@ -61,10 +71,27 @@ export function informeFromB3Movimentacao(rows: OfficialDocRow[], ano: number): 
           : /empr[eé]stimo|aluguel/.test(t) && /remunera|cr[eé]dito|liquida/.test(t)
             ? 'ALUGUEL'
             : undefined;
-    if (!tipo) continue;
+    if (!tipo) {
+      if (r.valor) ignored.set(r.tipo || '(vazio)', (ignored.get(r.tipo || '(vazio)') ?? 0) + 1);
+      continue;
+    }
     itens.push({ tipo, ticker: b3Ticker(r.ticker), valor: Math.abs(r.valor), liquido: tipo === 'JCP' || tipo === 'ALUGUEL' });
   }
-  return { fonte: { cnpj: '09.346.601/0001-25', nome: 'B3 - Área do Investidor' }, ano, itens };
+  if (noDate) {
+    issues.push({
+      level: 'warning',
+      code: 'IMPORT_ROWS_WITHOUT_DATE',
+      message: `${noDate} linha(s) com valor e sem data reconhecível no extrato da B3 foram ignoradas: confira a coluna "Data" (texto dd/mm/aaaa ou data do Excel).`,
+    });
+  }
+  if (ignored.size) {
+    issues.push({
+      level: 'info',
+      code: 'IMPORT_ROWS_IGNORED',
+      message: `Movimentações não usadas na conciliação de proventos: ${[...ignored.entries()].map(([k, n]) => `${k} (${n})`).join(', ')}.`,
+    });
+  }
+  return { fonte: { cnpj: '09.346.601/0001-25', nome: 'B3 - Área do Investidor' }, ano, itens, issues };
 }
 
 /** B3 Área do Investidor "Posição" export (all sheets): quantities and issuer CNPJ at the date. */
@@ -106,6 +133,7 @@ export function reconcileBrazil(
   const issues: TaxIssue[] = [];
   const cnpjByIssuer: Record<string, string> = {};
   const informes = docs.informes ?? [];
+  for (const inf of informes) issues.push(...(inf.issues ?? []));
 
   // Proventos by company root and type
   const ours = new Map<string, ReconValue>();

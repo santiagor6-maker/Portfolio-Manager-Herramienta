@@ -9,14 +9,15 @@
  *   (DELETE /api/cache without token from a direct loopback socket),
  *   CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
  *   MD_CUSTOM_FEEDS_FILE (JSON array of user-defined feeds),
+ *   MD_FROZEN_DIR (directory of *.json recorded histories of delisted securities, see frozen.ts),
  *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12): local price snapshot,
  *   provider keys: BRAPI_TOKEN, TWELVEDATA_API_KEY, FMP_API_KEY, EODHD_API_TOKEN,
  *   ALPHAVANTAGE_API_KEY (+ALPHAVANTAGE_PREMIUM=1), STOOQ_API_KEY, COINGECKO_API_KEY, SOCRATA_APP_TOKEN.
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { serve } from '@hono/node-server';
-import { keysFromEnv, MarketDataService, type CustomFeedInstrument } from '@pm/market-data';
+import { keysFromEnv, MarketDataService, validateFrozen, type CustomFeedInstrument, type FrozenHistory } from '@pm/market-data';
 import { createApp, DEFAULT_CORS_ORIGINS } from './app';
 import { FileStore } from './fileStore';
 
@@ -39,11 +40,27 @@ if (env.MD_CUSTOM_FEEDS_FILE) {
   console.log(`Loaded ${customFeeds.length} custom feed(s) from ${env.MD_CUSTOM_FEEDS_FILE}`);
 }
 
+// Recorded histories of securities that no longer trade (review R3, M29). A bad file is reported
+// and skipped; it never prevents the server from starting.
+const frozenHistories: FrozenHistory[] = [];
+if (env.MD_FROZEN_DIR) {
+  const dir = resolve(env.MD_FROZEN_DIR);
+  for (const name of readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
+    try {
+      frozenHistories.push(validateFrozen(JSON.parse(readFileSync(join(dir, name), 'utf8'))));
+    } catch (e) {
+      console.warn(`  skipped frozen history ${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  console.log(`Loaded ${frozenHistories.length} frozen histor${frozenHistories.length === 1 ? 'y' : 'ies'} from ${dir}`);
+}
+
 const store = new FileStore(cacheDir, { maxFiles: Number(env.CACHE_MAX_FILES ?? 20_000) });
 const service = new MarketDataService({
   store,
   keys: keysFromEnv(env),
   customFeeds,
+  frozenHistories,
   httpOptions: {
     onRequest: ({ url, status, ms, attempt }) => {
       const u = new URL(url);

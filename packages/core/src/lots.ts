@@ -31,6 +31,11 @@ export interface LotState {
   unitCostBase: number;
   /** Per unit value at purchase, instrument currency, BEFORE fees (anchor for accrual). */
   unitValue: number;
+  /**
+   * Day `unitValue` refers to, when it was reset by a coupon/interest payment (C36); undefined =
+   * the open day. Accrual runs from here, so paid interest is never counted again.
+   */
+  anchorDay?: number;
 }
 
 export interface ClosedPiece {

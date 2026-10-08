@@ -6,7 +6,7 @@
 import type { AssetClass, TransactionType } from '@pm/core';
 import { findHeaderRow } from '../mapping';
 import { exchangeCurrency } from '../markets';
-import { parseRatio } from '../numbers';
+import { isAmbiguousNumber, parseNumber, parseRatio } from '../numbers';
 import { classifyTypeDetailed } from '../txtypes';
 import type { ColumnMapping, DraftTransaction, InstrumentHint, MappingField, NumberFormat, ParsedRow, RawTable } from '../types';
 import { cellToString, isBlankRow, isCurrencyCode, normalizeText } from '../util';
@@ -82,6 +82,19 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     );
   }
   const cashSymbols = new Set((gopts.cashSymbols ?? []).map((s) => s.toUpperCase()));
+  // Mixed-currency files (I3): the file-wide decimal separator was inferred, but a value like "1.725"
+  // in a row whose currency differs from the dominant one can be a decimal (USD 1.725) or thousands.
+  const fileFormat = ctx.numberFormat;
+  const formatForced = !!(ctx.options.numberFormat || mapping.numberFormat);
+  const ccyCount = new Map<string, number>();
+  if (c.currency !== undefined) {
+    for (let r = first; r < table.rows.length; r++) {
+      const v = str(table.rows[r]!, c.currency).toUpperCase();
+      if (isCurrencyCode(v)) ccyCount.set(v, (ccyCount.get(v) ?? 0) + 1);
+    }
+  }
+  const dominant = [...ccyCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? mapping.defaultCurrency;
+  const rowAmbiguous: { line: number; value: string }[] = [];
 
   // Sign convention of standalone FEE/TAX rows: "cash-flow" files show costs as negatives, so a
   // positive cost there is a refund. Decided per file by majority.
@@ -126,6 +139,31 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       continue;
     }
     const date = ctx.date(dateCell, row);
+
+    // Per-row decimal separator (answer, reference price, or ask).
+    ctx.numberFormat = ctx.options.rowNumberFormats?.[row.line] ?? fileFormat;
+    const rowCcy = str(raw, c.currency).toUpperCase();
+    if (!formatForced && !ctx.options.rowNumberFormats?.[row.line] && dominant && isCurrencyCode(rowCcy) && rowCcy !== dominant) {
+      const amb = [c.quantity, c.price, c.amount, c.netAmount].map((i) => cell(raw, i)).find((v) => isAmbiguousNumber(v));
+      if (amb !== undefined) {
+        const ref = ctx.options.referencePrice && date ? ctx.options.referencePrice({ symbol: str(raw, c.symbol), currency: rowCcy }, date) : undefined;
+        const pc = cell(raw, c.price);
+        if (ref && isAmbiguousNumber(pc)) {
+          const near = (f: 'dot' | 'comma') => {
+            const v = parseNumber(pc, f);
+            return v !== undefined && Math.abs(v - ref) <= 0.5 * ref;
+          };
+          if (near('dot') !== near('comma')) ctx.numberFormat = near('dot') ? 'dot' : 'comma';
+        }
+        if (!ref || ctx.numberFormat === fileFormat) {
+          if (!ref) {
+            row.pending = true;
+            rowAmbiguous.push({ line: row.line, value: cellToString(amb) });
+            row.issues.push(ctx.issue('ROW_NUMBER_AMBIGUOUS', 'warning', { value: cellToString(amb), currency: rowCcy }, row.line));
+          }
+        }
+      }
+    }
 
     const typeText = str(raw, c.type);
     const cls = typeText ? classifyTypeDetailed(typeText, mapping.typeValues) : { refund: false };
@@ -249,6 +287,18 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const account = str(raw, c.account) || gopts.account;
     if (account) draft.account = account;
     row.draft = draft;
+  }
+  ctx.numberFormat = fileFormat;
+  if (rowAmbiguous.length) {
+    ctx.confirmations.push({
+      kind: 'numberFormat',
+      scope: 'rows',
+      candidates: ['dot', 'comma'],
+      suggested: 'dot',
+      reason: `Filas en una moneda distinta de ${dominant}: confirma si el punto es decimal.`,
+      samples: rowAmbiguous.slice(0, 5).map((x) => ({ line: x.line, value: x.value, readings: { dot: String(parseNumber(x.value, 'dot')), comma: String(parseNumber(x.value, 'comma')) } })),
+      affectedLines: rowAmbiguous.map((x) => x.line),
+    });
   }
   return out;
 }

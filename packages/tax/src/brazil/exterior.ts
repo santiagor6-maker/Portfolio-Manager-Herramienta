@@ -155,13 +155,18 @@ interface YearAgg {
  * paid abroad credited up to the Brazilian tax on that income.
  */
 export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOptions): BrForeignReport {
-  const routed = routeCryptoByCustody(rawInput, { cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
+  const routed = routeCryptoByCustody(rawInput, {
+    cryptoCustody: opts.cryptoCustody,
+    accountCustody: opts.accountCustody,
+    brlRate: opts.ptax ? (c, d) => opts.ptax!.buy(c, d) : undefined,
+  });
+  const routingIssues = routed.issues;
   const input = routed.input;
   const cryptoCustody = routed.custody;
   const cfgOf = opts.config ?? brazilConfig;
   const year = opts.year;
   const instruments = instrumentMap(input.instruments);
-  const issues: TaxIssue[] = [];
+  const issues: TaxIssue[] = [...routingIssues];
   const missing = new Set<string>();
 
   const rate = (kind: 'buy' | 'sell', ccy: CurrencyCode, date: ISODate): number => {
@@ -228,7 +233,8 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
           instrumentId: id,
           symbol: displaySymbol(id, inst),
           name: inst?.name,
-          country: inst?.country,
+          // Crypto: country of the custodian venue, not of the quote (T50); '' when unknown.
+          country: inst?.assetClass === 'crypto' ? (routed.venueCountry[id] ?? '') : inst?.country,
           assetClass: inst?.assetClass,
           currency: inst?.currency ?? 'USD',
           quantity: p.qty,
@@ -301,7 +307,7 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
       }
       case 'TRANSFER_IN': {
         const qty = tx.quantity ?? 0;
-        const { basis, proposal } = resolveTransferBasis(tx, opts.transferBasis, opts.acceptNoteProposals);
+        const { basis, proposal } = resolveTransferBasis(tx, { ...routed.transferBasis, ...(opts.transferBasis ?? {}) }, opts.acceptNoteProposals);
         const original = basis ? basisTotalCost(basis, qty) : undefined;
         const costFx = original ?? grossAmount(tx) + fees;
         const fx = basis?.fxRate ?? rate('buy', ccy, basis?.openDate ?? tx.date);

@@ -143,7 +143,9 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     const rate = toBrl(tx.currency, tx.date);
     if (tx.type === 'BUY' || tx.type === 'TRANSFER_IN' || tx.type === 'STOCK_DIVIDEND') {
       p.qty += tx.quantity ?? 0;
-      p.cost += (grossAmount(tx) + (tx.fees ?? 0)) * rate;
+      const carried = routed.transferBasis[tx.id];
+      // T48: a transfer from another custody carries its original BRL cost.
+      p.cost += carried ? carried.totalCost * carried.fxRate : (grossAmount(tx) + (tx.fees ?? 0)) * rate;
     } else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') {
       const q = Math.min(tx.quantity ?? 0, p.qty);
       if ((tx.quantity ?? 0) > p.qty + 1e-12) {
@@ -184,7 +186,8 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
           'se estiver no exterior ou em carteira própria fora do país, Lei 14.754 anual. Informe cryptoCustody para gerar o DARF.',
       });
     }
-    const blocked = tax > 0 && unknown.length > 0;
+    const ambiguous = list.some((x) => routed.unconfirmedSales.has(x.transactionId));
+    const blocked = tax > 0 && (unknown.length > 0 || ambiguous);
     months.push({
       month,
       salesBrl,

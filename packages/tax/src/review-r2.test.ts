@@ -70,7 +70,9 @@ describe('T22 (alta) — crypto custodied abroad follows Lei 14.754, never DARF 
   });
   it('Bens e Direitos lists the foreign crypto under group 08 with its country', () => {
     const b = brazilBensDireitos(br([txs[0]!]), { year: 2025 });
-    expect(b.items.find((i) => i.ticker === 'ETH')).toMatchObject({ grupo: '08', codigo: '02', localizacao: 'KY', situacaoAtual: 300_000 });
+    // round 4 (T50): location of the custodian; Binance has several entities → blank + warning
+    expect(b.items.find((i) => i.ticker === 'ETH')).toMatchObject({ grupo: '08', codigo: '02', localizacao: '', situacaoAtual: 300_000 });
+    expect(b.issues.map((i) => i.code)).toContain('CRYPTO_LOCATION_UNKNOWN');
   });
   it('Brazilian exchange → GCAP with DARF; explicit override wins', () => {
     expect(cryptoCustodyOf(BTC_MB)).toBe('brasil');

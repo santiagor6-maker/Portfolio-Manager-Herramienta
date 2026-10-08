@@ -241,12 +241,21 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
         ? BENS_E_DIREITOS_CODES.FOREIGN_FUND
         : BENS_E_DIREITOS_CODES.FOREIGN_STOCK;
     const sales = foreign.sales.filter((s) => s.instrumentId === id);
+    const loc = c?.country ?? p?.country ?? inst?.country ?? '';
+    if (isCrypto && !loc) {
+      issues.push({
+        level: 'warning',
+        code: 'CRYPTO_LOCATION_UNKNOWN',
+        instrumentId: id,
+        message: `Informe o país da exchange/custodiante de ${symbol} (Bens e Direitos): a exchange tem várias entidades ou não foi reconhecida.`,
+      });
+    }
     const income = foreign.income.filter((i) => i.instrumentId === id);
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
       codigoDescricao: code.descricao,
-      localizacao: c?.country ?? p?.country ?? inst?.country ?? '',
+      localizacao: loc,
       cnpj: '',
       instrumentId: id,
       ticker: symbol,

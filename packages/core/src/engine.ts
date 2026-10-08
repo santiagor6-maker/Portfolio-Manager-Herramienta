@@ -9,9 +9,11 @@
  *   (or use the stateless API) after editing data.
  * - The stateless API functions look engines up by a structural CONTENT HASH of the input
  *   (every transaction field, instruments, portfolio, options, reporting currency) plus the
- *   identity of the market-data object: in-place edits, a changed options.asOf or a changed
- *   portfolio.baseCurrency produce a new engine. Market data built by createMarketData is
- *   immutable; pass a new MarketData object when prices change.
+ *   identity and optional `revision` of the market-data object: in-place edits, a changed
+ *   options.asOf or a changed portfolio.baseCurrency produce a new engine. Rows are fingerprinted
+ *   incrementally (only changed rows are re-hashed). Market data built by createMarketData is
+ *   immutable; a custom MarketData that changes in place must bump `revision`, otherwise its
+ *   results are never cached. For the web, prefer an explicit createEngine(input) handle.
  * - Every value returned is a fresh copy: callers may sort/reverse/mutate results freely.
  *
  * Daily chain: for every day d in the grid, V(d) (close) and, on days with external flows, the
@@ -28,6 +30,7 @@ import type {
   Valuation,
 } from './types';
 import type { EngineInput, PeriodKey } from './api';
+import type { MarketData, Transaction } from './types';
 import { addDays, addMonths, dayToIso, isoToDay, todayIso, yearFraction } from './dates';
 import { type Diagnostic, type EngineContext, type ExternalFlow, Ledger, createContext, runLedger } from './ledger';
 import {
@@ -474,37 +477,103 @@ const TX_FIELDS = [
 const f64 = new Float64Array(1);
 const u32 = new Uint32Array(f64.buffer);
 
-/** Structural hash of everything that affects results (two 32-bit FNV-style lanes). */
-export function inputHash(input: EngineInput): string {
-  let a = 2166136261;
-  let b = 0x811c9dc5 ^ 0x5bd1e995;
-  const mixInt = (x: number) => {
-    a = Math.imul(a ^ x, 16777619);
-    b = Math.imul(b ^ (x + 0x9e3779b9), 0x01000193) ^ (b >>> 15);
-  };
-  const mixStr = (v: string) => {
-    for (let i = 0; i < v.length; i++) mixInt(v.charCodeAt(i));
-    mixInt(0x1f);
-  };
-  const mixVal = (v: unknown) => {
-    if (v === undefined || v === null) mixInt(0x7e);
-    else if (typeof v === 'number') {
-      f64[0] = v;
-      mixInt(u32[0] as number);
-      mixInt(u32[1] as number);
-    } else mixStr(String(v));
-  };
-  const m = input.market as unknown as object;
-  let mid = marketIds.get(m);
-  if (mid === undefined) marketIds.set(m, (mid = nextMarketId++));
-  mixInt(mid);
-  mixStr(`${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
-  mixStr(JSON.stringify(input.instruments ?? []));
-  for (const t of input.transactions ?? []) {
-    const r = t as unknown as Record<string, unknown>;
-    for (const f of TX_FIELDS) mixVal(r[f]);
+// Two 32-bit hash lanes as module state (no closures in the hot path).
+let H0 = 0;
+let H1 = 0;
+function hashReset(): void {
+  H0 = 2166136261;
+  H1 = 0x811c9dc5 ^ 0x5bd1e995;
+}
+function hashStep(x: number): void {
+  H0 = Math.imul(H0 ^ x, 16777619);
+  H1 = Math.imul(H1 ^ (x + 0x9e3779b9), 0x01000193) ^ (H1 >>> 15);
+}
+function hashValue(v: unknown): void {
+  if (v === undefined || v === null) hashStep(0x7e);
+  else if (typeof v === 'number') {
+    f64[0] = v;
+    hashStep(u32[0] as number);
+    hashStep(u32[1] as number);
+  } else {
+    const str = typeof v === 'string' ? v : String(v);
+    for (let i = 0; i < str.length; i++) hashStep(str.charCodeAt(i));
+    hashStep(0x1f);
   }
-  return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${input.transactions?.length ?? 0}`;
+}
+
+/**
+ * Per-transaction-object cache (C41): the field values seen last time and their hash. On the
+ * next call each field is compared with `===` (pointer-cheap for unchanged strings) and only
+ * rows that really changed are re-hashed, so in-place edits are still detected.
+ */
+const rowCache = new WeakMap<object, { vals: unknown[]; a: number; b: number }>();
+
+/** Unrolled named-property comparison (monomorphic loads, ~10x faster than keyed access). */
+function sameRow(v: unknown[], t: Transaction): boolean {
+  return (
+    v[0] === t.id &&
+    v[1] === t.date &&
+    v[2] === t.type &&
+    v[3] === t.instrumentId &&
+    v[4] === t.quantity &&
+    v[5] === t.price &&
+    v[6] === t.currency &&
+    v[7] === t.amount &&
+    v[8] === t.fees &&
+    v[9] === t.taxes &&
+    v[10] === t.ratio &&
+    v[11] === t.toCurrency &&
+    v[12] === t.toAmount &&
+    v[13] === t.fxRateToBase &&
+    v[14] === t.account &&
+    v[15] === t.subtype &&
+    v[16] === t.targetInstrumentId &&
+    v[17] === t.costFraction &&
+    v[18] === t.portfolioId
+  );
+}
+
+function rowValues(t: Transaction): unknown[] {
+  return [t.id, t.date, t.type, t.instrumentId, t.quantity, t.price, t.currency, t.amount, t.fees, t.taxes, t.ratio, t.toCurrency, t.toAmount, t.fxRateToBase, t.account, t.subtype, t.targetInstrumentId, t.costFraction, t.portfolioId];
+}
+
+function rowHash(t: Transaction): { a: number; b: number } {
+  const hit = rowCache.get(t);
+  if (hit && sameRow(hit.vals, t)) return hit;
+  const vals = rowValues(t);
+  const s0 = H0;
+  const s1 = H1;
+  hashReset();
+  for (let i = 0; i < vals.length; i++) hashValue(vals[i]);
+  const e = { vals, a: H0, b: H1 };
+  H0 = s0;
+  H1 = s1;
+  rowCache.set(t, e);
+  return e;
+}
+
+/**
+ * Structural hash of everything that affects results. Returns undefined for a custom MarketData
+ * (not built by createMarketData) without a `revision`: its content cannot be fingerprinted, so
+ * results are never cached for it (C41).
+ */
+export function inputHash(input: EngineInput): string | undefined {
+  const m = input.market as unknown as (MarketData & { engineMarket?: boolean }) | undefined;
+  if (m && !m.engineMarket && m.revision === undefined) return undefined;
+  let mid = m ? marketIds.get(m) : 0;
+  if (m && mid === undefined) marketIds.set(m, (mid = nextMarketId++));
+  hashReset();
+  hashValue(mid ?? 0);
+  hashValue(m?.revision ?? 0);
+  hashValue(`${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
+  hashValue(JSON.stringify(input.instruments ?? []));
+  const txs = input.transactions ?? [];
+  for (let i = 0; i < txs.length; i++) {
+    const r = rowHash(txs[i] as Transaction);
+    hashStep(r.a);
+    hashStep(r.b);
+  }
+  return `${(H0 >>> 0).toString(36)}.${(H1 >>> 0).toString(36)}.${txs.length}`;
 }
 
 const engineCache = new Map<string, Engine>();
@@ -518,6 +587,7 @@ export function createEngine(input: EngineInput): Engine {
 /** Engine for the stateless API: reused only when the input CONTENT is identical. */
 export function engineFor(input: EngineInput): Engine {
   const key = inputHash(input);
+  if (key === undefined) return new Engine(input); // mutable custom MarketData without revision
   const hit = engineCache.get(key);
   if (hit) {
     engineCache.delete(key); // refresh LRU position
