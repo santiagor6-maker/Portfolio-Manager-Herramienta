@@ -108,7 +108,7 @@ test('W5: every pending month-end of a manual fund is flagged and the close walk
   await expect(page.getByTestId('pending-months')).toBeVisible();
   await expect(page.getByTestId('pending-months')).toContainText('FIC-RF');
   await page.getByRole('button', { name: 'Confirmar cierre' }).click();
-  await expect(page.getByText(/guardado/)).toBeVisible();
+  await expect(page.getByText(/guardado/).first()).toBeVisible();
 });
 
 test('W7: mobile menu is a modal dialog: focus trapped, Escape closes, focus returns', async ({ page }) => {

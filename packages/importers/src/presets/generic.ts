@@ -113,6 +113,20 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
   }
   const cashFlowCosts = costNeg > costPos;
 
+  // Does the file carry signs at all? Neutral words ("Traslado", "Liquidación", "Transferência") take
+  // their direction from the sign; in a file without any negative value that direction is an assumption.
+  const signCols = [c.quantity, c.amount, c.netAmount].filter((i): i is number => i !== undefined);
+  let fileHasSigns = false;
+  for (let r = first; r < table.rows.length && !fileHasSigns; r++) {
+    const raw = table.rows[r]!;
+    fileHasSigns = signCols.some((i) => {
+      const v = cell(raw, i);
+      if (typeof v === 'number') return v < 0;
+      const t = cellToString(v).trim();
+      return /^\(.*\d.*\)$|^[-−–]\s*[^\s]*\d|\d\s*-$|\d\s*(?:DR|D)$/i.test(t);
+    });
+  }
+
   const headerNorm = new Set((table.rows[headerRow] ?? []).map((x) => normalizeText(cellToString(x))).filter((x) => x !== ''));
   const out: ParsedRow[] = [];
   for (let r = first; r < table.rows.length; r++) {
@@ -200,6 +214,9 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
         else type = quantity > 0 ? 'BUY' : 'SELL';
       } else if (signed !== undefined && signed !== 0) type = signed > 0 ? 'DEPOSIT' : 'WITHDRAWAL';
       else row.issues.push(ctx.issue('MISSING_FIELD', 'error', { field: 'type' }, row.line, 'type'));
+      if (type && kind && kind !== 'fraction' && !fileHasSigns) {
+        row.issues.push(ctx.issue('DIRECTION_ASSUMED', 'warning', { value: typeText, type }, row.line, 'type'));
+      }
     } else if (cls.type === 'SELL' && cls.signBased === undefined && /fracao|fraccion|cash in lieu|leilao/.test(normalizeText(typeText)) && !quantity) {
       type = 'RETURN_OF_CAPITAL';
     }

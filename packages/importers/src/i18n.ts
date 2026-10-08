@@ -396,6 +396,11 @@ const R3: Catalog = {
     pt: 'A senha do PDF está incorreta.',
     en: 'Incorrect PDF password.',
   },
+  DIRECTION_ASSUMED: {
+    es: 'El archivo no trae signos: "{value}" se tomó como {type} (entrada). Si es una salida, asigna esa palabra al tipo correcto en el mapeo.',
+    pt: 'O arquivo não traz sinais: "{value}" foi tomado como {type} (entrada). Se for uma saída, associe a palavra ao tipo correto no mapeamento.',
+    en: 'The file has no signs: "{value}" was taken as {type} (inflow). If it is an outflow, map that word to the right type.',
+  },
   ROW_NUMBER_AMBIGUOUS: {
     es: 'El valor "{value}" en {currency} es ambiguo en este archivo (¿decimal o miles?); confirma la fila.',
     pt: 'O valor "{value}" em {currency} é ambíguo neste arquivo (decimal ou milhar?); confirme a linha.',
