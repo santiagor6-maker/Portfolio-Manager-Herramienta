@@ -219,6 +219,11 @@ export interface Transaction {
    * for a genuine move of more than x3 that the engine would otherwise hold back.
    */
   priceConfirmed?: boolean;
+  /**
+   * INTEREST/DIVIDEND (round 6): the amount is what was received, net of withholding. With `taxes`
+   * missing the engine infers the withholding of the instrument's regime and marks it estimated.
+   */
+  amountIsNet?: boolean;
 }
 
 export type TransactionSubtype = 'JCP' | 'ORDINARY' | 'EXTRAORDINARY' | 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE' | (string & {});

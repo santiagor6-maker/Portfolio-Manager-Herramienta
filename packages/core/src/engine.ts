@@ -530,12 +530,24 @@ function sameRow(v: unknown[], t: Transaction): boolean {
     v[15] === t.subtype &&
     v[16] === t.targetInstrumentId &&
     v[17] === t.costFraction &&
-    v[18] === t.portfolioId
+    v[18] === t.portfolioId &&
+    v[19] === t.priceConfirmed &&
+    v[20] === t.amountIsNet &&
+    v[21] === t.note &&
+    v[22] === t.source &&
+    v[23] === t.importHash
   );
 }
 
+/**
+ * Every field of Transaction (C45: all of them, including the descriptive ones, so a new field
+ * cannot be silently left out; review-r5.test.ts checks this list against types.ts).
+ */
 function rowValues(t: Transaction): unknown[] {
-  return [t.id, t.date, t.type, t.instrumentId, t.quantity, t.price, t.currency, t.amount, t.fees, t.taxes, t.ratio, t.toCurrency, t.toAmount, t.fxRateToBase, t.account, t.subtype, t.targetInstrumentId, t.costFraction, t.portfolioId];
+  return [
+    t.id, t.date, t.type, t.instrumentId, t.quantity, t.price, t.currency, t.amount, t.fees, t.taxes, t.ratio, t.toCurrency, t.toAmount, t.fxRateToBase, t.account, t.subtype, t.targetInstrumentId,
+    t.costFraction, t.portfolioId, t.priceConfirmed, t.amountIsNet, t.note, t.source, t.importHash,
+  ];
 }
 
 function rowHash(t: Transaction): { a: number; b: number } {
