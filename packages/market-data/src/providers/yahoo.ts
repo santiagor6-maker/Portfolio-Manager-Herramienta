@@ -56,6 +56,8 @@ export interface YahooChartMeta {
   shortName?: string;
   priceHint?: number;
   currentTradingPeriod?: { regular?: { start: number; end: number } };
+  /** Epoch seconds of the first trade Yahoo has. */
+  firstTradeDate?: number | null;
 }
 
 export interface YahooChartResult {
@@ -475,6 +477,7 @@ export function buildHistory(
     notes,
     basis: unadjust ? 'as-traded' : 'split-adjusted',
     ...(lastTradeDate ? { lastTradeDate } : {}),
+    ...(m.firstTradeDate ? { firstTradeDate: dateInZone(m.firstTradeDate, tz, off) } : {}),
     ...(reg ? { session: { start: reg.start, end: reg.end } } : {}),
     ...(missingCloseDates.length ? { missingCloseDates: missingCloseDates.filter((d) => d >= from && d <= to) } : {}),
     source: 'yahoo',

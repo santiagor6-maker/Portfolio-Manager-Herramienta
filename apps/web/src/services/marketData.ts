@@ -21,7 +21,8 @@ let lastAuto = 0;
 export const INDEX_IDS: IndexId[] = ['IPC_CO', 'IBR', 'UVR', 'IPCA', 'CDI', 'SELIC', 'CPI_US', 'HICP_EA'];
 
 export function getMarketClient(): MarketClient {
-  return createHttpMarketClient(useApp.getState().settings.serverUrl);
+  const { serverUrl, apiToken } = useApp.getState().settings;
+  return createHttpMarketClient(serverUrl, undefined, apiToken);
 }
 
 function providerSymbol(i: Instrument): string {

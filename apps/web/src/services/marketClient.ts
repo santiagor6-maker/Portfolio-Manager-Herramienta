@@ -21,9 +21,9 @@ export function setMarketClientOverride(c: MarketClient | undefined): void {
 }
 
 /** `serverUrl` empty → same origin (Vite dev/preview proxies `/api` to :8787). */
-export function createHttpMarketClient(serverUrl: string, timeoutMs = 25_000): MarketClient {
+export function createHttpMarketClient(serverUrl: string, timeoutMs = 25_000, apiToken?: string): MarketClient {
   if (override) return override;
-  const api = new MarketDataClient({ baseUrl: serverUrl.trim(), timeoutMs });
+  const api = new MarketDataClient({ baseUrl: serverUrl.trim(), timeoutMs, apiToken: apiToken?.trim() || undefined });
   return {
     health: () => api.health(),
     batch: (req) => api.batch(req),

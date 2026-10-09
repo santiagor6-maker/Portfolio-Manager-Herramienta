@@ -41,6 +41,12 @@ export type PriceAdjustment = 'none' | 'splits' | 'total';
 /** A price point with market-data extras. `provisional` = intraday / incomplete period. */
 export interface MarketPricePoint extends PricePoint {
   provisional?: boolean;
+  /**
+   * The last real trade BEFORE the requested `from`, prepended when the window starts without a
+   * trade (illiquid stocks, holidays), so a valuation at `from` has a price (review R4, M32).
+   * Its date is outside the requested range.
+   */
+  carried?: boolean;
 }
 
 /** PriceSeries (core contract) plus freshness information. */

@@ -44,6 +44,8 @@ export interface ProviderHistory {
   basis: PriceBasis;
   /** Local date of the last real trade (phantom bars after it are removed). */
   lastTradeDate?: ISODate;
+  /** Local date of the first trade the provider has (Yahoo `firstTradeDate`). */
+  firstTradeDate?: ISODate;
   /** Regular session of the latest trading day (epoch seconds), for provisional detection. */
   session?: { start: number; end: number };
   /** Dates whose bar had no close and could not be completed (holidays or not-yet-final days). */

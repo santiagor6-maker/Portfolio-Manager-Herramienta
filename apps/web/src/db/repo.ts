@@ -33,6 +33,8 @@ export interface AppSettings {
   selectedPortfolioId: string;
   /** Market-data server base URL. Empty = same origin `/api` (Vite proxy). */
   serverUrl: string;
+  /** Server API token (`API_TOKEN`), sent as a Bearer token. Needed for broker sync. */
+  apiToken: string;
   defaultCostMethod: CostMethod;
   /** Benchmark instrument ids for comparisons. */
   benchmarks: string[];
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   privacy: false,
   selectedPortfolioId: 'all',
   serverUrl: '',
+  apiToken: '',
   defaultCostMethod: 'FIFO',
   benchmarks: BENCHMARK_IDS,
   riskFreeRate: 0.04,

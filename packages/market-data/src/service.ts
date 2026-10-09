@@ -8,7 +8,7 @@
  * CoinGecko for crypto); those answers are cached briefly and reported in `fallbacks`.
  * Tesouro Direto, Colombian FICs and pension funds, and user-defined feeds have their own providers.
  */
-import type { FxSeries, Instrument, ISODate } from '@pm/core';
+import type { FxSeries, Instrument, ISODate, PricePoint, ProviderId } from '@pm/core';
 import { aliasesTo, findAlias, renameInfo, type TickerAlias } from './aliases';
 import { DAY, HOUR, MINUTE, historyTtlMs, TieredCache, TTL, type PersistentStore } from './cache';
 import { InstrumentCatalog } from './catalog';
@@ -614,6 +614,23 @@ export class MarketDataService {
     });
   }
 
+  /**
+   * Last real close in the year before `from` from the same source family (Yahoo chunks, which are
+   * cached, or the local snapshot). Keyed backups are not called again just for a seed.
+   */
+  private async lastTradeBefore(symbol: string, from: ISODate, source: ProviderId): Promise<PricePoint | undefined> {
+    if (!symbol || (source !== 'yahoo' && source !== 'snapshot')) return undefined;
+    const a = addDays(from, -366);
+    const b = addDays(from, -1);
+    try {
+      const prev = source === 'yahoo' ? await this.yahooChunked(symbol, a, b) : await this.snapshot(symbol, a, b);
+      const p = prev?.points[prev.points.length - 1];
+      return p ? { date: p.date, close: p.close } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Locally recorded Yahoo chunks (possibly expired) covering [from, to], or undefined. */
   private async snapshot(symbol: string, from: ISODate, to: ISODate): Promise<ProviderHistory | undefined> {
     const parts: ProviderHistory[] = [];
@@ -729,12 +746,22 @@ export class MarketDataService {
       ...stitched.actions,
     ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-    // Adjustment ------------------------------------------------------------------------
+    // Seed (review R4, M32): a window that starts without a trade gets the last real trade before
+    // `from`, flagged `carried`, so the engine can value positions at `from`.
     let points: MarketPricePoint[] = h.points;
+    if (r.kind === 'market' && adjust !== 'total' && (!points.length || points[0]!.date > from) && !(h.firstTradeDate && h.firstTradeDate >= from)) {
+      const seed = await this.lastTradeBefore(r.target.yahoo, from, h.source);
+      if (seed) {
+        points = [{ ...seed, carried: true }, ...points];
+        notes.push(`first point is the last trade before ${from} (${seed.date}), marked carried`);
+      }
+    }
+
+    // Adjustment ------------------------------------------------------------------------
     if (adjust === 'splits') {
       if (h.basis === 'as-traded') {
         const all = h.source === 'yahoo' ? await this.yahoo.splits(r.target.yahoo) : h.splits;
-        points = points.map((p) => ({ date: p.date, close: roundTo(p.close / splitFactorAfter(all, p.date), 8) }));
+        points = points.map((p) => ({ ...p, close: roundTo(p.close / splitFactorAfter(all, p.date), 8) }));
       }
     } else if (adjust === 'total') {
       points = totalReturn(points, actions);

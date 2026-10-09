@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 203 pruebas
+npx vitest run packages/core        # 218 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -125,8 +125,13 @@ Cupones e intereses periódicos (ronda 4): un `INTEREST` (o `DIVIDEND/COUPON`) s
 devengo **saca el monto bruto del valor devengado**. Cada lote se re-ancla en la fecha de pago en
 `valor devengado − su parte del cupón`. Así el valor, el valor líquido y la redención solo incluyen el interés
 devengado desde el último pago. Ejemplos: un CDT del 12 % con pago trimestral da TWR ≈ 11,1 % (neto de
-retención), no 20,2 %; un bono con cupón semestral vale ≈ 1.100, no 1.148,81. Si el pago supera el
-devengado, se informa `COUPON_EXCEEDS_ACCRUAL`.
+retención), no 20,2 %; un bono con cupón semestral vale ≈ 1.100, no 1.148,81.
+Ronda 5: el cupón se reparte entre las unidades de la fecha de registro (`quantity` de la transacción, o la
+tenencia antes de una venta en los 15 días previos si explica mejor el monto: `COUPON_RECORD_DATE_UNITS`). La
+reducción se limita al interés causado (desde el ancla o en el periodo del cupón, máximo un año); el exceso es
+ingreso, el principal no se toca y se avisa `COUPON_EXCEEDS_ACCRUED_INTEREST`. Un interés sin `taxes` cuyo monto
+coincide con el causado neto de retención (`CO_RETENCION`, `BR_IR_REGRESSIVE`) se toma como neto y se infiere
+la retención (`INTEREST_NET_ASSUMED`).
 
 Vencimiento (ronda 3):
 - El pago se espera el siguiente día hábil del calendario del instrumento.
@@ -211,13 +216,18 @@ la operación como observación, esto da exactamente el retorno del activo en lo
 solo de fin de mes 100 → 125 con una compra a mitad de mes a 120 ⇒ **+25 %**; 100 → 105 (compra al cierre) →
 110 ⇒ **+10 %**. Un aporte que queda en caja no se lleva el movimiento del día de las posiciones existentes.
 
-Precios de operación atípicos (rondas 3 y 4):
+Precios de operación atípicos (rondas 3 a 5):
 - Un precio que se desvía más de `tradePriceTolerance` (30 % por defecto, el doble en cripto, ampliado con la
-  raíz del número de meses de distancia) del cierre o precio anterior **y** del cierre siguiente no se usa
-  como precio, y se informa `TRADE_PRICE_OUTLIER`.
-- Si no hay cierre posterior que lo contradiga, el movimiento se acepta y se informa `TRADE_PRICE_UNCONFIRMED`
-  para que la UI pida confirmación. Así un fondo que sube 40 % o BTC +45 % se valoran bien. Tampoco se usan las operaciones de menos
-del 0,5 % de la posición cuando hay un cierre en la misma semana.
+  raíz del número de meses de distancia) del cierre o precio anterior **y** del cierre de confirmación (el del
+  mismo día o el siguiente, a cualquier distancia) no se usa como precio, y se informa `TRADE_PRICE_OUTLIER`.
+- Si el cierre de confirmación está dentro de la tolerancia, el precio se acepta sin aviso.
+- Sin cierre de confirmación, un precio fuera de la banda dura (×3 / ÷3 de la referencia, ×5 en cripto,
+  ampliada si la brecha pasa de un año, aun con referencias muy antiguas) no se usa hasta que el usuario lo
+  confirme con `priceConfirmed` (`TRADE_PRICE_OUTLIER`). Dentro de la banda, se acepta y se informa
+  `TRADE_PRICE_UNCONFIRMED` para que la UI pida confirmación. Así un fondo que sube 40 % o BTC +45 % se valoran
+  bien.
+- Ambos avisos llegan también a `MonthlyRow.warnings` y `PerformanceSummary.warnings` (`CODIGO:<ids>`).
+- Tampoco se usan las operaciones de menos del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
 (`DEGENERATE_SUBPERIOD`, `NEGATIVE_VALUE_SUBPERIOD`).
@@ -299,6 +309,9 @@ allá del último dato publicado (el mes sin IPC queda sin `realTwr`); el deveng
 retirado, ingresos, comisiones, ganancia realizada, variación no realizada, parte en divisa,
 `totalReturnBase = final − inicial − invertido + retirado + ingresos`, TWR (mismo corte del día en la
 operación; los dividendos salen al cierre), TWR anualizado, IRR (XIRR ACT/ACT) y `irrPeriod`.
+En fusiones, escisiones y cambios de ticker, el tramo al inicio del día es
+`(P + entregado) / (V(f−1) + recibido) − 1`: lo entregado es el valor final del origen y el inicial de la
+resultante.
 
 ### MWR / XIRR
 
@@ -534,3 +547,25 @@ Cambios aditivos al contrato:
 - `LotState` agrega `anchorDay?`; es interno.
 - Diagnósticos nuevos: `TRADE_PRICE_UNCONFIRMED`, `LATE_REDEMPTION`, `INTEREST_ALREADY_RECORDED` y
   `COUPON_EXCEEDS_ACCRUAL`.
+
+## Respuesta a la revisión ronda 4
+
+Revisión: `reviews/core-r4.md`; estos cambios forman la **ronda 5** del motor. Los escenarios del revisor
+(`r4-a`, `r4-b`) quedaron como pruebas en `src/review-r4.test.ts`. Total: **218 pruebas**, que pasan también
+con `TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. `apps/web` (54 pruebas) pasa, y todos los paquetes
+compilan sin errores. Los scripts del revisor de las rondas 1–4 pasan, salvo los esperados que el revisor
+aceptó como cambios de diseño (F1, F4, S2).
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C44 Precios de operación sin confirmar | Media | El cierre de confirmación es el del mismo día o el **siguiente, a cualquier distancia** (antes, 62 días). Si confirma el precio, se acepta sin aviso (T4: caída real del −52 %, sin diagnóstico). Sin cierre que confirme, hay una **banda dura**: más de ×3 o menos de ÷3 frente a la referencia (×5 en cripto, más ancha si la brecha pasa de un año). Fuera de la banda, el precio no se usa hasta que el usuario lo confirme con `Transaction.priceConfirmed`; se informa `TRADE_PRICE_OUTLIER`. La banda se aplica también con referencias de más de 400 días. Los avisos llegan a `MonthlyRow.warnings` y `PerformanceSummary.warnings` como `TRADE_PRICE_OUTLIER:<id>` / `TRADE_PRICE_UNCONFIRMED:<id>`. Un precio sin confirmar sigue avisando en los meses posteriores mientras no llegue un cierre. T1: MTD −8,2 % y valor 101.000 (antes +900 % y 1.010.000), con aviso en el resumen. T2: febrero −0,1 % (antes −90 %). T3: valor 100.100 con `TRADE_PRICE_OUTLIER`. |
+| C42 El cupón podía comerse el principal | Media | El cupón se reparte entre las unidades de la fecha de registro. Se usa `quantity` de la transacción si viene; si no, se mira la tenencia antes de una venta o compra en los 15 días previos al pago, cuando esa tenencia explica mejor el monto (`COUPON_RECORD_DATE_UNITS`). La reducción de cada lote se limita al interés causado: desde su ancla, o sobre el periodo del cupón (desde el cupón anterior, la emisión o como máximo un año, lo que cubre el interés comprado a precio sucio). El exceso es ingreso, el principal queda intacto y se avisa `COUPON_EXCEEDS_ACCRUED_INTEREST`. J2: 1.000 (antes 951,33). J4: 1.000 y, un año después, 1.100 (antes 995 y 1.094,50). |
+| C38 Fusión → cambio de ticker | Media | El tramo de entrega al inicio del día es `(P + entregado) / (V(f−1) + recibido) − 1`: el valor entregado es el valor final del origen y el valor inicial de la resultante. P1: B +20 en dinero y TWR +2,04 % (antes 0 %). C 5 %, A 0 %. La suma por posición sigue igual al portafolio (70). |
+| C43 Interés registrado neto | Baja | Aplica a instrumentos con `CO_RETENCION` o `BR_IR_REGRESSIVE` cuando falta `taxes`. Si el monto coincide (±2 %) con el interés causado neto de la retención esperada, y no con el bruto, se registra como neto: bruto = monto × causado / (causado − retención), y la retención inferida pasa a `taxes`. Se avisa `INTEREST_NET_ASSUMED`. J6: 10.000.000 (antes 10.003.869). Un monto bruto se deja como está. |
+
+Cambios aditivos al contrato:
+- `Transaction.priceConfirmed?` confirma un precio de operación y omite los controles de atípicos.
+- `EngineMarket.pricePointAfter` (interno) devuelve el primer cierre posterior a un día.
+- Diagnósticos nuevos: `COUPON_RECORD_DATE_UNITS`, `COUPON_EXCEEDS_ACCRUED_INTEREST` (reemplaza a
+  `COUPON_EXCEEDS_ACCRUAL`) e `INTEREST_NET_ASSUMED`.
+- Avisos nuevos en filas y resúmenes: `TRADE_PRICE_OUTLIER:<ids>` y `TRADE_PRICE_UNCONFIRMED:<ids>`.
