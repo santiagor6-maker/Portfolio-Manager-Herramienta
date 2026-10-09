@@ -291,6 +291,18 @@ export class MarketDataService {
       return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(y), target: this.target(y) };
     }
     if (!isValidSymbol(key)) throw new MarketDataError('BAD_REQUEST', `Invalid symbol "${key}"`);
+    // Bare symbols as broker statements write them (ECOPETROL, PFAVAL, GEB, ISA): the catalog is
+    // checked first, and only then the US (review R4, M33).
+    if (!key.includes('.')) {
+      const local = this.catalog.bySymbol(key)[0];
+      if (local) return this.resolve(local.id);
+      // US tickers have at most 5 letters (plus a class: BRK-B); a longer plain word is a BVC
+      // nemotécnico (CEMARGOS, PFGRUPSURA, BOGOTA, CONCONCRET).
+      if (/^[A-Z]{6,12}$/i.test(key)) {
+        const cl = `${key.toUpperCase()}.CL`;
+        return findAlias(cl) ? this.resolve(cl) : { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(cl), target: this.target(cl) };
+      }
+    }
     // B3 tickers typed without suffix (CPLE3, TAEE11, BOVA11, MXRF11): 4 letters + 1-2 digits is the
     // B3 pattern and never a US ticker, so look them up on B3 instead of the US (review R3, M30).
     if (/^[A-Z]{4}\d{1,2}$/i.test(key)) {

@@ -141,13 +141,24 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     acceptNoteProposals: opts.acceptNoteProposals,
     cryptoCustody: opts.cryptoCustody,
     accountCustody: opts.accountCustody,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
     initialLossCarry: opts.initialLossCarry,
     foreignOriginInstruments: opts.foreignOriginInstruments,
     portfolioBaseCurrency: opts.portfolioBaseCurrency,
   });
   const bensDireitos = brazilBensDireitos(input, { ...opts, year: y });
   const rendaFixa = brazilRendaFixaReport(input, { year: y, ...co, exemptIds: opts.rendaFixaExemptIds });
-  const cripto = brazilCryptoReport(input, { year: y, ...co, cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
+  const cripto = brazilCryptoReport(input, {
+    year: y,
+    ...co,
+    cryptoCustody: opts.cryptoCustody,
+    accountCustody: opts.accountCustody,
+    transferBasis: opts.transferBasis,
+    acceptNoteProposals: opts.acceptNoteProposals,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
+  });
   const comeCotas = brazilComeCotasReport(input, { year: y, ...co, fundTerms: opts.fundTerms });
   const irpfm = brazilIrpfmEstimate({
     year: y,
@@ -176,8 +187,18 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     ),
     [`brasil-${y}-cripto.csv`]: toCsv(
       [
-        ['mes', 'vendas_brl', 'isento_35k', 'ganho_brl', 'imposto', 'darf_vencimento', 'darf_bloqueado_custodia'],
-        ...cripto.months.map((m) => [m.month, m.salesBrl, m.exempt, m.gainBrl, m.tax, m.darf?.dueDate, m.darfBlockedUnknownCustody ?? false]),
+        ['mes', 'vendas_brl', 'isento_35k', 'ganho_brl', 'imposto', 'darf_valor', 'darf_vencimento', 'darf_bloqueado_custodia', 'valor_retido'],
+        ...cripto.months.map((m) => [
+          m.month,
+          m.salesBrl,
+          m.exempt,
+          m.gainBrl,
+          m.tax,
+          m.darf?.amount ?? 0,
+          m.darf?.dueDate,
+          m.darfBlockedUnknownCustody ?? false,
+          m.darfHeldAmount ?? 0,
+        ]),
       ],
       opts.csv,
     ),

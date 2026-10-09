@@ -32,7 +32,7 @@ import type {
 import type { EngineInput, PeriodKey } from './api';
 import type { MarketData, Transaction } from './types';
 import { addDays, addMonths, dayToIso, isoToDay, todayIso, yearFraction } from './dates';
-import { type Diagnostic, type EngineContext, type ExternalFlow, Ledger, createContext, runLedger } from './ledger';
+import { type Diagnostic, type EngineContext, type ExternalFlow, Ledger, createContext, priceFlagWarnings, runLedger } from './ledger';
 import {
   type MonthlyOptions,
   flowDayReturn,
@@ -355,6 +355,7 @@ export class Engine {
     }
     for (const [d, w] of chain.warnings) if (d > baseDay && d <= toDay) w.forEach((c) => ws.add(c));
     if (mi.size) ws.add(`MISSING_INDEX:${Array.from(mi).join(',')}`);
+    for (const w of priceFlagWarnings(ctx, baseDay, toDay)) ws.add(w);
     if (x.multipleRoots) ws.add('MWR_MULTIPLE_ROOTS');
     if (mfx.size) s.missingFx = Array.from(mfx).sort();
     if (mp.size) s.missingPrices = Array.from(mp).sort();

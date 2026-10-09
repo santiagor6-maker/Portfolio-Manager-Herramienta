@@ -1,0 +1,237 @@
+{
+  "part": "tax",
+  "round": 6,
+  "score": 8.5,
+  "competitorName": "Gorila",
+  "competitorScore": 7,
+  "approved": true,
+  "fixed": [
+    "T52",
+    "T53",
+    "T54",
+    "T55",
+    "T56"
+  ],
+  "gaps": [
+    {
+      "id": "T57",
+      "severity": "media",
+      "text": "Una entrada de cripto sin pareja (depósito externo) genera un DARF 4600 con costo 0 (R$ 67.500 en Q4) o con el valor de mercado del depósito como costo (Q4b), en vez de quedar con costo pendiente y el DARF retenido."
+    },
+    {
+      "id": "T58",
+      "severity": "media",
+      "text": "El emparejamiento tardío de traslados no tiene límite de tiempo y reemplaza el valor explícito de una entrada no relacionada (Q5: 10,5 meses después toma el costo de 200k en vez de 500k, impuesto de 37.500 en vez de 0), con solo un aviso info."
+    },
+    {
+      "id": "T59",
+      "severity": "baja",
+      "text": "Si una parte de una venta de cripto es ambigua, se retiene todo el DARF 4600 del mes, incluidas las ventas confirmadas, con riesgo de pagar tarde la parte que sí corresponde."
+    },
+    {
+      "id": "T60",
+      "severity": "baja",
+      "text": "Hay avisos de más en casos que no son ambiguos (TRANSFER_PAIR_AMBIGUOUS en Q7 y TRANSFER_COST_UNKNOWN repetido en Q8 con el costo completo), lo que acostumbra al usuario a ignorar las alertas."
+    }
+  ],
+  "matrix": [
+    {
+      "feature": "Apuración mensual B3 (exención de R$ 20 mil, swing/day trade, FII, corto)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Compensación de pérdidas por categoría",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "DARF pagable (Sicalc, estado, multa e intereses, conciliación por código)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Opciones (vencimiento por serie y año, semanales, ejercicio), futuros, aluguel",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Renta fija y fondos (tabla regresiva, IOF, exentos, come-cotas)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Cripto (GCAP, exención de R$ 35 mil, custodia por cuenta, traslados entre custodios)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Proventos con línea DIRPF (dividendos, JCP, FII, aluguel; Lei 15.270)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "IRPFM con redutor (Lei 15.270)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Bens e Direitos (CNPJ, campos del exterior por activo)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Exterior Lei 14.754 y régimen anterior a 2024 (GCAP, carnê-leão)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Reporte Colombia (Formulario 210 con casillas, 160, Arts. 36-1, 153, 241, 254-1)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Diferencia en cambio realizada y componente inflacionario (Colombia)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Chequeo de retención de EE.UU. y riesgo de impuesto de sucesiones",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Parámetros por año con fuente legal y estado de verificación",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Simulación de venta e impuesto no realizado",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Exportación para el contador (XLSX/CSV, modelo para PDF)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial"
+      }
+    },
+    {
+      "feature": "Conciliación con documentos oficiales (informe, export B3, pré-preenchida, exógena, 1042-S)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Ingesta directa de datos oficiales (conexión B3/DIAN sin archivo)",
+      "ours": "no",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    }
+  ]
+}

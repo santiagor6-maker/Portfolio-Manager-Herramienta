@@ -32,9 +32,13 @@ npm run start -w @pm/server      # o: npx tsx apps/server/src/main.ts
 | `MD_FROZEN_DIR` | — | carpeta con historias congeladas (`*.json`) de valores que ya no cotizan, grabadas con `packages/market-data/scripts/record-frozen.ts`. Un archivo inválido se omite con un aviso |
 | `SNAPSHOT_EXCHANGES` | `XBOG,XLON` | bolsas cuyos instrumentos del catálogo se graban en el snapshot local (último recurso si fallan todos los proveedores). `none` lo desactiva |
 | `SNAPSHOT_HOURS` | 12 | intervalo del snapshot; la primera ejecución es 30 s después del arranque |
+| `SYNC_SECRET` | — | activa la sincronización con IBKR (`/api/sync/ibkr-flex`). Clave para cifrar los tokens Flex (AES-256-GCM): mínimo 16 caracteres, mejor 32 aleatorios. Si cambia, hay que volver a guardar los tokens |
+| `SYNC_DIR` | `.data/sync` | almacén de tokens cifrados y bandejas de la sincronización diaria. Va aparte de la caché: no se poda ni se borra con `DELETE /api/cache`. Archivos con permisos 0600 |
+| `IBKR_FLEX_DAILY` | — | sincronización diaria opcional: `portfolioId[:credentialId]` separados por comas (por ejemplo `p1,p2:ira`). Requiere `SYNC_SECRET` |
+| `IBKR_FLEX_HOUR` | 6 | hora UTC de la sincronización diaria (0–23). IBKR genera los extractos durante la noche |
 | `BRAPI_TOKEN`, `TWELVEDATA_API_KEY`, `FMP_API_KEY`, `EODHD_API_TOKEN`, `ALPHAVANTAGE_API_KEY` (+`ALPHAVANTAGE_PREMIUM=1`), `STOOQ_API_KEY`, `COINGECKO_API_KEY`, `SOCRATA_APP_TOKEN` | — | activan o mejoran los proveedores de respaldo |
 
-`src/app.ts` exporta `createApp({ service, corsOrigin, apiToken, rateLimit, trustProxy, maxBodyBytes, log })`
+`src/app.ts` exporta `createApp({ service, corsOrigin, apiToken, rateLimit, trustProxy, maxBodyBytes, ibkrFlexSync, syncMaxBodyBytes, log })`
 sin efectos secundarios: sirve para `app.request()` en pruebas o para desplegar como función serverless
 (`app.fetch`). `src/main.ts` solo lo monta en `@hono/node-server` con un `FileStore` persistente.
 
@@ -51,6 +55,36 @@ sin efectos secundarios: sirve para `app.request()` en pruebas o para desplegar 
 | `GET /api/catalog` | — | `{ version, updated, instruments, benchmarks }` |
 | `POST /api/batch` | `{ histories, fx, quotes, indices }` (máx. 100 ítems, ~100k puntos estimados, cuerpo ≤ 64 KiB) | cada ítem resuelto por separado, más `tookMs` |
 | `DELETE /api/cache` | `symbol` | invalida la caché del símbolo (requiere `API_TOKEN`, o `ALLOW_LOCAL_ADMIN=1` con socket loopback directo) |
+| `POST /api/sync/ibkr-flex` | cuerpo JSON con `action` (ver abajo; ≤ 5 MiB) | `save` → `{ credentialId }`; `sync` → `ImportResult` de `@pm/importers`; `delete` → `{ ok: true }` |
+| `GET /api/sync/ibkr-flex/inbox` | `portfolioId` | `{ portfolioId, pending: Transaction[], instruments: Instrument[], lastRun? }`: lo que trajo la sincronización diaria y la web aún no recogió |
+| `DELETE /api/sync/ibkr-flex/inbox` | `portfolioId` | `{ cleared }`: la web confirma que ya importó `pending` |
+
+### Sincronización con Interactive Brokers (Flex Web Service)
+
+El servidor monta `createIbkrFlexSyncHandler` de `@pm/importers` (`src/ibkrSync.ts`). IBKR no envía
+cabeceras CORS, y así el token nunca llega al navegador: se guarda cifrado con `SYNC_SECRET` y ninguna
+respuesta lo devuelve.
+
+- Protección: la misma que `DELETE /api/cache`. Hace falta `API_TOKEN`, o `ALLOW_LOCAL_ADMIN=1` desde un
+  socket loopback directo. También pasa por la allowlist de `Origin`, de `Host` y por el límite por
+  cliente. Sin `SYNC_SECRET`, las tres rutas responden 503 `NOT_CONFIGURED`.
+- Acciones del `POST` (cuerpo JSON):
+  - `{ "action": "save", "token", "queryId", "credentialId?" }` guarda el token Flex y el id de la
+    consulta Flex (Activity).
+  - `{ "action": "sync", "portfolioId", "credentialId?", "existingTransactions?", "existingInstruments?", "account?", "catalog?" }`
+    descarga el extracto (SendRequest, luego GetStatement con reintentos mientras se genera) y lo
+    convierte en transacciones. Las que ya están en `existingTransactions` se descartan.
+  - `{ "action": "delete", "credentialId?" }` borra la credencial.
+- Errores de IBKR: 502 (o 503 si se puede reintentar) con `{ error: { code: "FLEX_1012", message } }` en
+  español. Sin credencial guardada: 404 `NO_CREDENTIAL`.
+- Sincronización diaria (`IBKR_FLEX_DAILY`):
+  - A la hora `IBKR_FLEX_HOUR` (UTC), el servidor ejecuta `runIbkrFlexSyncJobs` para cada cartera.
+  - El servidor no guarda las carteras (viven en la web). Lleva por cartera la lista de transacciones
+    que ya sincronizó, así que cada ejecución solo trae las nuevas, y las deja en una bandeja.
+  - La web lee la bandeja con `GET /api/sync/ibkr-flex/inbox`, las importa con su propia
+    deduplicación y confirma con `DELETE`.
+  - El resultado de la última ejecución, incluido el error, queda en `lastRun`. Si una cartera falla,
+    las demás siguen.
 
 Errores: `{ "error": { "code", "message", "details?" } }` con los siguientes estados:
 
@@ -109,4 +143,4 @@ npx vitest run apps/server       # rutas vía app.request(), cliente tipado cont
 npx tsc -p apps/server --noEmit
 ```
 
-Las pruebas usan los fixtures de `packages/market-data/test/fixtures` y no necesitan red.
+Las pruebas usan los fixtures de `packages/market-data/test/fixtures` y no necesitan red. `src/ibkrSync.test.ts` simula IBKR con un `fetch` falso que responde con las respuestas grabadas de `packages/importers/test/fixtures/ibkr-flex-ws`.

@@ -1,0 +1,73 @@
+{
+  "part": "importers",
+  "round": 3,
+  "score": 7.5,
+  "competitorName": "Sharesight",
+  "competitorScore": 8,
+  "approved": false,
+  "fixed": ["I3", "I4", "I13", "I21", "I22", "I23", "I24", "I25", "I26", "I28", "I29"],
+  "gaps": [
+    {
+      "id": "I2",
+      "severity": "media",
+      "title": "La sincronización IBKR existe en el servidor pero no llega al usuario; B3, correo y agregadores siguen ausentes",
+      "detail": "createIbkrFlexSyncHandler funciona: verifiqué 401 sin usuario, el token cifrado en el store, 404 cuando otro usuario intenta usar la credencial, 400 con JSON inválido, y que el sync con fetch simulado devuelve un ImportResult sin filtrar el token. apps/server lo monta (POST /api/sync/ibkr-flex, inbox y rutina diaria por IBKR_FLEX_DAILY). Pero apps/web no llama a /api/sync ni lee el inbox: el usuario solo puede configurarlo con variables de entorno y curl, y el endpoint exige la protección de administrador. Siguen sin existir la conexión con la Área do Investidor de B3 (Gorila, Kinvo), el buzón de confirmaciones por correo (Sharesight) y los agregadores (Pluggy, Belvo, Salt Edge)."
+    },
+    {
+      "id": "I30",
+      "severity": "media",
+      "title": "SINACOR: el catálogo de nomes de pregão es corto y está desactualizado, así que se pregunta mucho",
+      "detail": "Ya no hay asignaciones silenciosas: GERDAU MET → GOAU4, GERDAU PN → GGBR4, ISHARES BOVA → BOVA11 y APPLE DRN → AAPL34. Pero la tabla tiene unos 120 emisores, 11 ETF y 22 BDR, frente a más de 400 acciones, más de 500 FII y unos 800 BDR listados. Además usa nombres antiguos: 'ISA ENERGIA PN N1' (ISAE4 desde 2024) da UNKNOWN_SECURITY sin sugerencias, y la tabla aún mapea 'tran paulist'→TRPL. Los FII sin ticker en la especificação también se preguntan. Una nota típica de un inversionista diversificado necesita varios securityMap, mientras que Gorila y Kinvo la leen completa. Arreglo: tomar el cadastro de B3 (o el catálogo de @pm/market-data) como fuente principal, y guardar y reutilizar los securityMap del usuario en la propia librería, no solo en la UI."
+    },
+    {
+      "id": "I31",
+      "severity": "media",
+      "title": "PDF y .xls validados solo con archivos sintéticos",
+      "detail": "Los analizadores SINACOR, de extractos colombianos y de CDT, y el lector BIFF8, se probaron solo con archivos que genera el propio paquete. Mis PDF adversariales usan el mismo escritor (Helvetica, una celda por Tj). No hay ningún documento real de XP, BTG, Inter, Nu, Ágora, Trii, tyba ni de un banco colombiano, ni un .xls guardado por Excel real. Portfolio Performance mantiene más de 100 importadores PDF probados por su comunidad con documentos reales. Sin un corpus real anonimizado, la confianza 'media' de SINACOR no está justificada."
+    },
+    {
+      "id": "I20",
+      "severity": "baja",
+      "title": "La conciliación todavía mezcla dos cuentas IBKR",
+      "detail": "Con Schwab ya funciona: no hay diferencias falsas. Pero con historial de la cuenta U1111111 (movimientos con account='U1111111') y un Activity Statement de U2222222, se reporta 'KO: reportado 0, calculado 30' y 'USD: reportado 149, calculado 3.349'. accountIds incluye el genérico 'Interactive Brokers' y la 'familia IBKR', y así entra la otra cuenta. Además, los movimientos del Activity no llevan el número de cuenta U…, así que dos cuentas IBKR no se distinguen para deduplicar ni para conciliar."
+    },
+    {
+      "id": "I32",
+      "severity": "baja",
+      "title": "BDR: se ignora la letra de clase que sigue a DRN",
+      "detail": "'ALPHABET DRN C' se importa como GOGL34 sin aviso. Si la especificação distingue las clases A y C (GOGL34 frente a GOGL35), la operación queda en el BDR equivocado. Cuando haya tokens después de DRN que no sean marcas conocidas (ED, EJ, N1, N2, NM), lo seguro es preguntar."
+    },
+    {
+      "id": "I33",
+      "severity": "baja",
+      "title": "Los spin-offs quedan pendientes y la nueva posición no existe hasta que el usuario actúa",
+      "detail": "Un spin-off de MMM en SOLV (2,5 acciones, Flex type SO) queda en corporateActions con CORPORATE_ACTION_PENDING. No se crea la posición de SOLV ni se reparte la base de costo, así que la valoración mensual omite SOLV hasta que alguien use el asistente. Es aceptable si la UI lo resuelve; el importador podría proponer la pata de entrada con costo cero y la pata de salida de base."
+    }
+  ],
+  "matrix": [
+    { "feature": "Sincronización automática con corredor/agregador", "ours": "partial", "others": { "Sharesight": "yes", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Sincronización B3 (Área do Investidor)", "ours": "no", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Importación de archivos B3 Negociação/Movimentação/Posição", "ours": "yes", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "Lectura de notas de corretagem en PDF (SINACOR)", "ours": "partial", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Importadores PDF de bancos y corredores", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "PDF protegidos con contraseña", "ours": "yes", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Reenvío de confirmaciones por correo", "ours": "no", "others": { "Sharesight": "yes", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "no", "Gorila": "no" } },
+    { "feature": "Asistente CSV/Excel con mapeo de columnas editable", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Presets de corredores (IBKR, Schwab, Fidelity, DEGIRO, T212, eToro...)", "ours": "partial", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "IBKR completo (FX, retenciones, transferencias, acciones corporativas)", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "no" } },
+    { "feature": "Formato regional de números y fechas sin errores silenciosos", "ours": "yes", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Vista previa fila por fila con línea y mensajes", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "no", "Gorila": "partial" } },
+    { "feature": "Deduplicación al reimportar el mismo archivo", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "partial", "Ghostfolio": "partial", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Deduplicación entre fuentes por cuenta, sin falsos positivos", "ours": "yes", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "yes" } },
+    { "feature": "Splits y bonificaciones (proporción inferida o automática)", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Colombia: extractos de comisionistas, GMF y CDT", "ours": "partial", "others": { "Sharesight": "no", "Portfolio Performance": "no", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "no" } },
+    { "feature": "Tesouro Direto con id cotizable automáticamente", "ours": "yes", "others": { "Sharesight": "no", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "no", "Gorila": "yes" } },
+    { "feature": "Traspasos de custodia entre corredores", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "yes" } },
+    { "feature": "Codificaciones Latin-1/UTF-16, BOM, CRLF y campos multilínea", "ours": "yes", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Formatos .xls antiguo / HTML complejo / OFX", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Respaldo completo e ida y vuelta CSV/JSON", "ours": "yes", "others": { "Sharesight": "partial", "Portfolio Performance": "yes", "Ghostfolio": "yes", "Kubera": "partial", "Gorila": "partial" } },
+    { "feature": "Conciliación con posiciones y caja del corredor", "ours": "partial", "others": { "Sharesight": "partial", "Portfolio Performance": "partial", "Ghostfolio": "no", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Validado con documentos reales de usuarios", "ours": "no", "others": { "Sharesight": "yes", "Portfolio Performance": "yes", "Ghostfolio": "partial", "Kubera": "yes", "Gorila": "yes" } },
+    { "feature": "Privacidad: todo en el navegador o en servidor propio", "ours": "yes", "others": { "Sharesight": "no", "Portfolio Performance": "yes", "Ghostfolio": "yes", "Kubera": "no", "Gorila": "no" } }
+  ]
+}

@@ -1,4 +1,5 @@
 import type { Instrument, Transaction } from '@pm/core';
+import { basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
 import { daysBetween } from '../common/dates';
 import type { ParamMeta, TaxInput, TaxIssue } from '../common/types';
 
@@ -142,6 +143,8 @@ export interface CryptoTransitPiece {
   country: string;
   /** Arrivals (incl. the fee written off on the last one). */
   consumptions: { date: string; units: number; fx: number; brl: number }[];
+  /** Units of the piece whose cost is provisional/pending (came from an unmatched deposit) — T57. */
+  provisional?: number;
 }
 
 export interface CryptoRouting {
@@ -155,6 +158,13 @@ export interface CryptoRouting {
   unconfirmedSales: Set<string>;
   /** Sale pieces with no recorded units: "custo pendente" (T56). */
   pendingCostSales: Set<string>;
+  /**
+   * Sale pieces drawn (even partly) from units of an unmatched deposit, whose cost is only provisional
+   * (the deposit's own value, or zero): tax shown, DARF withheld until the cost is confirmed (T57).
+   */
+  provisionalCostSales: Set<string>;
+  /** Sale pieces whose CUSTODY (not cost) is unconfirmed — they may not count toward the R$ 35k limit (T59). */
+  custodyUnconfirmedSales: Set<string>;
   /** Country of the venue holding each (virtual) crypto instrument ('' unknown) — T50. */
   venueCountry: Record<string, string>;
   /** Units that left a custody and had not (fully) arrived at another one — T55. */
@@ -171,6 +181,23 @@ export interface CryptoRoutingOptions {
   transferWindowDays?: number;
   /** Max share of a transferred piece that can be lost as a network/withdrawal fee. Default 10%. */
   transferMaxFeePct?: number;
+  /**
+   * Transfers whose OUT is older than this many days are NOT paired automatically: the match is only
+   * proposed (TRANSFER_MATCH_PROPOSED) and the IN keeps a provisional cost (T58). Default 90.
+   */
+  transferMaxLateDays?: number;
+  /**
+   * Original cost confirmed by the user per TRANSFER_IN id (also structured notes "[custo: ...]"):
+   * makes the IN's cost final (not provisional), whatever the pairing (T57/T58).
+   */
+  transferBasis?: TransferBasisMap;
+  /** Apply free-text note proposals as confirmed bases. */
+  acceptNoteProposals?: boolean;
+  /**
+   * Pairings confirmed by the user: TRANSFER_IN id -> TRANSFER_OUT id. Allowed beyond
+   * `transferMaxLateDays` and preferred over any other candidate (confirms TRANSFER_MATCH_PROPOSED).
+   */
+  confirmedTransfers?: Record<string, string>;
 }
 
 /** Order in which custodies are consumed when the named one lacks units (T52): named, then Brazil (conservative). */
@@ -211,13 +238,16 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
   const transferBasis: CryptoRouting['transferBasis'] = {};
   const unconfirmedSales = new Set<string>();
   const pendingCostSales = new Set<string>();
+  const provisionalCostSales = new Set<string>();
+  const custodyUnconfirmedSales = new Set<string>();
   const venueCountry: Record<string, string> = {};
   const transit: CryptoTransitPiece[] = [];
   const cryptos = new Map(input.instruments.filter((i) => i.assetClass === 'crypto').map((i) => [i.id, i]));
-  const empty = (): CryptoRouting => ({ input, custody, transferBasis, unconfirmedSales, pendingCostSales, venueCountry, transit, issues });
+  const empty = (): CryptoRouting => ({ input, custody, transferBasis, unconfirmedSales, pendingCostSales, provisionalCostSales, custodyUnconfirmedSales, venueCountry, transit, issues });
   if (!cryptos.size) return empty();
   const windowDays = opts.transferWindowDays ?? 30;
   const maxFee = opts.transferMaxFeePct ?? 0.1;
+  const maxLate = opts.transferMaxLateDays ?? 90;
   const brl = (ccy: string, date: string) => (ccy === 'BRL' ? 1 : (opts.brlRate?.(ccy, date) ?? input.market.fx(ccy, 'BRL', date) ?? 0));
   const dayOrder = (t: Transaction) =>
     t.type === 'TRANSFER_OUT' ? 1 : t.type === 'TRANSFER_IN' ? 2 : t.type === 'SELL' ? 3 : t.type === 'BUY' || t.type === 'STOCK_DIVIDEND' ? 0 : 4;
@@ -238,12 +268,15 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     const costFx: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
     const costBrl: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
     const lastVenue: Partial<Record<CryptoCustody, string>> = {};
+    /** Units whose cost is provisional/pending (unmatched deposits), per custody (T57). */
+    const prov: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
     const pool: CryptoTransitPiece[] = [];
     const used = new Set<CryptoCustody>();
     const label = (t: Transaction): CryptoCustody | undefined =>
       forced ?? cryptoCustodyForVenue(t.account, opts.accountCustody) ?? (t.account ? undefined : cryptoCustodyForVenue(inst.exchange, opts.accountCustody));
     const countryOf = (b: CryptoCustody) => (b === 'exterior' ? (CRYPTO_VENUE_COUNTRY[lastVenue[b] ?? ''] ?? '') : b === 'brasil' ? 'BR' : '');
-    const add = (b: CryptoCustody, u: number, fx: number, br: number, venue?: string) => {
+    const add = (b: CryptoCustody, u: number, fx: number, br: number, venue?: string, provisional = 0) => {
+      prov[b] += provisional;
       units[b] += u;
       costFx[b] += fx;
       costBrl[b] += br;
@@ -254,6 +287,8 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
       const share = units[b] > 1e-12 ? Math.min(1, u / units[b]) : 0;
       const fx = costFx[b] * share;
       const br = costBrl[b] * share;
+      const pv = prov[b] * share;
+      prov[b] -= pv;
       units[b] = Math.max(0, units[b] - u);
       costFx[b] -= fx;
       costBrl[b] -= br;
@@ -261,26 +296,42 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         units[b] = 0;
         costFx[b] = 0;
         costBrl[b] = 0;
+        prov[b] = 0;
       }
-      return { fx, br };
+      return { fx, br, pv };
     };
     /** Consume pool pieces for an arrival of q units into bucket D at date d. Returns carried cost and matched units. */
-    const arrive = (q: number, D: CryptoCustody, d: string, txId: string) => {
+    const arrive = (
+      q: number,
+      D: CryptoCustody,
+      d: string,
+      txId: string,
+      o: { futureIns?: number[]; ownValue?: number; link?: string; quiet?: boolean; uncapped?: boolean } = {},
+    ) => {
+      const futureIns = o.futureIns ?? [];
+      const ownValue = o.ownValue ?? 0;
       let need = q;
       let fx = 0;
       let br = 0;
+      let pv = 0;
+      const linked = (p: CryptoTransitPiece) => !!o.link && (p.outTxId === o.link || p.outTxId.startsWith(`${o.link}~`));
       const cands = pool
-        .filter((p) => p.outDate <= d && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12)
+        .filter((p) => p.outDate <= d && (daysBetween(p.outDate, d) <= maxLate || linked(p) || o.uncapped) && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12)
         .sort((a, b) => {
+          const lk = (p: CryptoTransitPiece) => (linked(p) ? 0 : 1);
           const inWin = (p: CryptoTransitPiece) => (daysBetween(p.outDate, d) <= windowDays ? 0 : 1);
           const same = (p: CryptoTransitPiece) => (p.bucket === D ? 0 : 1);
           const rem = (p: CryptoTransitPiece) => p.units - p.consumptions.reduce((x, c) => x + c.units, 0);
-          return inWin(a) - inWin(b) || same(a) - same(b) || Math.abs(rem(a) - q) - Math.abs(rem(b) - q) || a.outDate.localeCompare(b.outDate);
+          return lk(a) - lk(b) || inWin(a) - inWin(b) || same(a) - same(b) || Math.abs(rem(a) - q) - Math.abs(rem(b) - q) || a.outDate.localeCompare(b.outDate);
         });
-      if (cands.length > 1 && cands[0]!.bucket !== D && cands[1]!.bucket !== cands[0]!.bucket) {
-        const rem = (p: CryptoTransitPiece) => p.units - p.consumptions.reduce((x, c) => x + c.units, 0);
+      // T60: ambiguous only when the candidates exceed the arrival (some will be left out) and the
+      // top two tie on custody and quantity but differ in unit cost.
+      const remOf = (p: CryptoTransitPiece) => p.units - p.consumptions.reduce((x, c) => x + c.units, 0);
+      const totalCand = cands.filter((p) => daysBetween(p.outDate, d) <= windowDays).reduce((a, p) => a + remOf(p), 0);
+      if (!o.quiet && !o.link && cands.length > 1 && totalCand > q * (1 + maxFee) + 1e-9 && (cands[0]!.bucket === D) === (cands[1]!.bucket === D)) {
+        const rem = remOf;
         const unit = (p: CryptoTransitPiece) => (p.brl - p.consumptions.reduce((x, c) => x + c.brl, 0)) / Math.max(rem(p), 1e-12);
-        if (Math.abs(unit(cands[0]!) - unit(cands[1]!)) > 1e-6 && Math.abs(rem(cands[0]!) - rem(cands[1]!)) < 1e-9) {
+        if (Math.abs(unit(cands[0]!) - unit(cands[1]!)) > 1e-6 && Math.abs(Math.abs(rem(cands[0]!) - q) - Math.abs(rem(cands[1]!) - q)) < 1e-9) {
           issues.push({
             level: 'warning',
             code: 'TRANSFER_PAIR_AMBIGUOUS',
@@ -297,10 +348,12 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         const remBr = p.brl - p.consumptions.reduce((a, c) => a + c.brl, 0);
         let u = Math.min(remU, need);
         let share = u / remU;
-        // The last needed piece: a small shortfall is the network fee → carry its full remaining cost.
-        if (u === need && remU - u > 1e-12 && remU - u <= p.units * maxFee) {
+        // The last needed piece: a small shortfall is the network fee → carry its full remaining cost,
+        // unless a later arrival can still take the remainder (two-part arrival, T60).
+        const laterCovers = futureIns.some((fq) => fq <= (remU - u) * 1.02 + 1e-9);
+        if (u === need && remU - u > 1e-12 && remU - u <= p.units * maxFee && !laterCovers) {
           const pct = (remU - u) / remU;
-          if (pct > 0.02) {
+          if (pct > 0.02 && !o.quiet) {
             issues.push({
               level: 'info',
               code: 'TRANSFER_FEE_ASSUMED',
@@ -312,35 +365,43 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
           share = 1;
           u = remU;
         }
-        if (daysBetween(p.outDate, d) > windowDays) {
+        if (daysBetween(p.outDate, d) > windowDays && !o.quiet && !linked(p)) {
           issues.push({
-            level: 'info',
+            level: 'warning',
             code: 'TRANSFER_MATCHED_LATE',
             transactionId: txId,
             instrumentId: id,
-            message: `Entrada de ${inst.symbol} em ${d} casada com a saída de ${p.outDate} (mais de ${windowDays} dias): custo de origem transferido.`,
+            message:
+              `Entrada de ${inst.symbol} em ${d} casada com a saída de ${p.outDate} (mais de ${windowDays} dias): custo de origem transferido` +
+              (ownValue > 0 ? ` em vez do valor informado na entrada (${ownValue.toFixed(2)} ${inst.currency})` : '') +
+              '. Confirme o vínculo (ou informe transferBasis).',
           });
         }
         const cfx = remFx * share;
         const cbr = remBr * share;
+        // Inferred arrival beyond the cap: the carried cost is only a proposal → provisional (T58).
+        pv += daysBetween(p.outDate, d) > maxLate && !linked(p) ? u : (p.provisional ?? 0) * share;
         p.consumptions.push({ date: d, units: u, fx: cfx, brl: cbr });
         fx += cfx;
         br += cbr;
         need -= Math.min(u, need);
       }
-      return { fx, br, matched: q - Math.max(0, need) };
+      return { fx, br, pv, matched: q - Math.max(0, need) };
     };
+    /** Pending OUT pieces older than the late-match cap (proposals only, T58). */
+    const tooLate = (d: string) =>
+      pool.filter((p) => p.outDate <= d && daysBetween(p.outDate, d) > maxLate && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12);
     /** Consumes q units starting from `first`, then CRYPTO_CONSUMPTION_ORDER. */
     const consume = (q: number, first: CryptoCustody | undefined) => {
       const order = [...(first ? [first] : []), ...CRYPTO_CONSUMPTION_ORDER.filter((b) => b !== first)];
-      const parts: { b: CryptoCustody; u: number; fx: number; br: number }[] = [];
+      const parts: { b: CryptoCustody; u: number; fx: number; br: number; pv: number }[] = [];
       let need = q;
       for (const b of order) {
         if (need <= 1e-12) break;
         const u = Math.min(units[b], need);
         if (u <= 1e-12) continue;
         const c = take(b, u);
-        parts.push({ b, u, fx: c.fx, br: c.br });
+        parts.push({ b, u, fx: c.fx, br: c.br, pv: c.pv });
         need -= u;
       }
       return { parts, unmet: need > 1e-9 ? need : 0 };
@@ -379,34 +440,65 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         pieceBucket.set(t.id, b);
       } else if (t.type === 'TRANSFER_IN') {
         const D = named ?? 'desconhecida';
-        const a = arrive(q, D, t.date, t.id);
+        const hasOwn = t.amount !== undefined || t.price !== undefined;
+        const ownValue = hasOwn ? t.amount ?? q * (t.price ?? 0) : 0;
+        // Later INs of this asset not yet processed: a partial arrival may be completed by them (T60).
+        const futureIns = txs.filter((x) => x.type === 'TRANSFER_IN' && x !== t && txs.indexOf(x) > txs.indexOf(t)).map((x) => x.quantity ?? 0);
+        const userBasis = resolveTransferBasis(t, opts.transferBasis, opts.acceptNoteProposals).basis;
+        const userCost = userBasis ? basisTotalCost(userBasis, q) : undefined;
+        const a = arrive(q, D, t.date, t.id, { futureIns, ownValue, link: opts.confirmedTransfers?.[t.id], quiet: userCost !== undefined });
         let fx = a.fx;
         let br = a.br;
-        if (a.matched < q - 1e-9) {
+        let provisional = a.pv;
+        if (userBasis && userCost !== undefined) {
+          // Cost confirmed by the user: final, whatever was (or was not) paired.
+          fx = userCost;
+          br = userCost * (userBasis.fxRate ?? brl(t.currency, userBasis.openDate));
+          provisional = 0;
+          transferBasis[t.id] = { openDate: userBasis.openDate, totalCost: fx, fxRate: fx > 0 ? br / fx : 0 };
+        } else if (a.matched < q - 1e-9) {
           const unmatched = q - a.matched;
-          const own = t.amount !== undefined || t.price !== undefined ? ((t.amount ?? q * (t.price ?? 0)) * unmatched) / q : 0;
+          const own = hasOwn ? (ownValue * unmatched) / q : 0;
           fx += own;
           br += own * brl(t.currency, t.date);
+          provisional += unmatched;
+          const late = tooLate(t.date);
+          if (late.length) {
+            // T58: an OUT older than the cap is only PROPOSED, never paired automatically.
+            const c = late.sort((x, y) => Math.abs(x.units - unmatched) - Math.abs(y.units - unmatched))[0]!;
+            issues.push({
+              level: 'warning',
+              code: 'TRANSFER_MATCH_PROPOSED',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `Entrada de ${unmatched} ${inst.symbol} em ${t.date} pode corresponder à saída de ${c.outDate} (${c.bucket}, custo R$ ${c.brl.toFixed(2)}), ` +
+                `mais de ${maxLate} dias antes: NÃO vinculada automaticamente. Se for a mesma unidade, informe transferBasis para esta entrada.`,
+            });
+          }
           issues.push({
             level: 'warning',
             code: 'TRANSFER_COST_UNKNOWN',
             transactionId: t.id,
             instrumentId: id,
             message:
-              `Entrada de ${unmatched} ${inst.symbol} em ${t.date} sem saída correspondente: ` +
-              (own > 0 ? 'usado o valor informado na entrada como custo.' : 'custo considerado ZERO — informe o custo de aquisição (transferBasis) ou registre a saída/compra de origem.'),
+              `Entrada de ${unmatched} ${inst.symbol} em ${t.date} sem saída correspondente (depósito externo?): ` +
+              (own > 0
+                ? `valor informado na entrada (${own.toFixed(2)} ${t.currency}) usado como custo PROVISÓRIO — não é necessariamente o custo de aquisição.`
+                : 'custo PENDENTE (considerado ZERO só provisoriamente).') +
+              ' Imposto das vendas dessas unidades calculado, DARF retido até confirmar o custo (transferBasis ou a compra/saída de origem).',
           });
         }
-        if (fx > 0 || br > 0) transferBasis[t.id] = { openDate: t.date, totalCost: fx, fxRate: fx > 0 ? br / fx : 0 };
-        add(D, q, fx, br, cryptoVenueKey(t.account ?? inst.exchange));
+        if ((fx > 0 || br > 0) && !transferBasis[t.id]) transferBasis[t.id] = { openDate: t.date, totalCost: fx, fxRate: fx > 0 ? br / fx : 0 };
+        add(D, q, fx, br, cryptoVenueKey(t.account ?? inst.exchange), provisional);
         pieceBucket.set(t.id, D);
       } else if (t.type === 'TRANSFER_OUT' || t.type === 'SELL') {
         // Units sent elsewhere earlier but never recorded as arrived: infer the arrival into the named custody.
         if (named && units[named] < q - 1e-9 && pool.some((p) => p.outDate <= t.date)) {
           const before = units[named];
-          const a = arrive(q - before, named, t.date, t.id);
+          const a = arrive(q - before, named, t.date, t.id, { uncapped: true });
           if (a.matched > 1e-12) {
-            add(named, a.matched, a.fx, a.br, cryptoVenueKey(t.account));
+            add(named, a.matched, a.fx, a.br, cryptoVenueKey(t.account), a.pv);
             // Synthetic arrival so the per-regime reports see the units and their carried cost.
             const synth: Transaction = {
               id: `${t.id}~in`,
@@ -450,12 +542,30 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
               brl: p.br,
               country: countryOf(p.b),
               consumptions: [],
+              provisional: p.pv > 1e-12 ? p.pv : undefined,
             };
             pool.push(tp);
             transit.push(tp);
           } else {
             const ambiguous = named ? p.b !== named : holdersBefore.length > 1;
-            if (ambiguous) unconfirmedSales.add(pc.id);
+            if (ambiguous) {
+              unconfirmedSales.add(pc.id);
+              custodyUnconfirmedSales.add(pc.id);
+            }
+            if (p.pv > 1e-12) {
+              // T57: sold units came (even partly) from a deposit without confirmed cost.
+              provisionalCostSales.add(pc.id);
+              unconfirmedSales.add(pc.id);
+              issues.push({
+                level: 'warning',
+                code: 'CRYPTO_SALE_COST_PROVISIONAL',
+                transactionId: pc.id,
+                instrumentId: id,
+                message:
+                  `Venda de ${p.u} ${inst.symbol} em ${t.date}: ${+p.pv.toFixed(8)} unidade(s) vêm de entrada sem saída correspondente — custo PROVISÓRIO ` +
+                  '(valor do depósito ou zero). Imposto calculado; DARF desta parte retido até confirmar o custo de aquisição (transferBasis).',
+              });
+            }
           }
         });
         if (parts.length > 1 || (named && parts.some((p) => p.b !== named))) {
@@ -556,6 +666,8 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     transferBasis,
     unconfirmedSales,
     pendingCostSales,
+    provisionalCostSales,
+    custodyUnconfirmedSales,
     venueCountry,
     transit,
     issues,

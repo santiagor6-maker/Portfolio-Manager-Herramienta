@@ -27,7 +27,7 @@
 import type { CurrencyCode, ISODate, MonthlyRow, YearMonth } from './types';
 import type { EngineInput, EngineOptions } from './api';
 import { addMonthsYm, dayToIso, isoToDay, monthEnd, monthRange, todayIso, ymOf } from './dates';
-import { type Attribution, type EngineContext, type ExternalFlow, Ledger, createContext } from './ledger';
+import { type Attribution, type EngineContext, type ExternalFlow, Ledger, createContext, priceFlagWarnings } from './ledger';
 import { type ValueAggregates, type ValueIssues, newIssues, totalValue, valueAggregates } from './valuation';
 
 export interface PeriodWaterfall {
@@ -559,6 +559,7 @@ export function monthlyFromContext(ctx: EngineContext, input: EngineInput, opts:
     if (p.stale.size) row.stalePrices = Array.from(p.stale).sort();
     const warns = [...p.warnings];
     if (p.issues.missingIndex.size) warns.push(`MISSING_INDEX:${Array.from(p.issues.missingIndex).join(',')}`);
+    warns.push(...priceFlagWarnings(ctx, p.startDay, p.endDay));
     if (warns.length) row.warnings = warns;
     rows.push(row);
   });

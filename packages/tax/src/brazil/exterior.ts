@@ -31,6 +31,10 @@ export interface BrForeignOptions {
   cryptoCustody?: Record<string, CryptoCustody>;
   /** Crypto custody per account/broker name (`Transaction.account`). */
   accountCustody?: Record<string, CryptoCustody>;
+  /** Confirmed crypto pairings TRANSFER_IN id -> TRANSFER_OUT id (T58). */
+  confirmedTransfers?: Record<string, string>;
+  /** Max days between OUT and IN for automatic crypto pairing (default 90, T58). */
+  transferMaxLateDays?: number;
   /**
    * Pre-2024 only (IN SRF 118/2000): instruments bought with income earned abroad — the gain is computed
    * in foreign currency and converted at the PTAX of the sale date (T45).
@@ -63,6 +67,8 @@ export interface BrForeignSaleRow {
   gainBrl: number;
   /** Sold units without recorded acquisition (crypto): gain pending, excluded from the base (T56). */
   pendingCost?: boolean;
+  /** Cost provisional: units from a deposit without matching OUT (crypto) — confirm before declaring (T57). */
+  provisionalCost?: boolean;
 }
 
 export interface BrForeignIncomeRow {
@@ -161,6 +167,10 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
     cryptoCustody: opts.cryptoCustody,
     accountCustody: opts.accountCustody,
     brlRate: opts.ptax ? (c, d) => opts.ptax!.buy(c, d) : undefined,
+    transferBasis: opts.transferBasis,
+    acceptNoteProposals: opts.acceptNoteProposals,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
   });
   const routingIssues = routed.issues;
   const input = routed.input;
@@ -324,7 +334,9 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
               'não aplicada automaticamente. Confirme (transferBasis, nota "[custo: AAAA-MM-DD @ preço]" ou acceptNoteProposals).',
           });
         }
-        if (original === undefined && !proposal) {
+        // Crypto deposits without matching OUT are already flagged by the routing (T60: no duplicate).
+        const flaggedByRouting = routingIssues.some((i) => i.code === 'TRANSFER_COST_UNKNOWN' && i.transactionId === tx.id);
+        if (original === undefined && !proposal && !flaggedByRouting) {
           issues.push({
             level: 'warning',
             code: 'TRANSFER_COST_UNKNOWN',
@@ -397,6 +409,7 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
             costBrl,
             costFx: costFxSold,
             gainBrl: proceedsBrl - costBrl,
+            provisionalCost: routed.provisionalCostSales.has(tx.id) || undefined,
           });
           pool.add(ccy, proceedsFx - taxes, (proceedsFx - taxes) * ps);
         }

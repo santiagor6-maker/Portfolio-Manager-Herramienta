@@ -66,6 +66,10 @@ export interface BensDireitosOptions {
   accountCustody?: Record<string, CryptoCustody>;
   /** Apply free-text transfer-cost hints. */
   acceptNoteProposals?: boolean;
+  /** Confirmed crypto pairings TRANSFER_IN id -> TRANSFER_OUT id (T58). */
+  confirmedTransfers?: Record<string, string>;
+  /** Max days between OUT and IN for automatic crypto pairing (default 90, T58). */
+  transferMaxLateDays?: number;
 }
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
@@ -183,8 +187,16 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
   }
 
   // Crypto
-  const cryptoRouting = routeCryptoByCustody(input, { cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
-  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
+  const cx = {
+    cryptoCustody: opts.cryptoCustody,
+    accountCustody: opts.accountCustody,
+    transferBasis: opts.transferBasis,
+    acceptNoteProposals: opts.acceptNoteProposals,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
+  };
+  const cryptoRouting = routeCryptoByCustody(input, cx);
+  const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, ...cx });
   const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
   const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
   for (const id of new Set([...crCur.keys(), ...crPrev.keys()])) {
@@ -232,6 +244,8 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     cryptoCustody: opts.cryptoCustody,
     accountCustody: opts.accountCustody,
     acceptNoteProposals: opts.acceptNoteProposals,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
   });
   issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));
   const fPrev = new Map(foreign.positionsPrevYear.map((p) => [p.instrumentId, p]));

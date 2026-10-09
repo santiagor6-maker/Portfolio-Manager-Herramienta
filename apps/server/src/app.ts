@@ -23,6 +23,7 @@ import {
   type Interval,
   type PriceAdjustment,
 } from '@pm/market-data';
+import { PORTFOLIO_ID_RE, type IbkrFlexSyncMount } from './ibkrSync';
 
 export const VERSION = '0.2.0';
 
@@ -58,6 +59,13 @@ export interface AppOptions {
    * never when the socket is unknown). Default false.
    */
   allowLocalAdmin?: boolean;
+  /**
+   * IBKR Flex sync (POST /api/sync/ibkr-flex, GET/DELETE /api/sync/ibkr-flex/inbox). Undefined =
+   * not configured (SYNC_SECRET unset): the routes answer 503. Same protection as DELETE /api/cache.
+   */
+  ibkrFlexSync?: IbkrFlexSyncMount;
+  /** Max body of POST /api/sync/* (it may carry the portfolio's transactions). Default 5 MiB. */
+  syncMaxBodyBytes?: number;
   /** Request log sink (default console.log). Pass null to silence. */
   log?: ((line: string) => void) | null;
   now?: () => number;
@@ -147,6 +155,7 @@ export function createApp(opts: AppOptions = {}): Hono {
   const allowed = new Set(Array.isArray(origins) ? origins : [origins]);
   const limiter = opts.rateLimit === false ? undefined : new RateLimiter(opts.rateLimit ?? { capacity: 120, refillPerSecond: 2 }, opts.now);
   const maxBody = opts.maxBodyBytes ?? 64 * 1024;
+  const syncMaxBody = opts.syncMaxBodyBytes ?? 5 * 1024 * 1024;
   const allowedHosts = opts.allowedHosts ? new Set(opts.allowedHosts.map((h) => h.toLowerCase())) : undefined;
   let warnedShared = false;
   const app = new Hono();
@@ -224,7 +233,7 @@ export function createApp(opts: AppOptions = {}): Hono {
       {
         error: {
           code: 'NOT_FOUND',
-          message: `No route ${c.req.method} ${c.req.path}. Endpoints: /api/health, /api/search, /api/quote, /api/history, /api/fx, /api/index, /api/catalog, POST /api/batch`,
+          message: `No route ${c.req.method} ${c.req.path}. Endpoints: /api/health, /api/search, /api/quote, /api/history, /api/fx, /api/index, /api/catalog, POST /api/batch, POST /api/sync/ibkr-flex`,
         },
       },
       404,
@@ -344,19 +353,65 @@ export function createApp(opts: AppOptions = {}): Hono {
     },
   );
 
+  /**
+   * Guard of the mutating / secret-bearing endpoints. With API_TOKEN the auth middleware already
+   * checked it (and the Origin check ran). Without it, only an explicit opt-in for a REAL loopback
+   * socket, never behind a proxy (X-Forwarded-For can be forged and a local reverse proxy makes
+   * every client look like 127.0.0.1) and never without a socket.
+   */
+  const adminForbidden = (c: Context, what: string): Response | undefined => {
+    if (opts.apiToken) return undefined;
+    const addr = socketAddress(c);
+    if (!opts.allowLocalAdmin || opts.trustProxy || !addr || !LOOPBACK.has(addr)) {
+      return c.json({ error: { code: 'FORBIDDEN', message: `${what} requires API_TOKEN (or ALLOW_LOCAL_ADMIN=1 on a direct loopback connection)` } }, 403);
+    }
+    return undefined;
+  };
+
   /** Invalidate cached data for a symbol (fix a provider correction). Token or loopback only. */
   app.delete('/api/cache', async (c) => {
-    // With API_TOKEN the auth middleware already checked it. Without it, only an explicit opt-in
-    // for a REAL loopback socket, never behind a proxy (X-Forwarded-For can be forged and a local
-    // reverse proxy makes every client look like 127.0.0.1) and never without a socket.
-    if (!opts.apiToken) {
-      const addr = socketAddress(c);
-      if (!opts.allowLocalAdmin || opts.trustProxy || !addr || !LOOPBACK.has(addr)) {
-        return c.json({ error: { code: 'FORBIDDEN', message: 'Cache invalidation requires API_TOKEN (or ALLOW_LOCAL_ADMIN=1 on a direct loopback connection)' } }, 403);
-      }
-    }
+    const denied = adminForbidden(c, 'Cache invalidation');
+    if (denied) return denied;
     const symbol = required(c, 'symbol', 'instrument id or provider symbol');
     return c.json(await service.invalidate(symbol));
+  });
+
+  // IBKR Flex Web Service sync (importers I2). The handler stores the Flex token encrypted and
+  // never returns it; actions: save / sync / delete (see @pm/importers sync/server.ts).
+  const syncGuard = (c: Context): Response | undefined => {
+    const denied = adminForbidden(c, 'IBKR sync');
+    if (denied) return denied;
+    if (!opts.ibkrFlexSync) return c.json({ error: { code: 'NOT_CONFIGURED', message: 'IBKR sync is disabled: set SYNC_SECRET on the server' } }, 503);
+    return undefined;
+  };
+  const portfolioParam = (c: Context): string => {
+    const id = required(c, 'portfolioId', 'portfolio id');
+    if (!PORTFOLIO_ID_RE.test(id)) bad('"portfolioId" has invalid characters');
+    return id;
+  };
+  app.post(
+    '/api/sync/ibkr-flex',
+    async (c, next) => syncGuard(c) ?? next(),
+    bodyLimit({
+      maxSize: syncMaxBody,
+      onError: (c) => c.json({ error: { code: 'BAD_REQUEST', message: `Body too large (max ${syncMaxBody} bytes)` } }, 413),
+    }),
+    async (c) => {
+      const res = await opts.ibkrFlexSync!.handler(c.req.raw);
+      res.headers.set('cache-control', 'no-store');
+      return res;
+    },
+  );
+  app.get('/api/sync/ibkr-flex/inbox', async (c) => {
+    const denied = syncGuard(c);
+    if (denied) return denied;
+    c.header('Cache-Control', 'no-store');
+    return c.json(await opts.ibkrFlexSync!.inbox(portfolioParam(c)));
+  });
+  app.delete('/api/sync/ibkr-flex/inbox', async (c) => {
+    const denied = syncGuard(c);
+    if (denied) return denied;
+    return c.json(await opts.ibkrFlexSync!.clearInbox(portfolioParam(c)));
   });
 
   return app;

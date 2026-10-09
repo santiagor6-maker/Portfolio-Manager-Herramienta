@@ -16,12 +16,15 @@ import type { CacheEntry, PersistentStore } from '@pm/market-data';
 export interface FileStoreOptions {
   maxFiles?: number;
   pruneEvery?: number;
+  /** Permissions of written files (e.g. 0o600 for the sync credential store); directories get 0o700. */
+  fileMode?: number;
 }
 
 export class FileStore implements PersistentStore {
   private writes = 0;
   private readonly maxFiles: number;
   private readonly pruneEvery: number;
+  private readonly fileMode: number | undefined;
 
   constructor(
     readonly dir: string,
@@ -29,6 +32,7 @@ export class FileStore implements PersistentStore {
   ) {
     this.maxFiles = opts.maxFiles ?? 20_000;
     this.pruneEvery = opts.pruneEvery ?? 200;
+    this.fileMode = opts.fileMode;
   }
 
   private pathFor(key: string): { dir: string; file: string } {
@@ -52,9 +56,9 @@ export class FileStore implements PersistentStore {
 
   async set(key: string, entry: CacheEntry): Promise<void> {
     const { dir, file } = this.pathFor(key);
-    await mkdir(dir, { recursive: true });
+    await mkdir(dir, this.fileMode === undefined ? { recursive: true } : { recursive: true, mode: 0o700 });
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify({ key, entry }), 'utf8');
+    await writeFile(tmp, JSON.stringify({ key, entry }), this.fileMode === undefined ? 'utf8' : { encoding: 'utf8', mode: this.fileMode });
     await rename(tmp, file);
     if (++this.writes % this.pruneEvery === 0) await this.prune().catch(() => undefined);
   }

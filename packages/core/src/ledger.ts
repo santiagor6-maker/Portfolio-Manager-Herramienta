@@ -24,7 +24,7 @@ import type { EngineInput, EngineOptions } from './api';
 import { dayToIso, isStrictIsoDate, isoToDay } from './dates';
 import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
-import { accruedLotValues, priceInfo } from './pricing';
+import { accrualFactor, accruedLotValues, priceInfo } from './pricing';
 import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
 import { fixedIncomeTax, residenceOf, taxRegimeFor } from './fitax';
 
@@ -178,6 +178,8 @@ export interface EngineContext {
    * used but unconfirmed (TRADE_PRICE_UNCONFIRMED), late recorded redemptions (LATE_REDEMPTION).
    */
   outliers: { tx: Transaction; code: string; severity: Diagnostic['severity']; message: string }[];
+  /** C44: questionable trade prints (TRADE_PRICE_OUTLIER rejected, TRADE_PRICE_UNCONFIRMED used). */
+  priceFlags: { day: number; instrumentId: string; code: 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED' }[];
   /** Tax residence (explicit or inferred from the portfolio base currency). */
   taxResidence: string | undefined;
   /**
@@ -234,28 +236,22 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   // Trade prints as price observations (BUY/SELL only; transfer prices are historical costs).
   // C25/C37: a print that deviates more than `tradePriceTolerance` (default 30 %, x2 for crypto,
   // widened with the square root of the gap in months) from BOTH the previous reference (market
-  // close or accepted print) AND the next market close is an outlier (typo): not used as a price,
-  // reported as TRADE_PRICE_OUTLIER. Without a later close the move cannot be refuted: the print
-  // is used and reported as TRADE_PRICE_UNCONFIRMED (genuine +40 % in a fund, BTC +45 %).
+  // close or accepted print) AND the confirming close (same-day close or the next close, at any
+  // distance) is an outlier (typo): not used as a price, reported as TRADE_PRICE_OUTLIER.
+  // C44: a confirming close within tolerance accepts the print silently (genuine -52 % gap). Without
+  // a confirming close, a print beyond the hard band (x3 / ÷3 of the reference, x5 for crypto,
+  // widened for gaps over a year; also applied when the reference is very old) is not used until the
+  // user confirms it (`Transaction.priceConfirmed`); inside the band it is used and reported as
+  // TRADE_PRICE_UNCONFIRMED (genuine +40 % in a fund, BTC +45 %). Both codes also reach
+  // MonthlyRow.warnings and PerformanceSummary.warnings (see priceFlagWarnings).
   // Tiny trades (< 0.5 % of the position) are not used when a market close exists that week.
   const observations = new Map<string, { days: number[]; prices: number[] }>();
   const firstTradePrice = new Map<number, Map<string, number>>();
   const outliers: EngineContext['outliers'] = [];
+  const priceFlags: EngineContext['priceFlags'] = [];
   const tol = raw.tradePriceTolerance ?? 0.3;
   const held = new Map<string, number>();
-  const marketRef = (inst: Instrument | undefined, id: string, day: number, after: boolean): { day: number; price: number } | undefined => {
-    const pt = after ? undefined : market.pricePointAt(id, day - 1);
-    let p: { day: number; close: number } | undefined = pt;
-    if (after) {
-      // next close within 62 days
-      for (const probe of [day + 1, day + 7, day + 31, day + 62]) {
-        const q = market.pricePointAt(id, probe);
-        if (q && q.day > day) {
-          p = q;
-          break;
-        }
-      }
-    }
+  const toInstCcy = (inst: Instrument | undefined, id: string, p: { day: number; close: number } | undefined): { day: number; price: number } | undefined => {
     if (!p) return undefined;
     const pc = market.priceCurrency(id);
     const ccy = inst?.currency;
@@ -270,9 +266,14 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   const deviates = (p: number, ref: { day: number; price: number } | undefined, day: number, inst: Instrument | undefined): boolean | undefined => {
     if (!ref || !(ref.price > 0)) return undefined;
     const gap = Math.abs(day - ref.day);
-    if (gap > 400) return undefined;
     const t = tol * (inst?.assetClass === 'crypto' ? 2 : 1) * Math.max(1, Math.sqrt(gap / 30));
     return Math.abs(p / ref.price - 1) > t;
+  };
+  const beyondHard = (p: number, ref: { day: number; price: number } | undefined, day: number, inst: Instrument | undefined): boolean => {
+    if (!ref || !(ref.price > 0)) return false;
+    const h = (inst?.assetClass === 'crypto' ? 5 : 3) * Math.max(1, Math.sqrt(Math.abs(day - ref.day) / 365));
+    const ratio = p / ref.price;
+    return ratio > h || ratio < 1 / h;
   };
   if (options.tradePriceObservations) {
     for (const { tx, day } of sorted) {
@@ -299,17 +300,32 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         p *= r;
       }
       let o = observations.get(id);
-      const prevMarket = marketRef(inst, id, day, false);
-      const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
-      const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
-      const d1 = deviates(p, prevRef, day, inst);
-      const d2 = deviates(p, marketRef(inst, id, day, true), day, inst);
-      if (d1 === true && d2 === true) {
-        outliers.push({ tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning', message: `Trade price ${p} of ${id} deviates more than ${Math.round(tol * 100)} % from both the previous reference ${prevRef!.price.toFixed(4)} and the next close; not used as a price observation (typo?)` });
-        continue;
-      }
-      if (d1 === true) {
-        outliers.push({ tx, code: 'TRADE_PRICE_UNCONFIRMED', severity: 'info', message: `Trade price ${p} of ${id} moved more than ${Math.round(tol * 100)} % from ${prevRef!.price.toFixed(4)} and there is no later close to confirm it; used as the price — please confirm` });
+      if (tx.priceConfirmed !== true) {
+        const prevMarket = toInstCcy(inst, id, market.pricePointAt(id, day - 1));
+        const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
+        const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
+        const sameDay = market.pricePointAt(id, day);
+        const nextRef = toInstCcy(inst, id, sameDay && sameDay.day === day ? sameDay : market.pricePointAfter(id, day));
+        const d1 = deviates(p, prevRef, day, inst);
+        const d2 = deviates(p, nextRef, day, inst);
+        const pct = Math.round(tol * 100);
+        if (d2 !== false) {
+          if (d1 === true && d2 === true) {
+            outliers.push({ tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning', message: `Trade price ${p} of ${id} deviates more than ${pct} % from both the previous reference ${prevRef!.price.toFixed(4)} and the next close ${nextRef!.price.toFixed(4)}; not used as a price observation (typo?)` });
+            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' });
+            continue;
+          }
+          const hardRef = prevRef ?? nextRef;
+          if (beyondHard(p, hardRef, day, inst)) {
+            outliers.push({ tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning', message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toFixed(2)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}) and no close confirms it; not used as a price observation until confirmed (set priceConfirmed on the transaction)` });
+            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' });
+            continue;
+          }
+          if (d1 === true && d2 === undefined) {
+            outliers.push({ tx, code: 'TRADE_PRICE_UNCONFIRMED', severity: 'info', message: `Trade price ${p} of ${id} moved more than ${pct} % from ${prevRef!.price.toFixed(4)} and there is no later close to confirm it; used as the price — please confirm` });
+            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_UNCONFIRMED' });
+          }
+        }
       }
       if (before > 0 && q < 0.005 * before && market.pricePointAt(id, day) && day - (market.pricePointAt(id, day) as { day: number }).day <= 7) continue;
       if (!o) observations.set(id, (o = { days: [], prices: [] }));
@@ -363,7 +379,33 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     firstTradePrice,
     maturities,
     outliers,
+    priceFlags,
   };
+}
+
+/**
+ * C44: warnings for questionable trade prints affecting the period (startDay, endDay]: prints
+ * recorded inside it, and unconfirmed prints recorded earlier that still set the price at the end
+ * (no market close since). Format `CODE:id1,id2`.
+ */
+export function priceFlagWarnings(ctx: EngineContext, startDay: number, endDay: number): string[] {
+  if (!ctx.priceFlags.length) return [];
+  const by = new Map<string, Set<string>>();
+  for (const f of ctx.priceFlags) {
+    if (f.day > endDay) continue;
+    let hit = f.day > startDay;
+    if (!hit && f.code === 'TRADE_PRICE_UNCONFIRMED') {
+      const last = ctx.market.priceDayAt(f.instrumentId, endDay);
+      const obs = ctx.observations.get(f.instrumentId);
+      const lastObs = obs ? (obs.days.filter((d) => d <= endDay).pop() ?? -Infinity) : -Infinity;
+      hit = (last === undefined || last < f.day) && lastObs <= f.day;
+    }
+    if (!hit) continue;
+    let set = by.get(f.code);
+    if (!set) by.set(f.code, (set = new Set()));
+    set.add(f.instrumentId);
+  }
+  return Array.from(by, ([code, ids]) => `${code}:${Array.from(ids).sort().join(',')}`);
 }
 
 const CASH_EPS = 1e-7;
@@ -395,6 +437,8 @@ export class Ledger {
   /** Index into ctx.sorted of the next transaction to process. */
   cursor = 0;
   private matCursor = 0;
+  /** C42: day of the last coupon paid per accrual instrument. */
+  private readonly lastCoupon = new Map<string, number>();
   /** Day of the last processed transaction (or -Infinity). */
   lastDay = -Infinity;
 
@@ -991,6 +1035,13 @@ export class Ledger {
       if (tx.quantity && tx.price) gross = tx.quantity * tx.price;
       else if (tx.price && tx.instrumentId) gross = held * tx.price;
     }
+    if (tx.type === 'INTEREST' && tx.taxes === undefined && tx.instrumentId && held > 0 && gross > 0) {
+      const g = this.grossFromNetInterest(tx, day, gross);
+      if (g !== undefined) {
+        taxes = g - gross;
+        gross = g;
+      }
+    }
     if (tx.instrumentId) {
       this.instrument(tx.instrumentId, tx);
       if (held <= 0) this.diag(tx, day, 'INCOME_WITHOUT_POSITION', `${tx.type} for ${tx.instrumentId} while no units are held`, 'warning');
@@ -1026,24 +1077,117 @@ export class Ledger {
 
   /**
    * Coupon / periodic interest of an accrual instrument (C36): the gross payment leaves the
-   * accrued value. Each lot is re-anchored at the payment day at (accrued value - its pro-rata
-   * share of the coupon), so later accrual, the net value and the redemption at maturity only
-   * include interest accrued since the last payment.
+   * accrued value. Each lot is re-anchored at the payment day at (accrued value - its share of
+   * the coupon), so later accrual, the net value and the redemption at maturity only include
+   * interest accrued since the last payment.
+   * C42: the coupon belongs to the units held at the record date: `quantity` on the transaction
+   * when given, else the holding before a sale/purchase in the 15 days before payment when that
+   * explains the amount better (sold ex-coupon). The reduction of each lot is limited to the
+   * interest it accrued (since its anchor, or over the coupon period: since the previous coupon,
+   * the issue date or at most a year, which covers interest bought with a dirty price); a coupon
+   * above that is income that leaves the principal intact (COUPON_EXCEEDS_ACCRUED_INTEREST).
    */
   private payCoupon(tx: Transaction, inst: Instrument, day: number, grossTx: number): void {
     const b = this.books.get(inst.id);
     if (!b || b.quantity <= 0 || !(grossTx > 0)) return;
     const coupon = grossTx * this.convert(tx, day, tx.currency, inst.currency);
-    const { values } = accruedLotValues(this.ctx, inst, b.lots, day);
+    const { values, principal } = accruedLotValues(this.ctx, inst, b.lots, day);
     const totalQ = b.lots.reduce((s, l) => s + l.quantity, 0);
-    let short = false;
+    if (!(totalQ > 0)) return;
+    let units = totalQ;
+    if (num(tx.quantity) > 0) units = num(tx.quantity);
+    else {
+      const accrued = values.reduce((s, v, i) => s + Math.max(0, v - (principal[i] ?? v)), 0);
+      const cands = this.unitsBeforePayment(tx, inst.id, day, totalQ);
+      if (cands.length > 1 && accrued > 0) {
+        const per = accrued / totalQ;
+        let err = Math.abs(Math.log(coupon / (totalQ * per)));
+        for (const c of cands) {
+          if (!(c > 0)) continue;
+          const e = Math.abs(Math.log(coupon / (c * per)));
+          if (e < err - 1e-6) {
+            err = e;
+            units = c;
+          }
+        }
+      }
+      if (units !== totalQ) this.diag(tx, day, 'COUPON_RECORD_DATE_UNITS', `${tx.type} of ${grossTx} on ${inst.id} apportioned over the ${units} units held at the record date (${totalQ} held on the payment date)`, 'info');
+    }
+    const perUnit = coupon / units;
+    const spec = inst.accrual;
+    const issue = spec?.issueDate && isStrictIsoDate(spec.issueDate) ? isoToDay(spec.issueDate) : -Infinity;
+    const periodStart = Math.max(this.lastCoupon.get(inst.id) ?? -Infinity, issue, day - 366);
+    const fPeriod = accrualFactor(this.ctx, inst, periodStart, day) ?? 1;
+    let excess = 0;
     b.lots.forEach((l, i) => {
-      const v = (values[i] ?? 0) - (coupon * l.quantity) / totalQ;
-      if (v < -1e-6) short = true;
-      l.unitValue = Math.max(0, v) / l.quantity;
+      const v = values[i] ?? 0;
+      const want = perUnit * l.quantity;
+      const sinceAnchor = Math.max(0, v - (principal[i] ?? v));
+      const cap = Math.max(sinceAnchor, fPeriod > 1 ? v * (1 - 1 / fPeriod) : 0);
+      let cut = want;
+      if (want > cap * 1.02 + 1e-9 * Math.max(1, v)) {
+        cut = cap;
+        excess += want - cap;
+      }
+      l.unitValue = Math.max(0, v - cut) / l.quantity;
       l.anchorDay = day;
     });
-    if (short) this.diag(tx, day, 'COUPON_EXCEEDS_ACCRUAL', `${tx.type} of ${grossTx} on ${inst.id} exceeds the accrued value; check the amount`, 'warning');
+    this.lastCoupon.set(inst.id, day);
+    if (excess > 0) this.diag(tx, day, 'COUPON_EXCEEDS_ACCRUED_INTEREST', `${tx.type} of ${grossTx} on ${inst.id} exceeds the interest accrued by ${excess.toFixed(2)} ${inst.currency}; the excess is income and the principal is kept intact — check the amount`, 'warning');
+  }
+
+  /**
+   * C43: interest of a withholding instrument (CO_RETENCION, BR_IR_REGRESSIVE) recorded without
+   * `taxes` whose amount matches the accrued interest net of the expected withholding (and not
+   * the gross) was recorded net: returns the inferred gross (INTEREST_NET_ASSUMED), so the
+   * withheld part does not stay as phantom accrued interest.
+   */
+  private grossFromNetInterest(tx: Transaction, day: number, amount: number): number | undefined {
+    const inst = this.instrumentOf.get(tx.instrumentId as string) ?? this.ctx.instruments.get(tx.instrumentId as string);
+    const b = inst?.accrual ? this.books.get(inst.id) : undefined;
+    if (!inst || !b || b.quantity <= 0) return undefined;
+    const regime = taxRegimeFor(inst, this.ctx.taxResidence);
+    if (regime !== 'CO_RETENCION' && regime !== 'BR_IR_REGRESSIVE') return undefined;
+    const { values, principal } = accruedLotValues(this.ctx, inst, b.lots, day);
+    let interest = 0;
+    let tax = 0;
+    b.lots.forEach((l, i) => {
+      const a = Math.max(0, (values[i] ?? 0) - (principal[i] ?? 0));
+      interest += a;
+      tax += fixedIncomeTax(regime, day - l.openDay, a, inst.accrual).total;
+    });
+    const r = this.convert(tx, day, inst.currency, tx.currency);
+    interest *= r;
+    tax *= r;
+    const net = interest - tax;
+    if (!(interest > 0) || !(tax > 0) || !(net > 0)) return undefined;
+    const errNet = Math.abs(amount / net - 1);
+    if (errNet > 0.02 || errNet >= Math.abs(amount / interest - 1)) return undefined;
+    const g = (amount * interest) / net;
+    this.diag(tx, day, 'INTEREST_NET_ASSUMED', `${tx.type} of ${amount} on ${inst.id} matches the accrued interest net of the expected withholding; recorded as gross ${g.toFixed(2)} with ${(g - amount).toFixed(2)} withheld (add \`taxes\` to override)`, 'info');
+    return g;
+  }
+
+  /** Holdings of `id` before each quantity change in the 15 days before `day` (latest first). */
+  private unitsBeforePayment(tx: Transaction, id: string, day: number, heldNow: number): number[] {
+    const sorted = this.ctx.sorted;
+    const cur = this.cursor - 1;
+    const out = [heldNow];
+    if (sorted[cur]?.tx !== tx) return out;
+    let q = heldNow;
+    for (let k = cur - 1; k >= 0; k--) {
+      const s = sorted[k] as SortedTx;
+      if (s.day < day - 15) break;
+      if (s.tx.instrumentId !== id) continue;
+      const t = s.tx.type;
+      const n = num(s.tx.quantity);
+      if (t === 'SELL' || t === 'TRANSFER_OUT') q += n;
+      else if (t === 'BUY' || t === 'TRANSFER_IN') q -= n;
+      else if (t === 'SPLIT' || t === 'STOCK_DIVIDEND') break;
+      else continue;
+      out.push(q);
+    }
+    return out;
   }
 
   private returnOfCapital(tx: Transaction, day: number, fees: number, taxes: number): void {

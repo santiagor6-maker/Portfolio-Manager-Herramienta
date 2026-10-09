@@ -138,8 +138,11 @@ export function positionPerformanceImpl(eng: Engine, period: PeriodKey, asOf: IS
       }
       const pre = val(keyPre(d), id);
       const close = val(keyClose(d), id);
-      // Restructurings move value at the start of the day; P already includes them (C22).
-      const ra = subReturn(pre, prev + f.startInBase - f.startOutBase, eps, ignore);
+      // Restructurings move value at the start of the day; P already includes them (C22). C38: the
+      // handed-over value is the final value of the origin (its own close on the day of the change)
+      // and the starting value of the target: r = (P + startOut) / (V(f-1) + startIn) - 1, so a
+      // merger followed by a ticker change keeps the intermediate company's own move.
+      const ra = subReturn(pre + f.startOutBase, prev + f.startInBase, eps, ignore);
       const den = pre + f.inBase - f.outBase;
       let rb: number;
       if (den > eps) rb = (close + f.endOutBase) / den - 1;

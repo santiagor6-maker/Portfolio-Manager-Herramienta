@@ -53,6 +53,17 @@ export class InstrumentCatalog {
     return this.byIsin.get(isin.toUpperCase()) ?? [];
   }
 
+  /**
+   * Instruments whose local symbol is exactly `symbol` (case-insensitive), as broker statements write
+   * them without exchange (ECOPETROL, PFAVAL, GEB). Ordered by preference: a listing whose Yahoo
+   * symbol is the bare symbol itself (US), then BVC, B3, other exchanges (review R4, M33).
+   */
+  bySymbol(symbol: string): Instrument[] {
+    const s = symbol.toUpperCase();
+    const rank = (i: Instrument) => (i.providerSymbols?.yahoo?.toUpperCase() === s ? 0 : i.exchange === 'XBOG' ? 1 : i.exchange === 'BVMF' ? 2 : 3);
+    return this.data.instruments.filter((i) => i.symbol.toUpperCase() === s).sort((a, b) => rank(a) - rank(b));
+  }
+
   /** Resolve an id, a Yahoo symbol, an ISIN or a benchmark id. */
   resolve(key: string): Instrument | undefined {
     const bench = this.data.benchmarks.find((b) => b.id.toUpperCase() === key.toUpperCase());

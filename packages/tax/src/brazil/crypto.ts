@@ -2,6 +2,7 @@ import type { CurrencyCode, ISODate, YearMonth } from '@pm/core';
 import { lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, nextMonth } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
+import type { TransferBasisMap } from '../common/basis';
 import { displaySymbol, grossAmount, instrumentMap, round2, sortTransactions, sum } from '../common/util';
 import { classifyForBrazil, cryptoCustodyOf, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
 import { sicalcData, type SicalcData } from './darf';
@@ -46,6 +47,10 @@ export interface CryptoSale {
   gainBrl: number;
   /** Sold units without recorded acquisition: counted in the month's sales, gain pending (T56). */
   pendingCost?: boolean;
+  /** Cost is provisional (units from a deposit without matching OUT): tax shown, DARF withheld (T57). */
+  provisionalCost?: boolean;
+  /** DARF of this sale withheld (custody or cost not confirmed). */
+  held?: boolean;
 }
 
 export interface CryptoMonth {
@@ -54,9 +59,12 @@ export interface CryptoMonth {
   exempt: boolean;
   gainBrl: number;
   tax: number;
+  /** DARF of the CONFIRMED sales, ready to pay (T59). */
   darf?: { code: '4600'; amount: number; dueDate: ISODate; sicalc: SicalcData };
-  /** Tax computed but DARF withheld because the custody of some sold asset is not confirmed (T22). */
+  /** Some tax withheld because the custody or the cost of some sale is not confirmed (T22/T57). */
   darfBlockedUnknownCustody?: boolean;
+  /** Tax of the unconfirmed sales (or of the whole month when the exemption itself depends on them), withheld (T59). */
+  darfHeldAmount?: number;
   /** Some sales of the month have pending cost (gain not computed; DARF withheld). */
   pendingCost?: boolean;
 }
@@ -94,6 +102,13 @@ export interface CryptoOptions {
   /** @deprecated use cryptoCustody. 'exterior' forces every crypto-asset abroad. */
   custody?: 'brasil' | 'exterior';
   exemptionLimit?: number;
+  /** Original cost confirmed per TRANSFER_IN id (makes a deposit's cost final, T57). */
+  transferBasis?: TransferBasisMap;
+  acceptNoteProposals?: boolean;
+  /** Confirmed pairings TRANSFER_IN id -> TRANSFER_OUT id (T58). */
+  confirmedTransfers?: Record<string, string>;
+  /** Max days between OUT and IN for automatic pairing (default 90, T58). */
+  transferMaxLateDays?: number;
 }
 
 /**
@@ -104,7 +119,14 @@ export interface CryptoOptions {
 export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): CryptoReport {
   const forced: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
   if (opts.custody) for (const i of rawInput.instruments) if (i.assetClass === 'crypto') forced[i.id] ??= opts.custody;
-  const routed = routeCryptoByCustody(rawInput, { cryptoCustody: forced, accountCustody: opts.accountCustody });
+  const routed = routeCryptoByCustody(rawInput, {
+    cryptoCustody: forced,
+    accountCustody: opts.accountCustody,
+    transferBasis: opts.transferBasis,
+    acceptNoteProposals: opts.acceptNoteProposals,
+    confirmedTransfers: opts.confirmedTransfers,
+    transferMaxLateDays: opts.transferMaxLateDays,
+  });
   const input = routed.input;
   const instruments = instrumentMap(input.instruments);
   const issues: TaxIssue[] = [];
@@ -167,7 +189,17 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
         const share = q / (tx.quantity ?? q);
         const grossBrl = grossAmount(tx) * share * rate;
         const net = (grossAmount(tx) - (tx.fees ?? 0)) * share * rate;
-        sales.push({ transactionId: tx.id, date: tx.date, instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: q, grossBrl, costBrl: cost, gainBrl: net - cost });
+        sales.push({
+          transactionId: tx.id,
+          date: tx.date,
+          instrumentId: id,
+          symbol: displaySymbol(id, instruments.get(id)),
+          quantity: q,
+          grossBrl,
+          costBrl: cost,
+          gainBrl: net - cost,
+          provisionalCost: routed.provisionalCostSales.has(tx.id) || undefined,
+        });
       }
     }
   }
@@ -195,18 +227,33 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
           'se estiver no exterior ou em carteira própria fora do país, Lei 14.754 anual. Informe cryptoCustody para gerar o DARF.',
       });
     }
-    const ambiguous = list.some((x) => routed.unconfirmedSales.has(x.transactionId) || x.pendingCost);
+    // T59: the DARF of the confirmed sales is issued; only the unconfirmed part is withheld. When the
+    // exemption itself depends on sales of unconfirmed custody (they could be abroad and not count
+    // toward the limit), the whole month is withheld.
+    const confirmed = (x: CryptoSale) => custodyOf(x.instrumentId) === 'brasil' && !routed.unconfirmedSales.has(x.transactionId) && !x.pendingCost;
+    for (const x of list) if (!confirmed(x)) x.held = true;
     const pending = list.some((x) => x.pendingCost);
-    const blocked = (tax > 0 && (unknown.length > 0 || ambiguous)) || pending;
+    const certainGross = sum(list.filter((x) => custodyOf(x.instrumentId) === 'brasil' && !routed.custodyUnconfirmedSales.has(x.transactionId)).map((x) => x.grossBrl));
+    const confirmedTax = exempt || certainGross <= limit ? 0 : round2(sum(list.filter(confirmed).map((x) => gcapTax(Math.max(0, x.gainBrl)))));
+    const held = round2(tax - confirmedTax);
+    const blocked = held > 0.004 || pending;
+    if (confirmedTax > 0 && held > 0.004) {
+      issues.push({
+        level: 'info',
+        code: 'CRYPTO_DARF_PARTIAL',
+        message: `Criptoativos ${month}: DARF 4600 de R$ ${confirmedTax.toFixed(2)} das vendas confirmadas pronto para pagamento; R$ ${held.toFixed(2)} retidos até confirmar custódia/custo das demais.`,
+      });
+    }
     months.push({
       month,
       salesBrl,
       exempt,
       gainBrl: gain,
       tax,
-      darf: tax > 0 && !blocked ? { code: '4600', amount: tax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, tax) } : undefined,
+      darf: confirmedTax > 0 ? { code: '4600', amount: confirmedTax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, confirmedTax) } : undefined,
       darfBlockedUnknownCustody: blocked || undefined,
-      pendingCost: list.some((x) => x.pendingCost) || undefined,
+      darfHeldAmount: held > 0.004 ? held : undefined,
+      pendingCost: pending || undefined,
     });
   }
   return {

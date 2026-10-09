@@ -214,6 +214,11 @@ export interface Transaction {
   targetInstrumentId?: string;
   /** SPINOFF: share (0..1) of the parent cost basis allocated to the spun-off instrument. */
   costFraction?: number;
+  /**
+   * BUY/SELL: the user confirmed this price is correct (round 5). Skips the outlier checks, e.g.
+   * for a genuine move of more than x3 that the engine would otherwise hold back.
+   */
+  priceConfirmed?: boolean;
 }
 
 export type TransactionSubtype = 'JCP' | 'ORDINARY' | 'EXTRAORDINARY' | 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE' | (string & {});
