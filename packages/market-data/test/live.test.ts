@@ -398,3 +398,24 @@ describe.skipIf(!LIVE)('LIVE round 4', () => {
     T,
   );
 });
+
+describe.skipIf(!LIVE)('LIVE round 5', () => {
+  const service = new MarketDataService();
+  it(
+    'bare BVC tickers quote from the BVC; windows without trades are seeded; unknown symbols are NOT_FOUND',
+    async () => {
+      const quotes = await service.quotes(['ECOPETROL', 'PFAVAL', 'GEB', 'ISA', 'NUTRESA', 'ICOLCAP', 'CEMARGOS', 'PFCIBEST']);
+      for (const q of quotes) {
+        expect(q.ok).toBe(true);
+        if (q.ok) expect(q.data).toMatchObject({ instrumentId: expect.stringMatching(/^XBOG:/), currency: 'COP' });
+      }
+      const h = await service.history({ symbol: 'ELCONDOR.CL', from: '2023-04-01', to: '2023-05-31', interval: '1mo' });
+      console.log('[live] ELCONDOR 2023-04..05:', JSON.stringify(h.series.points));
+      expect(h.series.points[0]).toMatchObject({ carried: true });
+      expect(h.series.points[0]!.date < '2023-04-01').toBe(true);
+      const err = await service.history({ symbol: 'QQXZ', from: '2025-01-01', to: '2025-02-01' }).catch((e: unknown) => e as { code?: string });
+      expect(err.code).toBe('NOT_FOUND');
+    },
+    T,
+  );
+});

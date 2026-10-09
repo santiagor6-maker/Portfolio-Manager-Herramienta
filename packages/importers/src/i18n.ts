@@ -401,6 +401,11 @@ const R3: Catalog = {
     pt: 'O arquivo não traz sinais: "{value}" foi tomado como {type} (entrada). Se for uma saída, associe a palavra ao tipo correto no mapeamento.',
     en: 'The file has no signs: "{value}" was taken as {type} (inflow). If it is an outflow, map that word to the right type.',
   },
+  RECONCILIATION_UNASSIGNED: {
+    es: '{count} movimientos de este corredor no tienen cuenta y podrían ser de otra cuenta (usados en la conciliación: {used}). Asígnales la cuenta para una conciliación exacta.',
+    pt: '{count} movimentações desta corretora não têm conta e podem ser de outra conta (usadas na conciliação: {used}). Atribua a conta para uma conciliação exata.',
+    en: '{count} transactions of this broker have no account and may belong to another account (used in reconciliation: {used}). Label them for an exact reconciliation.',
+  },
   ROW_NUMBER_AMBIGUOUS: {
     es: 'El valor "{value}" en {currency} es ambiguo en este archivo (¿decimal o miles?); confirma la fila.',
     pt: 'O valor "{value}" em {currency} é ambíguo neste arquivo (decimal ou milhar?); confirme a linha.',

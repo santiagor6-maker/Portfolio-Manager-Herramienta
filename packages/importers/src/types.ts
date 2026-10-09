@@ -271,6 +271,11 @@ export interface Reconciliation {
   /** Computed (existing + imported) vs. reported; only rows that differ. */
   positionDifferences: PositionDifference[];
   cashDifferences: { currency: CurrencyCode; reported: number; computed: number; difference: number }[];
+  /**
+   * Existing transactions of this broker without an account label whose attribution changes the result
+   * (they may belong to another account of the same broker). Label them to make reconciliation exact.
+   */
+  unassignedTransactions?: number;
 }
 
 export interface CorporateActionSuggestion {

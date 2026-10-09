@@ -777,13 +777,14 @@ function sourceFamily(source: string | undefined): string | undefined {
  *  - transactions without any account are "unassigned" when they come from the same broker family:
  *    the caller decides with them or without them (best fit) and says so.
  */
-function sameAccount(existing: Transaction[], source: string, ctx: ParseContext): { assigned: Transaction[]; unassigned: Transaction[] } {
+function sameAccount(existing: Transaction[], source: string, ctx: ParseContext): { assigned: Transaction[]; unassigned: Transaction[]; otherAccounts: boolean } {
   const acct = ctx.options.account;
   const ids = ctx.reported?.accountIds ?? [];
   const numbered = ids.filter((a) => accountNumber(a));
   const fam = sourceFamily(source);
   const assigned: Transaction[] = [];
   const unassigned: Transaction[] = [];
+  let otherAccounts = false;
   for (const t of existing) {
     if (t.account) {
       let ok: boolean;
@@ -792,22 +793,29 @@ function sameAccount(existing: Transaction[], source: string, ctx: ParseContext)
       else if (ids.length) ok = ids.some((a) => accountsCompatible(a, t.account));
       else ok = sourceFamily(t.source) === fam;
       if (ok) assigned.push(t);
+      else if (sourceFamily(t.source) === fam || (numbered.length && accountNumber(t.account))) otherAccounts = true;
     } else if (sourceFamily(t.source) === fam) unassigned.push(t);
   }
-  return { assigned, unassigned };
+  return { assigned, unassigned, otherAccounts };
 }
 
-/** Reconcile with or without the family's unassigned transactions, whichever explains the statement better. */
+/**
+ * Unassigned transactions (same broker family, no account) count by default: with a single account
+ * they are that account's, and dropping them would hide real differences. When the portfolio holds
+ * other accounts of the same broker, the version that explains the statement better wins. Either
+ * way, if leaving them out would change the result, the user is told (RECONCILIATION_UNASSIGNED).
+ */
 function reconcileBestFit(ctx: ParseContext, resolver: InstrumentResolver, existing: Transaction[], source: string, imported: Transaction[]): Reconciliation {
-  const { assigned, unassigned } = sameAccount(existing, source, ctx);
+  const { assigned, unassigned, otherAccounts } = sameAccount(existing, source, ctx);
   const withU = reconcile(ctx, resolver, [...assigned, ...unassigned, ...imported]);
   let rec = withU;
   if (unassigned.length) {
     const without = reconcile(ctx, resolver, [...assigned, ...imported]);
     const n = (r: Reconciliation) => r.positionDifferences.length + r.cashDifferences.length;
     if (n(without) < n(withU)) {
-      rec = without;
-      ctx.fileIssues.push(ctx.issue('RECONCILIATION_UNASSIGNED', 'info', { count: unassigned.length }));
+      if (otherAccounts) rec = without;
+      rec.unassignedTransactions = unassigned.length;
+      ctx.fileIssues.push(ctx.issue('RECONCILIATION_UNASSIGNED', 'info', { count: unassigned.length, used: otherAccounts ? 'no' : 'sí' }));
     }
   }
   if (rec.positionDifferences.length || rec.cashDifferences.length) {
