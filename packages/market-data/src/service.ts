@@ -562,9 +562,11 @@ export class MarketDataService {
 
   private async marketDaily(r: Resolved, from: ISODate, to: ISODate): Promise<MarketResult> {
     const fallbacks: MarketResult['fallbacks'] = [];
+    let yahooNotFound = false;
     try {
       return { h: await this.yahooChunked(r.target.yahoo, from, to), fallbacks };
     } catch (e) {
+      yahooNotFound = e instanceof MarketDataError && e.code === 'NOT_FOUND';
       fallbacks.push({ source: 'yahoo', error: errorMessage(e) });
     }
     for (const p of this.fallbackProviders.filter((x) => x.supports(r.target))) {
@@ -599,7 +601,12 @@ export class MarketDataService {
       if (snap) return { h: snap, fallbacks };
       fallbacks.push({ source: 'snapshot', error: 'no locally recorded prices for this range' });
     }
-    const notFound = fallbacks.every((f) => /not found|no prices|no data|delisted|unsupported|no locally recorded/i.test(f.error));
+    // Yahoo answering "not found" settles it unless a backup failed for a reason other than access
+    // (keys, egress, timeouts): those cannot contradict it (review R4, M33: 404 -> NOT_FOUND, not 502).
+    const NOT_FOUND_RE = /not found|no prices|no data|delisted|unsupported|no locally recorded/i;
+    const ACCESS_RE = /40[13]|unauthori[sz]ed|forbidden|api key|token|fetch failed|timed? ?out|ECONN|ENOTFOUND|rate.?limit|429/i;
+    const notFound =
+      fallbacks.every((f) => NOT_FOUND_RE.test(f.error)) || (yahooNotFound && fallbacks.slice(1).every((f) => NOT_FOUND_RE.test(f.error) || ACCESS_RE.test(f.error)));
     const suggest = this.catalog.search(r.target.symbol, 1)[0]?.id;
     throw new MarketDataError(notFound ? 'NOT_FOUND' : 'UPSTREAM_ERROR', `No price source could serve ${r.target.instrumentId}`, {
       fallbacks,

@@ -234,9 +234,18 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     for (const x of list) if (!confirmed(x)) x.held = true;
     const pending = list.some((x) => x.pendingCost);
     const certainGross = sum(list.filter((x) => custodyOf(x.instrumentId) === 'brasil' && !routed.custodyUnconfirmedSales.has(x.transactionId)).map((x) => x.grossBrl));
-    const confirmedTax = exempt || certainGross <= limit ? 0 : round2(sum(list.filter(confirmed).map((x) => gcapTax(Math.max(0, x.gainBrl)))));
+    const confirmedTax = exempt ? 0 : round2(sum(list.filter(confirmed).map((x) => gcapTax(Math.max(0, x.gainBrl)))));
     const held = round2(tax - confirmedTax);
     const blocked = held > 0.004 || pending;
+    if (confirmedTax > 0 && certainGross <= limit) {
+      issues.push({
+        level: 'warning',
+        code: 'CRYPTO_EXEMPTION_DEPENDS_ON_UNCONFIRMED',
+        message:
+          `Criptoativos ${month}: as vendas de custódia confirmada no Brasil somam R$ ${certainGross.toFixed(2)} (até R$ ${limit}). ` +
+          'O limite só é ultrapassado contando as partes não confirmadas (tratadas como Brasil, regra conservadora); se forem do exterior, o mês fica isento e o DARF pago pode ser restituído.',
+      });
+    }
     if (confirmedTax > 0 && held > 0.004) {
       issues.push({
         level: 'info',
