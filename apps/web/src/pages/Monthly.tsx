@@ -9,6 +9,7 @@ import { useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
 import { BENCHMARKS, benchmarkName } from '../lib/benchmarks';
+import { PriceWarnings } from '../components/PriceWarnings';
 import { downloadText, downloadXlsx, toCsv } from '../lib/export';
 import { indexName } from '../lib/labels';
 
@@ -383,6 +384,11 @@ export default function MonthlyPage() {
                         <tr id={`m-${r.month}`} className={clsx(focus === r.month && '[&>td]:!bg-accent-soft')}>
                           <td className="sticky left-0 bg-surface font-medium z-[1]">
                             {formatMonth(r.month, f.locale)}
+                            {r.warnings?.length ? (
+                              <span className="ml-1.5">
+                                <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} compact />
+                              </span>
+                            ) : null}
                             {(r.partial || r.month === currentMonth) && <span className="block text-[10.5px] font-normal text-muted leading-tight">{t('monthly.inProgress')}</span>}
                           </td>
                           {cols.map((c) => (
@@ -419,6 +425,11 @@ export default function MonthlyPage() {
                         <div className="font-medium">
                           {formatMonth(r.month, f.locale)}
                           {r.month === currentMonth && <span className="chip ml-2 !h-5">{t('monthly.inProgress')}</span>}
+                          {r.warnings?.length ? (
+                            <span className="ml-2">
+                              <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} />
+                            </span>
+                          ) : null}
                         </div>
                         <div className="text-xs text-muted">
                           <Money value={r.endValueBase} /> · <Money value={r.gainBase} signed />

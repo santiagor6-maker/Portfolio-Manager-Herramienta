@@ -413,8 +413,8 @@ describe.skipIf(!LIVE)('LIVE round 5', () => {
       console.log('[live] ELCONDOR 2023-04..05:', JSON.stringify(h.series.points));
       expect(h.series.points[0]).toMatchObject({ carried: true });
       expect(h.series.points[0]!.date < '2023-04-01').toBe(true);
-      const err = await service.history({ symbol: 'QQXZ', from: '2025-01-01', to: '2025-02-01' }).catch((e: unknown) => e as { code?: string });
-      expect(err.code).toBe('NOT_FOUND');
+      const err: unknown = await service.history({ symbol: 'QQXZ', from: '2025-01-01', to: '2025-02-01' }).catch((e: unknown) => e);
+      expect((err as { code?: string }).code).toBe('NOT_FOUND');
     },
     T,
   );

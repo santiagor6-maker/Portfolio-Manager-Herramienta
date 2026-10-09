@@ -150,6 +150,23 @@ export const BR_UNITS = new Set([
   'AESB11', 'RNEW11', 'ITSA11', 'CPLE11', 'ENEV11', 'BRBI11', 'STBP11', 'INBR11', 'CMIG11', 'PPLA11', 'NEOE11',
 ]);
 
+/**
+ * Same-security ticker renames (old id → current id). Mirrors the `kind: 'rename'` rows of
+ * @pm/market-data `TICKER_ALIASES` (history is stitched there, so the current id is quotable for old
+ * dates), plus ISA CTEEP → ISA Energia Brasil (TRPL → ISAE, 2024). Mergers and conversions (BRFS3 →
+ * MBRF3, NTCO3 → NATU3, CPLE6 → CPLE3) are NOT renames: they stay separate instruments.
+ */
+export const TICKER_RENAMES: Record<string, string> = {
+  'BVMF:ELET3': 'BVMF:AXIA3',
+  'BVMF:EMBR3': 'BVMF:EMBJ3',
+  'BVMF:CCRO3': 'BVMF:MOTV3',
+  'BVMF:MRFG3': 'BVMF:MBRF3',
+  'BVMF:TRPL3': 'BVMF:ISAE3',
+  'BVMF:TRPL4': 'BVMF:ISAE4',
+  'XBOG:PFBCOLOM': 'XBOG:PFCIBEST',
+  'XBOG:BCOLOMBIA': 'XBOG:CIBEST',
+};
+
 /** Popular ISIN → (symbol, exchange). Used when a file carries only the ISIN (DEGIRO). */
 export const ISIN_DIRECTORY: Record<string, { symbol: string; exchange: ExchangeCode; assetClass?: AssetClass }> = {
   US0378331005: { symbol: 'AAPL', exchange: 'XNAS' },

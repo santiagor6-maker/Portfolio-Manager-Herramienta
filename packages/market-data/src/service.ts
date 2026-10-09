@@ -15,6 +15,7 @@ import { InstrumentCatalog } from './catalog';
 import { classifySplit } from './corporate';
 import { addDays, daysBetween, isISODate, todayISO } from './dates';
 import { MarketDataError, errorMessage } from './errors';
+import { mergeDeclaredDividends, validateDeclaredDividends, type DeclaredDividend } from './dividend-calendar';
 import { validateFrozen, type FrozenHistory } from './frozen';
 import { FxRouter } from './fx-router';
 import { HttpClient, type FetchLike, type HttpClientOptions } from './http';
@@ -109,6 +110,8 @@ export interface MarketDataServiceOptions {
   customFeeds?: CustomFeedInstrument[];
   /** Recorded histories of securities that no longer trade (see frozen.ts). */
   frozenHistories?: FrozenHistory[];
+  /** Declared dividends with payment dates / installments, e.g. BVC (see dividend-calendar.ts). */
+  dividendCalendar?: DeclaredDividend[];
   yahooBaseUrl?: string;
   /** @deprecated use keys.socrata */
   trmAppToken?: string;
@@ -156,6 +159,9 @@ export class MarketDataService {
   private readonly maxRangeDays: number;
   private readonly fxProviderIds: string[];
   private readonly frozen = new Map<string, FrozenHistory>();
+  private readonly declared = new Map<string, DeclaredDividend[]>();
+  /** Instruments requested through this server, also kept in the snapshot (review R4, M2). */
+  private tracked?: Set<string>;
 
   constructor(opts: MarketDataServiceOptions = {}) {
     this.now = opts.now ?? (() => new Date());
@@ -224,6 +230,7 @@ export class MarketDataService {
       ecbBaseUrl: opts.urls?.ecb,
       sidraBaseUrl: opts.urls?.sidra,
     });
+    for (const d of validateDeclaredDividends(opts.dividendCalendar ?? [])) this.declared.set(d.instrumentId, [...(this.declared.get(d.instrumentId) ?? []), d]);
     for (const f of opts.frozenHistories ?? []) {
       const v = validateFrozen(f);
       this.frozen.set(v.instrumentId, v);
@@ -675,16 +682,40 @@ export class MarketDataService {
     const from = opts.from ?? `${this.today().slice(0, 4)}-01-01`;
     const failed: string[] = [];
     let ok = 0;
-    for (const inst of this.catalog.instruments.filter((i) => exchanges.includes(i.exchange))) {
+    // Catalog instruments plus any other instrument of those exchanges requested through this
+    // server (ELCONDOR, MINEROS...): the snapshot follows what the user actually holds.
+    const ids = new Set(this.catalog.instruments.filter((i) => exchanges.includes(i.exchange)).map((i) => i.id));
+    for (const id of await this.trackedIds()) if (exchanges.includes(id.slice(0, id.indexOf(':')))) ids.add(id);
+    for (const id of ids) {
       try {
-        const h = await this.history({ symbol: inst.id, from });
+        const h = await this.history({ symbol: id, from });
         if (h.series.source === 'yahoo') ok++;
-        else failed.push(`${inst.id} (${h.series.source})`);
+        else failed.push(`${id} (${h.series.source})`);
       } catch (e) {
-        failed.push(`${inst.id}: ${errorMessage(e).slice(0, 60)}`);
+        failed.push(`${id}: ${errorMessage(e).slice(0, 60)}`);
       }
     }
     return { ok, failed };
+  }
+
+  private static readonly TRACKED_KEY = 'snapshot:tracked:v1';
+  private static readonly TRACKED_MAX = 1000;
+
+  private async trackedIds(): Promise<Set<string>> {
+    if (!this.tracked) {
+      const saved = await this.cache.getStale<string[]>(MarketDataService.TRACKED_KEY);
+      this.tracked = new Set(Array.isArray(saved) ? saved.filter((x) => typeof x === 'string') : []);
+    }
+    return this.tracked;
+  }
+
+  /** Remember an instrument served by Yahoo (persisted; bounded, oldest dropped first). */
+  private async track(id: string): Promise<void> {
+    const t = await this.trackedIds();
+    if (t.has(id)) return;
+    t.add(id);
+    while (t.size > MarketDataService.TRACKED_MAX) t.delete(t.values().next().value!);
+    await this.cache.set(MarketDataService.TRACKED_KEY, [...t], 365 * DAY, { persist: 'always' }).catch(() => undefined);
   }
 
   private async otherDaily(r: Resolved, from: ISODate, to: ISODate): Promise<MarketResult> {
@@ -739,6 +770,7 @@ export class MarketDataService {
     if (r.kind === 'delisted') return this.delistedHistory(req, r, from, to, interval, asOf);
     const { h: raw, fallbacks } = r.kind === 'market' ? await this.marketDaily(r, from, to) : await this.otherDaily(r, from, to);
     const inst = this.instrumentFor(r, raw);
+    if (r.kind === 'market' && !r.instrument && raw.source === 'yahoo') await this.track(r.target.instrumentId);
     const stitched = await this.stitchRenames(r, raw, from, inst.id);
     const h = stitched.h;
     const notes = [...h.notes, ...stitched.notes];
@@ -751,6 +783,8 @@ export class MarketDataService {
       if (br.ok) dividends = mergeBrapiDividends(dividends, br.data);
       else notes.push(`brapi dividend details unavailable: ${br.error.slice(0, 80)}`);
     }
+    const declared = this.declared.get(inst.id.toUpperCase());
+    if (declared) dividends = mergeDeclaredDividends(dividends, declared, from, to);
     const actions: MarketCorporateAction[] = [
       ...dividends.map((d) => dividendAction(inst.id, d, h.source)),
       ...h.splits.map((s) =>

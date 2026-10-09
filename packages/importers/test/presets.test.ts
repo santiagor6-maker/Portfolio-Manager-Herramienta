@@ -248,7 +248,7 @@ describe('Extracto colombiano (Latin-1, ;, comma decimals, preamble)', async () 
     expect(tx(r, 12)).toMatchObject({ type: 'TAX', amount: 4000 });
     expect(tx(r, 13)).toMatchObject({ type: 'WITHDRAWAL', amount: 1_000_000 });
     expect(byLine(r, 15).status).toBe('skipped');
-    expect(r.instruments.find((i) => i.id === 'XBOG:PFBCOLOM')).toMatchObject({ currency: 'COP', country: 'CO', providerSymbols: { yahoo: 'PFBCOLOM.CL' } });
+    expect(r.instruments.find((i) => i.id === 'XBOG:PFCIBEST')).toMatchObject({ currency: 'COP', country: 'CO', providerSymbols: { yahoo: 'PFCIBEST.CL' } });
   });
 });
 

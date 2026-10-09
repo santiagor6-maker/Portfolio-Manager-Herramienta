@@ -1,4 +1,4 @@
-import type { CurrencyCode, ISODate } from '@pm/core';
+import type { CurrencyCode, ISODate, YearMonth } from '@pm/core';
 import { basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
 import { addDays, isBrazilBusinessDay, lastBrazilBusinessDayOfMonth, nextMonth, yearOf } from '../common/dates';
@@ -8,6 +8,7 @@ import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
 import { classifyForBrazil, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
 import { brazilConfig, type BrazilTaxYearConfig } from './config';
+import { accumulateDarfs, paymentsForCode, settleDarfs, type DarfGuide, type DarfPayment } from './darf';
 
 /** BCB PTAX closing rates (BRL per unit of foreign currency). */
 export interface PtaxProvider {
@@ -35,6 +36,10 @@ export interface BrForeignOptions {
   confirmedTransfers?: Record<string, string>;
   /** Max days between OUT and IN for automatic crypto pairing (default 90, T58). */
   transferMaxLateDays?: number;
+  /** Pre-2024 DARFs (4600/0190): reference date for status, payments (by code) and Selic — T61. */
+  asOf?: ISODate;
+  payments?: DarfPayment[];
+  selicMonthly?: Record<YearMonth, number>;
   /**
    * Pre-2024 only (IN SRF 118/2000): instruments bought with income earned abroad — the gain is computed
    * in foreign currency and converted at the PTAX of the sale date (T45).
@@ -132,6 +137,11 @@ export interface BrForeignReport {
     /** Carnê-leão on foreign dividends/interest (T45): monthly progressive table, credit for tax paid abroad. */
     carneLeao: { month: string; incomeBrl: number; taxTable: number; foreignTaxCreditBrl: number; taxDue: number; darfCode: '0190'; dueDate: ISODate }[];
     carneLeaoTotal: number;
+    /**
+     * DARFs of the period (4600 GCAP and 0190 carnê-leão) with the shared machinery (T61): R$ 10
+     * minimum rollover within the year, payment status, multa/juros and Sicalc data.
+     */
+    darfs: DarfGuide[];
   };
   disclaimer: LocalizedText;
   sales: BrForeignSaleRow[];
@@ -476,6 +486,24 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
   const a = byYear.get(year) ?? { sales: [], income: [] };
   const snap = snapshots.get(year) ?? { positions: [], cash: [] };
   const prev = snapshots.get(year - 1) ?? { positions: [], cash: [] };
+  const gcapPre2024 = regime === 'pre-2024' ? pre2024(a, opts.foreignOriginInstruments ?? [], carneLeaoRate) : undefined;
+  if (gcapPre2024) {
+    for (const [code, items, label] of [
+      ['4600', gcapPre2024.months.map((m) => ({ month: m.month, amount: m.tax })), '4600 (GCAP exterior)'],
+      ['0190', gcapPre2024.carneLeao.map((c) => ({ month: c.month, amount: c.taxDue })), '0190 (carnê-leão)'],
+    ] as const) {
+      const acc = accumulateDarfs(code, items);
+      gcapPre2024.darfs.push(...acc.darfs);
+      issues.push(...settleDarfs(acc.darfs, paymentsForCode(code, opts.payments, rawInput.transactions), { asOf: opts.asOf, selicMonthly: opts.selicMonthly, label }));
+      if (acc.pendingOut > 0) {
+        issues.push({
+          level: 'info',
+          code: 'DARF_BELOW_MINIMUM',
+          message: `DARF ${label}: R$ ${acc.pendingOut.toFixed(2)} (${acc.pendingMonths.join(', ')}) abaixo do mínimo de R$ 10 — acumular no próximo DARF do mesmo código.`,
+        });
+      }
+    }
+  }
 
   return {
     country: 'BR',
@@ -485,7 +513,7 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
     sales: a.sales,
     income: a.income,
     totals: totals ?? computeYear(a, carry, cfgYear),
-    gcapPre2024: regime === 'pre-2024' ? pre2024(a, opts.foreignOriginInstruments ?? [], carneLeaoRate) : undefined,
+    gcapPre2024,
     positions: snap.positions,
     positionsPrevYear: prev.positions,
     cash: snap.cash,
@@ -625,5 +653,6 @@ function pre2024(
     dividendsCarneLeaoBrl: sum(a.income.map((i) => i.grossBrl)),
     carneLeao,
     carneLeaoTotal: sum(carneLeao.map((c) => c.taxDue)),
+    darfs: [],
   };
 }

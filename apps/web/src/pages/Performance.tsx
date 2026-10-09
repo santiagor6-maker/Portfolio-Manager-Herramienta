@@ -11,6 +11,7 @@ import { indexName } from '../lib/labels';
 import { addMonths, monthEnd } from '../lib/ids';
 import type { SummaryKey } from '../services/analysis';
 import { compound } from './Monthly';
+import { PriceWarnings } from '../components/PriceWarnings';
 
 /** Drawdown series (decimal ≤ 0) from monthly cumulative TWR. */
 export function drawdowns(rows: MonthlyRow[]): [string, number][] {
@@ -111,7 +112,11 @@ export default function PerformancePage() {
 
   return (
     <div>
-      <PageHeader title={t('perf.title')} subtitle={t('perf.subtitle', { currency: f.currency })} />
+      <PageHeader
+        title={t('perf.title')}
+        subtitle={t('perf.subtitle', { currency: f.currency })}
+        actions={si?.warnings?.length ? <PriceWarnings warnings={si.warnings} from={si.from} to={si.to} /> : undefined}
+      />
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3" data-testid="perf-kpis">
         <Kpi
           loading={loading}

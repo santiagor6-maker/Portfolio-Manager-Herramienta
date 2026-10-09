@@ -143,6 +143,9 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     accountCustody: opts.accountCustody,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    asOf: opts.asOf,
+    payments: opts.payments,
+    selicMonthly: opts.selicMonthly,
     initialLossCarry: opts.initialLossCarry,
     foreignOriginInstruments: opts.foreignOriginInstruments,
     portfolioBaseCurrency: opts.portfolioBaseCurrency,
@@ -158,6 +161,9 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     acceptNoteProposals: opts.acceptNoteProposals,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    asOf: opts.asOf,
+    payments: opts.payments,
+    selicMonthly: opts.selicMonthly,
   });
   const comeCotas = brazilComeCotasReport(input, { year: y, ...co, fundTerms: opts.fundTerms });
   const irpfm = brazilIrpfmEstimate({
@@ -187,7 +193,7 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
     ),
     [`brasil-${y}-cripto.csv`]: toCsv(
       [
-        ['mes', 'vendas_brl', 'isento_35k', 'ganho_brl', 'imposto', 'darf_valor', 'darf_vencimento', 'darf_bloqueado_custodia', 'valor_retido'],
+        ['mes', 'vendas_brl', 'isento_35k', 'ganho_brl', 'imposto', 'darf_valor', 'darf_meses_incluidos', 'darf_vencimento', 'darf_status', 'darf_total_com_acrescimos', 'acumulado_abaixo_minimo', 'darf_bloqueado_custodia', 'valor_retido'],
         ...cripto.months.map((m) => [
           m.month,
           m.salesBrl,
@@ -195,7 +201,11 @@ export function brazilTaxPack(input: TaxInput, opts: BrazilTaxPackOptions): Braz
           m.gainBrl,
           m.tax,
           m.darf?.amount ?? 0,
+          m.darf?.includesMonths.join(' '),
           m.darf?.dueDate,
+          m.darf?.status,
+          m.darf?.late?.total ?? m.darf?.amount ?? 0,
+          m.darfCarriedForward ?? 0,
           m.darfBlockedUnknownCustody ?? false,
           m.darfHeldAmount ?? 0,
         ]),

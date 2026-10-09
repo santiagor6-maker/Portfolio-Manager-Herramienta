@@ -6,16 +6,7 @@ import type { LocalizedText, TaxInput, TaxIssue } from '../common/types';
 import { round2, sum } from '../common/util';
 import { isApuracaoCategory, type BrCategory } from './classify';
 import { brazilConfig, type BrazilTaxYearConfig } from './config';
-import {
-  darfLateCharges,
-  darfPaymentsFromTransactions,
-  matchDarfPayments,
-  sicalcData,
-  type DarfLateCharges,
-  type DarfPayment,
-  type DarfStatus,
-  type SicalcData,
-} from './darf';
+import { darfPaymentsFromTransactions, newDarf, settleDarfs, type DarfGuide, type DarfPayment } from './darf';
 import { runBrazilB3Ledger, type BrShortPosition, type BrTrade } from './ledger';
 
 export interface BrApuracaoOptions {
@@ -59,21 +50,8 @@ export interface BrPoolResult {
   tax: number;
 }
 
-export interface BrDarf {
-  /** Month of apuração (período de apuração). */
-  month: YearMonth;
-  periodoApuracao: ISODate;
-  code: string;
-  amount: number;
-  dueDate: ISODate;
-  /** Months whose sub-R$10 tax was rolled into this DARF. */
-  includesMonths: YearMonth[];
-  status: DarfStatus;
-  payment?: DarfPayment;
-  /** Late charges for the recorded payment, or for paying on `asOf` when overdue and unpaid. */
-  late?: DarfLateCharges;
-  sicalc: SicalcData;
-}
+/** Monthly DARF 6015 (same shape as every other DARF code, see `DarfGuide`). */
+export type BrDarf = DarfGuide;
 
 export interface BrMonthRow {
   month: YearMonth;
@@ -277,19 +255,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
     const total = taxAfterIrrf + pending;
     let darf: BrDarf | undefined;
     if (total > 0 && round2(total) >= cfg.darfMinimum) {
-      const periodoApuracao = lastDayOfMonth(month);
-      const dueDate = lastBrazilBusinessDayOfMonth(nextMonth(month));
-      const amount = round2(total);
-      darf = {
-        month,
-        periodoApuracao,
-        code: cfg.darfCode,
-        amount,
-        dueDate,
-        includesMonths: [...pendingMonths, month],
-        status: 'pendente',
-        sicalc: sicalcData(cfg.darfCode, periodoApuracao, dueDate, amount),
-      };
+      darf = newDarf(cfg.darfCode, month, total, [...pendingMonths, month]);
       pending = 0;
       pendingMonths = [];
     } else if (total > 0) {
@@ -345,37 +311,7 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
   // DARF payment status and late charges.
   const allDarfs = rows.flatMap((r) => (r.darf ? [r.darf] : []));
   const payments = [...(opts.payments ?? []), ...darfPaymentsFromTransactions(input.transactions)];
-  const matched = matchDarfPayments(allDarfs, payments);
-  for (const d of allDarfs) {
-    const p = matched.get(d);
-    if (p) {
-      d.payment = p;
-      if (p.date > d.dueDate) {
-        d.status = 'paga_em_atraso';
-        d.late = darfLateCharges(d.amount, d.dueDate, p.date, opts.selicMonthly);
-        d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: p.date, charges: d.late });
-      } else d.status = 'paga';
-      const expected = d.late?.total ?? d.amount;
-      if (p.amount + 0.05 < expected) {
-        issues.push({
-          level: 'warning',
-          code: 'DARF_UNDERPAID',
-          message: `DARF de ${d.month}: pago R$ ${p.amount.toFixed(2)} de R$ ${expected.toFixed(2)} devidos (com acréscimos, se houver).`,
-        });
-      }
-    } else if (opts.asOf && opts.asOf > d.dueDate) {
-      d.status = 'vencida';
-      d.late = darfLateCharges(d.amount, d.dueDate, opts.asOf, opts.selicMonthly);
-      d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: opts.asOf, charges: d.late });
-      if (d.late.missingSelicMonths.length) {
-        issues.push({
-          level: 'info',
-          code: 'SELIC_MISSING',
-          message: `DARF vencido de ${d.month}: informe a Selic mensal de ${d.late.missingSelicMonths.join(', ')} para calcular os juros (ou use o Sicalc).`,
-        });
-      }
-    }
-  }
+  issues.push(...settleDarfs(allDarfs, payments, { asOf: opts.asOf, selicMonthly: opts.selicMonthly }));
 
   const shown = rows.filter((r) => r.month >= from && r.month <= end);
   const darfs = shown.flatMap((r) => (r.darf ? [r.darf] : []));

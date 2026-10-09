@@ -1,11 +1,11 @@
 import type { CurrencyCode, ISODate, YearMonth } from '@pm/core';
-import { lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, nextMonth } from '../common/dates';
+import { monthOf } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import type { TransferBasisMap } from '../common/basis';
 import { displaySymbol, grossAmount, instrumentMap, round2, sortTransactions, sum } from '../common/util';
 import { classifyForBrazil, cryptoCustodyOf, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
-import { sicalcData, type SicalcData } from './darf';
+import { accumulateDarfs, paymentsForCode, settleDarfs, type DarfGuide, type DarfPayment } from './darf';
 
 /** GCAP progressive rates on capital gains of individuals (Lei 13.259/2016 art. 21 da Lei 8.981). */
 export const GCAP_BRACKETS: { upTo: number; rate: number }[] = [
@@ -59,8 +59,13 @@ export interface CryptoMonth {
   exempt: boolean;
   gainBrl: number;
   tax: number;
-  /** DARF of the CONFIRMED sales, ready to pay (T59). */
-  darf?: { code: '4600'; amount: number; dueDate: ISODate; sicalc: SicalcData };
+  /**
+   * DARF 4600 of the CONFIRMED sales, ready to pay (T59), with the same machinery as the 6015 (T61):
+   * R$ 10 minimum rollover (`includesMonths`), payment status, multa/juros and Sicalc data.
+   */
+  darf?: DarfGuide;
+  /** Confirmed tax below R$ 10 not yet paid: carried (accumulated) to the next month with tax (T61). */
+  darfCarriedForward?: number;
   /** Some tax withheld because the custody or the cost of some sale is not confirmed (T22/T57). */
   darfBlockedUnknownCustody?: boolean;
   /** Tax of the unconfirmed sales (or of the whole month when the exemption itself depends on them), withheld (T59). */
@@ -109,6 +114,15 @@ export interface CryptoOptions {
   confirmedTransfers?: Record<string, string>;
   /** Max days between OUT and IN for automatic pairing (default 90, T58). */
   transferMaxLateDays?: number;
+  /** Reference date for DARF status (pendente / vencida) — T61. */
+  asOf?: ISODate;
+  /**
+   * DARF 4600 payments. Only payments with code '4600' are used (here and from TAX transactions whose
+   * note says "DARF 4600 AAAA-MM"); uncoded payments stay with the DARF 6015 of the B3 apuração.
+   */
+  payments?: DarfPayment[];
+  /** Monthly Selic (decimal) for late-payment interest. */
+  selicMonthly?: Record<YearMonth, number>;
 }
 
 /**
@@ -173,7 +187,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       // T48: a transfer from another custody carries its original BRL cost.
       p.cost += carried ? carried.totalCost * carried.fxRate : (grossAmount(tx) + (tx.fees ?? 0)) * rate;
     } else if (tx.type === 'SELL' && routed.pendingCostSales.has(tx.id)) {
-      if (tx.date.startsWith(`${opts.year}-`)) {
+      if (tx.date >= `${opts.year - 1}-01-01`) {
         const grossBrl = grossAmount(tx) * rate;
         sales.push({ transactionId: tx.id, date: tx.date, instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: tx.quantity ?? 0, grossBrl, costBrl: 0, gainBrl: 0, pendingCost: true });
       }
@@ -185,7 +199,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       const cost = p.qty > 0 ? (p.cost * q) / p.qty : 0;
       p.qty -= q;
       p.cost -= cost;
-      if (tx.type === 'SELL' && tx.date.startsWith(`${opts.year}-`) && q > 0) {
+      if (tx.type === 'SELL' && tx.date >= `${opts.year - 1}-01-01` && q > 0) {
         const share = q / (tx.quantity ?? q);
         const grossBrl = grossAmount(tx) * share * rate;
         const net = (grossAmount(tx) - (tx.fees ?? 0)) * share * rate;
@@ -204,7 +218,9 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     }
   }
   prev ??= snap();
-  const months: CryptoMonth[] = [];
+  const allMonths: CryptoMonth[] = [];
+  const confirmedByMonth = new Map<YearMonth, number>();
+  const inYear = (m: string) => m.startsWith(`${opts.year}-`);
   const byMonth = new Map<YearMonth, CryptoSale[]>();
   for (const sl of sales) byMonth.set(monthOf(sl.date), [...(byMonth.get(monthOf(sl.date)) ?? []), sl]);
   const unknownWarned = new Set<string>();
@@ -213,10 +229,9 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     const exempt = salesBrl <= limit;
     const gain = sum(list.map((x) => Math.max(0, x.gainBrl)));
     const tax = exempt ? 0 : round2(sum(list.map((x) => gcapTax(Math.max(0, x.gainBrl)))));
-    const due = lastBrazilBusinessDayOfMonth(nextMonth(month));
     const unknown = list.filter((x) => custodyOf(x.instrumentId) !== 'brasil');
     for (const u of unknown) {
-      if (unknownWarned.has(u.instrumentId)) continue;
+      if (!inYear(month) || unknownWarned.has(u.instrumentId)) continue;
       unknownWarned.add(u.instrumentId);
       issues.push({
         level: 'warning',
@@ -236,8 +251,9 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     const certainGross = sum(list.filter((x) => custodyOf(x.instrumentId) === 'brasil' && !routed.custodyUnconfirmedSales.has(x.transactionId)).map((x) => x.grossBrl));
     const confirmedTax = exempt ? 0 : round2(sum(list.filter(confirmed).map((x) => gcapTax(Math.max(0, x.gainBrl)))));
     const held = round2(tax - confirmedTax);
+    confirmedByMonth.set(month, confirmedTax);
     const blocked = held > 0.004 || pending;
-    if (confirmedTax > 0 && certainGross <= limit) {
+    if (inYear(month) && confirmedTax > 0 && certainGross <= limit) {
       issues.push({
         level: 'warning',
         code: 'CRYPTO_EXEMPTION_DEPENDS_ON_UNCONFIRMED',
@@ -246,30 +262,50 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
           'O limite só é ultrapassado contando as partes não confirmadas (tratadas como Brasil, regra conservadora); se forem do exterior, o mês fica isento e o DARF pago pode ser restituído.',
       });
     }
-    if (confirmedTax > 0 && held > 0.004) {
+    if (inYear(month) && confirmedTax > 0 && held > 0.004) {
       issues.push({
         level: 'info',
         code: 'CRYPTO_DARF_PARTIAL',
         message: `Criptoativos ${month}: DARF 4600 de R$ ${confirmedTax.toFixed(2)} das vendas confirmadas pronto para pagamento; R$ ${held.toFixed(2)} retidos até confirmar custódia/custo das demais.`,
       });
     }
-    months.push({
+    allMonths.push({
       month,
       salesBrl,
       exempt,
       gainBrl: gain,
       tax,
-      darf: confirmedTax > 0 ? { code: '4600', amount: confirmedTax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, confirmedTax) } : undefined,
       darfBlockedUnknownCustody: blocked || undefined,
       darfHeldAmount: held > 0.004 ? held : undefined,
       pendingCost: pending || undefined,
+    });
+  }
+  // T61: R$ 10 minimum rollover, then payment reconciliation, exactly as the DARF 6015.
+  const acc = accumulateDarfs('4600', allMonths.map((m) => ({ month: m.month, amount: confirmedByMonth.get(m.month) ?? 0 })));
+  for (const m of allMonths) {
+    m.darf = acc.byMonth.get(m.month);
+    const c = acc.carried.get(m.month);
+    if (c !== undefined) m.darfCarriedForward = c;
+  }
+  const settle = settleDarfs(acc.darfs, paymentsForCode('4600', opts.payments, rawInput.transactions), {
+    asOf: opts.asOf,
+    selicMonthly: opts.selicMonthly,
+    label: '4600 (criptoativos)',
+  });
+  issues.push(...settle.filter((i) => !/ de (\d{4})-/.test(i.message) || i.message.includes(` de ${opts.year}-`)));
+  const months = allMonths.filter((m) => inYear(m.month));
+  if (acc.pendingOut > 0 && acc.pendingMonths.some(inYear)) {
+    issues.push({
+      level: 'info',
+      code: 'DARF_BELOW_MINIMUM',
+      message: `Criptoativos: R$ ${acc.pendingOut.toFixed(2)} de imposto confirmado (${acc.pendingMonths.join(', ')}) abaixo do mínimo de R$ 10 — acumulado para o próximo DARF 4600 (Lei 9.430/1996 art. 68).`,
     });
   }
   return {
     country: 'BR',
     year: opts.year,
     disclaimer: TAX_DISCLAIMER,
-    sales,
+    sales: sales.filter((x) => x.date.startsWith(`${opts.year}-`)),
     months,
     positions: snap(),
     positionsPrevYear: prev,

@@ -252,6 +252,9 @@ export function TransactionForm({
         note: draft.note,
         source: editing?.source ?? 'manual',
         createdAt: editing?.createdAt,
+        // Keep import identity (de-duplication) and a confirmed price unless the price changed.
+        importHash: editing?.importHash,
+        priceConfirmed: editing?.priceConfirmed && editing.price === draft.price ? true : undefined,
       });
       if (again && !editing) {
         // "Agregar y nuevo": keep type, date, portfolio, account and currency.

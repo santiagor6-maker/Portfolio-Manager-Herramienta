@@ -135,3 +135,84 @@ describe('M34 the snapshot fallback flags partial coverage', () => {
     expect(full.series.partial).toBeUndefined();
   });
 });
+
+/** A COTAHIST quote record, field by field as in B3's layout (245 chars). */
+function cotahistLine(o: { date: string; ticker: string; market?: string; closeCents: number; factor?: number; isin?: string }): string {
+  const n = (v: number, w: number) => String(v).padStart(w, '0');
+  const a = (v: string, w: number) => v.padEnd(w, ' ');
+  const price = n(o.closeCents, 13);
+  const line =
+    '01' + o.date.replaceAll('-', '') + '02' + a(o.ticker, 12) + (o.market ?? '010') + a('BRF SA', 12) + a('ON NM', 10) + a('', 3) + 'R$  ' +
+    price + price + price + price + price + price + price + // PREABE PREMAX PREMIN PREMED PREULT PREOFC PREOFV
+    n(150, 5) + n(1_000_000, 18) + n(2_000_000_000, 18) + n(0, 13) + '0' + '99991231' + n(o.factor ?? 1, 7) + n(0, 13) + a(o.isin ?? 'BRBRFSACNOR8', 12) + '102';
+  expect(line).toHaveLength(245);
+  return line;
+}
+
+describe('M29 frozen histories from B3 official COTAHIST files', () => {
+  it('reads the cash-market closes of the exact ticker (factor applied, odd lots and other tickers ignored)', async () => {
+    const { pointsFromCotahist, parseCotahistLine } = await import('../scripts/record-frozen');
+    const text = [
+      '00COTAHIST.2025BOVESPA 20251231'.padEnd(245, ' '),
+      cotahistLine({ date: '2025-09-19', ticker: 'BRFS3', closeCents: 2150 }),
+      cotahistLine({ date: '2025-09-19', ticker: 'BRFS3F', market: '020', closeCents: 2151 }), // odd lot
+      cotahistLine({ date: '2025-09-19', ticker: 'BRFS3', market: '020', closeCents: 2152 }),
+      cotahistLine({ date: '2025-09-22', ticker: 'BRFS3', closeCents: 2110 }),
+      cotahistLine({ date: '2025-09-22', ticker: 'MRFG3', closeCents: 1500 }),
+      cotahistLine({ date: '2003-01-02', ticker: 'BRFS3', closeCents: 4_500_000, factor: 1000 }), // quoted per 1000 shares
+      '99COTAHIST.2025BOVESPA 20251231000000004'.padEnd(245, ' '),
+    ].join('\r\n');
+    expect(pointsFromCotahist(text, 'brfs3')).toEqual([
+      { date: '2025-09-19', close: 21.5 },
+      { date: '2025-09-22', close: 21.1 },
+      { date: '2003-01-02', close: 45 },
+    ]);
+    expect(parseCotahistLine(cotahistLine({ date: '2025-09-22', ticker: 'BRFS3', closeCents: 2110 }))).toMatchObject({ isin: 'BRBRFSACNOR8', volume: 1_000_000, market: '010' });
+    expect(parseCotahistLine('00header')).toBeUndefined();
+  });
+});
+
+describe('M2 the snapshot also covers instruments requested outside the catalog', () => {
+  it('a BVC stock requested once (not in the catalog) is recorded by later snapshot runs, across restarts', async () => {
+    const store = new MemoryStore();
+    const opts = () => ({ cache: new TieredCache({ store, now: () => NOW.getTime() }) });
+    const a = createTestService({ routes: thinRoutes() }, opts()).service;
+    await a.history({ symbol: 'THIN.CL', from: '2023-03-01', to: '2023-06-30' });
+    const tracked = store.data.get('snapshot:tracked:v1')?.value;
+    expect(tracked).toEqual(['XBOG:THIN']);
+    const b = createTestService({ routes: thinRoutes() }, opts()).service; // restarted server, same store
+    const withTracked = await b.recordSnapshot(['XBOG'], { from: '2023-01-01' });
+    const c = createTestService({ routes: thinRoutes() }, { cache: new TieredCache({ store: new MemoryStore(), now: () => NOW.getTime() }) }).service;
+    const catalogOnly = await c.recordSnapshot(['XBOG'], { from: '2023-01-01' });
+    expect(withTracked.ok).toBe(catalogOnly.ok + 1);
+    expect(store.data.get('snapshot:tracked:v1')?.value).toEqual(['XBOG:THIN']); // catalog ids are not tracked
+  });
+});
+
+describe('M8 declared-dividend calendar: BVC payment dates and installments', () => {
+  const calendar = [
+    { instrumentId: 'XBOG:ECOPETROL', exDate: '2025-04-01', payDate: '2025-04-08', amount: 107, note: 'cuota 1 de 3' },
+    { instrumentId: 'xbog:ecopetrol', exDate: '2025-04-23', payDate: '2025-04-30', amount: 107, note: 'cuota 2 de 3' },
+    { instrumentId: 'XBOG:ECOPETROL', exDate: '2025-04-28', payDate: '2025-05-15', amount: 50, note: 'cuota 3 de 3' },
+    { instrumentId: 'XBOG:ECOPETROL', exDate: '2025-08-01', payDate: '2025-08-15', amount: 10 }, // outside the range
+  ];
+
+  it('payment dates are added to the provider dividends, a missing installment is added, ex-dates stay the provider\'s', async () => {
+    const { service } = createTestService({}, { dividendCalendar: calendar as never });
+    const h = await service.history({ symbol: 'ECOPETROL', from: '2025-01-01', to: '2025-04-30' });
+    const divs = h.actions.filter((a) => a.type === 'DIVIDEND');
+    expect(divs).toHaveLength(3);
+    expect(divs[0]).toMatchObject({ amountPerShare: 107, payDate: '2025-04-08', note: 'cuota 1 de 3' });
+    expect(divs[0]!.date).toBe(divs[0]!.exDate);
+    expect(divs[0]!.date >= '2025-03-29' && divs[0]!.date <= '2025-04-01').toBe(true);
+    expect(divs[1]).toMatchObject({ amountPerShare: 107, payDate: '2025-04-30' });
+    expect(divs[2]).toMatchObject({ date: '2025-04-28', amountPerShare: 50, payDate: '2025-05-15', note: expect.stringMatching(/cuota 3 de 3; declared/) });
+  });
+
+  it('invalid calendars are rejected at startup', async () => {
+    const { validateDeclaredDividends } = await import('../src/index');
+    expect(() => validateDeclaredDividends({})).toThrow(/array/);
+    expect(() => validateDeclaredDividends([{ instrumentId: 'XBOG:ECOPETROL', exDate: '2025-04-01', payDate: '2025-03-01', amount: 1 }])).toThrow(/entry 0/);
+    expect(() => validateDeclaredDividends([{ instrumentId: 'XBOG:ECOPETROL', exDate: '2025-04-01', amount: 0 }])).toThrow(/entry 0/);
+  });
+});

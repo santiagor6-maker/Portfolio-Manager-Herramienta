@@ -16,6 +16,7 @@ import {
   EXCHANGES,
   ISIN_COUNTRY_EXCHANGE,
   ISIN_DIRECTORY,
+  TICKER_RENAMES,
   US_ARCA,
   US_ETFS,
   US_EXCHANGES,
@@ -30,7 +31,7 @@ import type { InstrumentHint } from './types';
 import { normalizeText } from './util';
 
 export interface ResolveNote {
-  code: 'EXCHANGE_GUESSED' | 'SYMBOL_FROM_ISIN' | 'CURRENCY_MISMATCH' | 'MGC_FOREIGN_LISTING' | 'EXCHANGE_REQUIRED' | 'EXCHANGE_REFINED';
+  code: 'EXCHANGE_GUESSED' | 'SYMBOL_FROM_ISIN' | 'CURRENCY_MISMATCH' | 'MGC_FOREIGN_LISTING' | 'EXCHANGE_REQUIRED' | 'EXCHANGE_REFINED' | 'TICKER_RENAMED';
   params: Record<string, string | number>;
 }
 
@@ -295,8 +296,26 @@ export class InstrumentResolver {
     if (!exchange) exchange = 'MANUAL';
     if (exchange === 'BVMF' && /^[A-Z0-9]{4}\d{1,2}F$/.test(symbol)) symbol = symbol.slice(0, -1); // fractional market
 
-    const id = `${exchange}:${symbol}`;
-    const keepNotes = notes.filter((n) => n.code === 'MGC_FOREIGN_LISTING');
+    let id = `${exchange}:${symbol}`;
+    // Renamed tickers (ELET3 → AXIA3, TRPL4 → ISAE4…): one instrument per security. Reuse whichever id
+    // the user already has; otherwise create the current one.
+    const renamedTo = TICKER_RENAMES[id];
+    const renamedFrom = Object.keys(TICKER_RENAMES).filter((k) => TICKER_RENAMES[k] === id);
+    if (renamedTo || renamedFrom.length) {
+      const family = renamedTo ? [id, renamedTo] : [id, ...renamedFrom];
+      const mine = family.map((x) => this.byId.get(x)).find((x): x is Instrument => !!x);
+      if (mine) {
+        const r = this.created.has(mine.id) ? { instrument: mine, isNew: true, notes: [] as ResolveNote[] } : this.existing(mine);
+        if (mine.id !== id) r.notes = [{ code: 'TICKER_RENAMED', params: { from: id, to: mine.id } }];
+        return { ...r, foreignListing };
+      }
+      if (renamedTo) {
+        notes.push({ code: 'TICKER_RENAMED', params: { from: id, to: renamedTo } });
+        id = renamedTo;
+        symbol = renamedTo.split(':')[1]!;
+      }
+    }
+    const keepNotes = notes.filter((n) => n.code === 'MGC_FOREIGN_LISTING' || n.code === 'TICKER_RENAMED');
     const known = this.byId.get(id);
     if (known) return { ...this.existing(known), notes: keepNotes, foreignListing };
     const created = this.created.get(id);

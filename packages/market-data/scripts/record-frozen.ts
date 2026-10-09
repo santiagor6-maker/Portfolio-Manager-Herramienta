@@ -5,6 +5,12 @@
  * Usage (from the repo root, on a machine that can reach the source):
  *   BRAPI_TOKEN=... npx tsx packages/market-data/scripts/record-frozen.ts brapi BVMF:BRFS3 out/
  *   npx tsx packages/market-data/scripts/record-frozen.ts csv BVMF:CPLE6 export.csv out/ [BRL] [DD/MM/YYYY]
+ *   npx tsx packages/market-data/scripts/record-frozen.ts cotahist BVMF:BRFS3 out/ COTAHIST_A2024.TXT COTAHIST_A2025.TXT
+ *
+ * COTAHIST mode (review R4, M29) reads B3's official yearly historical quote files, which keep every
+ * ticker that ever traded (delisted ones included). They are free:
+ * https://www.b3.com.br → Market data → Séries históricas (COTAHIST_AYYYY.ZIP, unzip to .TXT).
+ * Only cash-market lots (TPMERC 010) of the exact ticker are read; PREULT / FATCOT is the as-traded close.
  *
  * CSV mode reads a broker or exchange export with a date column (Date/Data/Fecha) and a close
  * column (Close/Fechamento/Último/Cierre); the closes must be as traded (not adjusted).
@@ -49,10 +55,49 @@ export function pointsFromCsv(text: string, fmt: FeedDateFormat = 'iso'): PriceP
   return out;
 }
 
+/** One quote record of a B3 COTAHIST file (245-char fixed width; positions per B3's layout). */
+export interface CotahistRecord {
+  date: string;
+  ticker: string;
+  market: string;
+  close: number;
+  volume: number;
+  isin: string;
+}
+
+const field = (line: string, from: number, to: number) => line.slice(from - 1, to);
+
+export function parseCotahistLine(line: string): CotahistRecord | undefined {
+  if (!line.startsWith('01') || line.length < 242) return undefined;
+  const d = field(line, 3, 10);
+  const factor = Number(field(line, 211, 217)) || 1;
+  const close = Number(field(line, 109, 121)) / 100 / factor;
+  if (!/^\d{8}$/.test(d) || !Number.isFinite(close) || close <= 0) return undefined;
+  return {
+    date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`,
+    ticker: field(line, 13, 24).trim(),
+    market: field(line, 25, 27),
+    close: Math.round(close * 1e8) / 1e8,
+    volume: Number(field(line, 153, 170)),
+    isin: field(line, 231, 242).trim(),
+  };
+}
+
+/** As-traded closes of `ticker` in the cash market (TPMERC 010; odd lots 020 are ignored). */
+export function pointsFromCotahist(text: string, ticker: string): PricePoint[] {
+  const t = ticker.toUpperCase();
+  const out: PricePoint[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const r = parseCotahistLine(line);
+    if (r && r.ticker === t && r.market === '010') out.push({ date: r.date, close: r.close });
+  }
+  return out;
+}
+
 async function main(argv: string[]): Promise<void> {
   const [mode, instrumentId, a, b, c, d] = argv;
   if (!mode || !instrumentId || !/^[A-Z]{2,8}:[A-Z0-9.-]+$/i.test(instrumentId)) {
-    throw new Error('usage: record-frozen.ts brapi <EXCH:TICKER> <outDir> | csv <EXCH:TICKER> <file.csv> <outDir> [currency] [dateFormat]');
+    throw new Error('usage: record-frozen.ts brapi <EXCH:TICKER> <outDir> | csv <EXCH:TICKER> <file.csv> <outDir> [currency] [dateFormat] | cotahist <EXCH:TICKER> <outDir> <COTAHIST.TXT...>');
   }
   const [exchange, symbol] = instrumentId.toUpperCase().split(':') as [string, string];
   let rec: FrozenHistory;
@@ -69,6 +114,13 @@ async function main(argv: string[]): Promise<void> {
     if (!a) throw new Error('csv mode needs the CSV file');
     outDir = b ?? '.';
     rec = { instrumentId: `${exchange}:${symbol}`, currency: (c ?? 'BRL').toUpperCase(), source: `csv ${a.split(/[\\/]/).pop()} ${new Date().toISOString().slice(0, 10)}`, points: pointsFromCsv(readFileSync(a, 'utf8'), (d as FeedDateFormat) ?? 'iso') };
+  } else if (mode === 'cotahist') {
+    outDir = a ?? '.';
+    const files = argv.slice(3);
+    if (!files.length) throw new Error('cotahist mode needs one or more COTAHIST_AYYYY.TXT files');
+    // COTAHIST is Latin-1; the fields used here are ASCII.
+    const points = files.flatMap((f) => pointsFromCotahist(readFileSync(f, 'latin1'), symbol));
+    rec = { instrumentId: `${exchange}:${symbol}`, currency: 'BRL', source: `B3 COTAHIST ${files.map((f) => f.split(/[\\/]/).pop()).join(',')}`, points };
   } else {
     throw new Error(`unknown mode ${mode}`);
   }

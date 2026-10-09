@@ -145,6 +145,17 @@ export interface CryptoTransitPiece {
   consumptions: { date: string; units: number; fx: number; brl: number }[];
   /** Units of the piece whose cost is provisional/pending (came from an unmatched deposit) — T57. */
   provisional?: number;
+  /** Of `provisional`, units with NO cost at all (deposit without value): "custo pendente" — T62. */
+  pending?: number;
+}
+
+/** Provisional/pending units of one custody of an asset after a date's transactions (T62). */
+export interface CryptoCostStatusEntry {
+  instrumentId: string;
+  bucket: CryptoCustody;
+  date: string;
+  provisional: number;
+  pending: number;
 }
 
 export interface CryptoRouting {
@@ -169,6 +180,8 @@ export interface CryptoRouting {
   venueCountry: Record<string, string>;
   /** Units that left a custody and had not (fully) arrived at another one — T55. */
   transit: CryptoTransitPiece[];
+  /** Timeline of provisional/pending units per asset and custody (T62). */
+  costStatusLog: CryptoCostStatusEntry[];
   issues: TaxIssue[];
 }
 
@@ -198,6 +211,26 @@ export interface CryptoRoutingOptions {
    * `transferMaxLateDays` and preferred over any other candidate (confirms TRANSFER_MATCH_PROPOSED).
    */
   confirmedTransfers?: Record<string, string>;
+}
+
+/**
+ * Provisional and pending (no cost) units held at the end of `date` by a (possibly virtual) crypto
+ * instrument (T62): Bens e Direitos marks those costs as "provisório"/"pendente".
+ */
+export function cryptoCostStatusAt(r: CryptoRouting, instrumentId: string, date: string): { provisional: number; pending: number } {
+  const [base, b] = instrumentId.includes('#') ? (instrumentId.split('#') as [string, CryptoCustody]) : [instrumentId, r.custody[instrumentId]];
+  let out = { provisional: 0, pending: 0 };
+  for (const e of r.costStatusLog) {
+    if (e.instrumentId !== base || e.date > date || (b && e.bucket !== b)) continue;
+    out = b ? { provisional: e.provisional, pending: e.pending } : out;
+  }
+  if (!b) {
+    // Not routed by custody: sum the last entry of every bucket.
+    const last = new Map<CryptoCustody, CryptoCostStatusEntry>();
+    for (const e of r.costStatusLog) if (e.instrumentId === base && e.date <= date) last.set(e.bucket, e);
+    for (const e of last.values()) out = { provisional: out.provisional + e.provisional, pending: out.pending + e.pending };
+  }
+  return out;
 }
 
 /** Order in which custodies are consumed when the named one lacks units (T52): named, then Brazil (conservative). */
@@ -245,8 +278,9 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
   const custodyUnconfirmedSales = new Set<string>();
   const venueCountry: Record<string, string> = {};
   const transit: CryptoTransitPiece[] = [];
+  const costStatusLog: CryptoCostStatusEntry[] = [];
   const cryptos = new Map(input.instruments.filter((i) => i.assetClass === 'crypto').map((i) => [i.id, i]));
-  const empty = (): CryptoRouting => ({ input, custody, transferBasis, unconfirmedSales, pendingCostSales, provisionalCostSales, custodyUnconfirmedSales, venueCountry, transit, issues });
+  const empty = (): CryptoRouting => ({ input, custody, transferBasis, unconfirmedSales, pendingCostSales, provisionalCostSales, custodyUnconfirmedSales, venueCountry, transit, costStatusLog, issues });
   if (!cryptos.size) return empty();
   const windowDays = opts.transferWindowDays ?? 30;
   const maxFee = opts.transferMaxFeePct ?? 0.1;
@@ -273,13 +307,16 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     const lastVenue: Partial<Record<CryptoCustody, string>> = {};
     /** Units whose cost is provisional/pending (unmatched deposits), per custody (T57). */
     const prov: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
+    /** Of `prov`, units with no cost at all (pending), per custody (T62). */
+    const pend: Record<CryptoCustody, number> = { brasil: 0, exterior: 0, desconhecida: 0 };
     const pool: CryptoTransitPiece[] = [];
     const used = new Set<CryptoCustody>();
     const label = (t: Transaction): CryptoCustody | undefined =>
       forced ?? cryptoCustodyForVenue(t.account, opts.accountCustody) ?? (t.account ? undefined : cryptoCustodyForVenue(inst.exchange, opts.accountCustody));
     const countryOf = (b: CryptoCustody) => (b === 'exterior' ? (CRYPTO_VENUE_COUNTRY[lastVenue[b] ?? ''] ?? '') : b === 'brasil' ? 'BR' : '');
-    const add = (b: CryptoCustody, u: number, fx: number, br: number, venue?: string, provisional = 0) => {
+    const add = (b: CryptoCustody, u: number, fx: number, br: number, venue?: string, provisional = 0, pending = 0) => {
       prov[b] += provisional;
+      pend[b] += pending;
       units[b] += u;
       costFx[b] += fx;
       costBrl[b] += br;
@@ -292,6 +329,8 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
       const br = costBrl[b] * share;
       const pv = prov[b] * share;
       prov[b] -= pv;
+      const pd = pend[b] * share;
+      pend[b] -= pd;
       units[b] = Math.max(0, units[b] - u);
       costFx[b] -= fx;
       costBrl[b] -= br;
@@ -300,8 +339,9 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         costFx[b] = 0;
         costBrl[b] = 0;
         prov[b] = 0;
+        pend[b] = 0;
       }
-      return { fx, br, pv };
+      return { fx, br, pv, pd };
     };
     /** Consume pool pieces for an arrival of q units into bucket D at date d. Returns carried cost and matched units. */
     const arrive = (
@@ -317,6 +357,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
       let fx = 0;
       let br = 0;
       let pv = 0;
+      let pd = 0;
       const linked = (p: CryptoTransitPiece) => !!o.link && (p.outTxId === o.link || p.outTxId.startsWith(`${o.link}~`));
       const cands = pool
         .filter((p) => p.outDate <= d && (daysBetween(p.outDate, d) <= maxLate || linked(p) || o.uncapped) && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12)
@@ -384,12 +425,13 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         const cbr = remBr * share;
         // Inferred arrival beyond the cap: the carried cost is only a proposal → provisional (T58).
         pv += daysBetween(p.outDate, d) > maxLate && !linked(p) ? u : (p.provisional ?? 0) * share;
+        pd += (p.pending ?? 0) * share;
         p.consumptions.push({ date: d, units: u, fx: cfx, brl: cbr });
         fx += cfx;
         br += cbr;
         need -= Math.min(u, need);
       }
-      return { fx, br, pv, matched: q - Math.max(0, need) };
+      return { fx, br, pv, pd, matched: q - Math.max(0, need) };
     };
     /** Pending OUT pieces older than the late-match cap (proposals only, T58). */
     const tooLate = (d: string) =>
@@ -397,14 +439,14 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     /** Consumes q units starting from `first`, then CRYPTO_CONSUMPTION_ORDER. */
     const consume = (q: number, first: CryptoCustody | undefined) => {
       const order = [...(first ? [first] : []), ...CRYPTO_CONSUMPTION_ORDER.filter((b) => b !== first)];
-      const parts: { b: CryptoCustody; u: number; fx: number; br: number; pv: number }[] = [];
+      const parts: { b: CryptoCustody; u: number; fx: number; br: number; pv: number; pd: number }[] = [];
       let need = q;
       for (const b of order) {
         if (need <= 1e-12) break;
         const u = Math.min(units[b], need);
         if (u <= 1e-12) continue;
         const c = take(b, u);
-        parts.push({ b, u, fx: c.fx, br: c.br, pv: c.pv });
+        parts.push({ b, u, fx: c.fx, br: c.br, pv: c.pv, pd: c.pd });
         need -= u;
       }
       return { parts, unmet: need > 1e-9 ? need : 0 };
@@ -453,11 +495,13 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         let fx = a.fx;
         let br = a.br;
         let provisional = a.pv;
+        let pendingU = a.pd;
         if (userBasis && userCost !== undefined) {
           // Cost confirmed by the user: final, whatever was (or was not) paired.
           fx = userCost;
           br = userCost * (userBasis.fxRate ?? brl(t.currency, userBasis.openDate));
           provisional = 0;
+          pendingU = 0;
           transferBasis[t.id] = { openDate: userBasis.openDate, totalCost: fx, fxRate: fx > 0 ? br / fx : 0 };
         } else if (a.matched < q - 1e-9) {
           const unmatched = q - a.matched;
@@ -465,6 +509,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
           fx += own;
           br += own * brl(t.currency, t.date);
           provisional += unmatched;
+          if (own <= 0) pendingU += unmatched;
           const late = tooLate(t.date);
           if (late.length) {
             // T58: an OUT older than the cap is only PROPOSED, never paired automatically.
@@ -493,7 +538,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
           });
         }
         if ((fx > 0 || br > 0) && !transferBasis[t.id]) transferBasis[t.id] = { openDate: t.date, totalCost: fx, fxRate: fx > 0 ? br / fx : 0 };
-        add(D, q, fx, br, cryptoVenueKey(t.account ?? inst.exchange), provisional);
+        add(D, q, fx, br, cryptoVenueKey(t.account ?? inst.exchange), provisional, pendingU);
         pieceBucket.set(t.id, D);
       } else if (t.type === 'TRANSFER_OUT' || t.type === 'SELL') {
         // Units sent elsewhere earlier but never recorded as arrived: infer the arrival into the named custody.
@@ -501,7 +546,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
           const before = units[named];
           const a = arrive(q - before, named, t.date, t.id, { uncapped: true });
           if (a.matched > 1e-12) {
-            add(named, a.matched, a.fx, a.br, cryptoVenueKey(t.account), a.pv);
+            add(named, a.matched, a.fx, a.br, cryptoVenueKey(t.account), a.pv, a.pd);
             // Synthetic arrival so the per-regime reports see the units and their carried cost.
             const synth: Transaction = {
               id: `${t.id}~in`,
@@ -546,6 +591,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
               country: countryOf(p.b),
               consumptions: [],
               provisional: p.pv > 1e-12 ? p.pv : undefined,
+              pending: p.pd > 1e-12 ? p.pd : undefined,
             };
             pool.push(tp);
             transit.push(tp);
@@ -616,9 +662,21 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         rewritten.set(t.id, inf ? [inf, ...pieces] : pieces);
       } else {
         const b = named ?? BUCKETS.find((x) => units[x] > 1e-12) ?? 'desconhecida';
-        if (t.type === 'SPLIT') for (const x of BUCKETS) units[x] *= t.ratio ?? 1;
+        if (t.type === 'SPLIT') {
+          for (const x of BUCKETS) {
+            units[x] *= t.ratio ?? 1;
+            prov[x] *= t.ratio ?? 1;
+            pend[x] *= t.ratio ?? 1;
+          }
+        }
         pieceBucket.set(t.id, b);
         used.add(b);
+      }
+      for (const b of BUCKETS) {
+        const last = [...costStatusLog].reverse().find((e) => e.instrumentId === id && e.bucket === b);
+        if ((last?.provisional ?? 0) !== prov[b] || (last?.pending ?? 0) !== pend[b]) {
+          costStatusLog.push({ instrumentId: id, bucket: b, date: t.date, provisional: prov[b], pending: pend[b] });
+        }
       }
     }
     for (const p of pool) {
@@ -673,6 +731,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     custodyUnconfirmedSales,
     venueCountry,
     transit,
+    costStatusLog,
     issues,
   };
 }

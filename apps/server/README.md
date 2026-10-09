@@ -29,6 +29,7 @@ npm run start -w @pm/server      # o: npx tsx apps/server/src/main.ts
 | `CACHE_DIR` | `.cache/market-data` | caché persistente |
 | `CACHE_MAX_FILES` | 20000 | poda LRU de la caché en disco |
 | `MD_CUSTOM_FEEDS_FILE` | — | JSON con feeds de precios definidos por el usuario (ver README de market-data) |
+| `MD_DIVIDENDS_FILE` | — | JSON con dividendos decretados (`instrumentId`, `exDate`, `payDate`, `amount`, `note`), por ejemplo las cuotas de la BVC. Agrega la fecha de pago a los dividendos de Yahoo y añade las cuotas que Yahoo no reporte (ver README de market-data) |
 | `MD_FROZEN_DIR` | — | carpeta con historias congeladas (`*.json`) de valores que ya no cotizan, grabadas con `packages/market-data/scripts/record-frozen.ts`. Un archivo inválido se omite con un aviso |
 | `SNAPSHOT_EXCHANGES` | `XBOG,XLON` | bolsas cuyos instrumentos del catálogo se graban en el snapshot local (último recurso si fallan todos los proveedores). `none` lo desactiva |
 | `SNAPSHOT_HOURS` | 12 | intervalo del snapshot; la primera ejecución es 30 s después del arranque |
@@ -58,7 +59,7 @@ sin efectos secundarios: sirve para `app.request()` en pruebas o para desplegar 
 | `DELETE /api/cache` | `symbol` | invalida la caché del símbolo (requiere `API_TOKEN`, o `ALLOW_LOCAL_ADMIN=1` con socket loopback directo) |
 | `POST /api/sync/ibkr-flex` | cuerpo JSON con `action` (ver abajo; ≤ 5 MiB) | `save` → `{ credentialId }`; `sync` → `ImportResult` de `@pm/importers`; `delete` → `{ ok: true }` |
 | `GET /api/sync/ibkr-flex/inbox` | `portfolioId` | `{ portfolioId, pending: Transaction[], instruments: Instrument[], lastRun? }`: lo que trajo la sincronización diaria y la web aún no recogió |
-| `DELETE /api/sync/ibkr-flex/inbox` | `portfolioId` | `{ cleared }`: la web confirma que ya importó `pending` |
+| `DELETE /api/sync/ibkr-flex/inbox` | `portfolioId`; cuerpo opcional `{ "ids": [...] }` | `{ cleared }`: la web confirma lo que importó. Con `ids` solo salen esas transacciones (lo que llegó después se conserva); sin cuerpo se vacía la bandeja |
 
 ### Sincronización con Interactive Brokers (Flex Web Service)
 
@@ -66,6 +67,12 @@ El servidor monta `createIbkrFlexSyncHandler` de `@pm/importers` (`src/ibkrSync.
 cabeceras CORS, y así el token nunca llega al navegador: se guarda cifrado con `SYNC_SECRET` y ninguna
 respuesta lo devuelve.
 
+- Endurecimiento (revisión R4, M35):
+  - El token Flex solo se envía por HTTPS a `*.interactivebrokers.com`, también cuando `SendRequest`
+    devuelve otra `<Url>` (502 con "Refused to send the Flex token").
+  - `API_TOKEN` se compara en tiempo constante (SHA-256 de ambos lados y XOR).
+  - Las escrituras de la bandeja van en cola por cartera: una sincronización diaria y una confirmación de la
+    web no se pisan, y dos ejecuciones simultáneas no duplican transacciones.
 - Protección: la misma que `DELETE /api/cache`. Hace falta `API_TOKEN`, o `ALLOW_LOCAL_ADMIN=1` desde un
   socket loopback directo. También pasa por la allowlist de `Origin`, de `Host` y por el límite por
   cliente. Sin `SYNC_SECRET`, las tres rutas responden 503 `NOT_CONFIGURED`.

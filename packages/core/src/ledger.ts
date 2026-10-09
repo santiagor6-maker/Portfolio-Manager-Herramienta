@@ -275,6 +275,24 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     const ratio = p / ref.price;
     return ratio > h || ratio < 1 / h;
   };
+  // C46: rejected prints waiting for a consistent successor, and the last unconfirmed print.
+  type Outlier = EngineContext['outliers'][number];
+  type Flag = EngineContext['priceFlags'][number];
+  const pending = new Map<string, { day: number; price: number; tx: Transaction; outlier: Outlier; flag: Flag }[]>();
+  const unconfirmed = new Map<string, { outlier: Outlier; flag: Flag }>();
+  const dropped = new Set<object>();
+  const accept = (id: string, day: number, p: number) => {
+    let o = observations.get(id);
+    if (!o) observations.set(id, (o = { days: [], prices: [] }));
+    if (o.days[o.days.length - 1] === day) o.prices[o.prices.length - 1] = p;
+    else {
+      o.days.push(day);
+      o.prices.push(p);
+    }
+    let m = firstTradePrice.get(day);
+    if (!m) firstTradePrice.set(day, (m = new Map()));
+    if (!m.has(id)) m.set(id, p);
+  };
   if (options.tradePriceObservations) {
     for (const { tx, day } of sorted) {
       const id = tx.instrumentId;
@@ -284,6 +302,10 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         // previous observations are pre-split: rescale them so the outlier check stays meaningful
         const o = observations.get(id);
         if (o && f !== 1) o.prices = o.prices.map((x) => x / f);
+        if (f !== 1) {
+          pending.delete(id);
+          unconfirmed.delete(id);
+        }
       }
       if ((tx.type !== 'BUY' && tx.type !== 'SELL') || !id || !(num(tx.quantity) > 0)) continue;
       const inst = instruments.get(id);
@@ -299,44 +321,80 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         if (r === undefined) continue;
         p *= r;
       }
-      let o = observations.get(id);
-      if (tx.priceConfirmed !== true) {
-        const prevMarket = toInstCcy(inst, id, market.pricePointAt(id, day - 1));
-        const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
-        const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
-        const sameDay = market.pricePointAt(id, day);
-        const nextRef = toInstCcy(inst, id, sameDay && sameDay.day === day ? sameDay : market.pricePointAfter(id, day));
-        const d1 = deviates(p, prevRef, day, inst);
-        const d2 = deviates(p, nextRef, day, inst);
-        const pct = Math.round(tol * 100);
-        if (d2 !== false) {
-          if (d1 === true && d2 === true) {
-            outliers.push({ tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning', message: `Trade price ${p} of ${id} deviates more than ${pct} % from both the previous reference ${prevRef!.price.toFixed(4)} and the next close ${nextRef!.price.toFixed(4)}; not used as a price observation (typo?)` });
-            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' });
-            continue;
-          }
+      const o = observations.get(id);
+      const prevMarket = toInstCcy(inst, id, market.pricePointAt(id, day - 1));
+      const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
+      const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
+      if (tx.priceConfirmed === true) {
+        // C46: a confirmed print is a new reference for the following ones
+        pending.delete(id);
+        unconfirmed.delete(id);
+        accept(id, day, p);
+        continue;
+      }
+      const sameDay = market.pricePointAt(id, day);
+      const nextRef = toInstCcy(inst, id, sameDay && sameDay.day === day ? sameDay : market.pricePointAfter(id, day));
+      const d1 = deviates(p, prevRef, day, inst);
+      const d2 = deviates(p, nextRef, day, inst);
+      const pct = Math.round(tol * 100);
+      let reject: { message: string } | undefined;
+      let flagUnconfirmed = false;
+      if (d2 !== false) {
+        if (d1 === true && d2 === true) {
+          reject = { message: `Trade price ${p} of ${id} deviates more than ${pct} % from both the previous reference ${prevRef!.price.toFixed(4)} and the next close ${nextRef!.price.toFixed(4)}; not used as a price observation (typo?)` };
+        } else {
           const hardRef = prevRef ?? nextRef;
           if (beyondHard(p, hardRef, day, inst)) {
-            outliers.push({ tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning', message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toFixed(2)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}) and no close confirms it; not used as a price observation until confirmed (set priceConfirmed on the transaction)` });
-            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' });
-            continue;
-          }
-          if (d1 === true && d2 === undefined) {
-            outliers.push({ tx, code: 'TRADE_PRICE_UNCONFIRMED', severity: 'info', message: `Trade price ${p} of ${id} moved more than ${pct} % from ${prevRef!.price.toFixed(4)} and there is no later close to confirm it; used as the price — please confirm` });
-            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_UNCONFIRMED' });
-          }
+            reject = { message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toFixed(2)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}) and no close confirms it; not used as a price observation until confirmed (priceConfirmed, or a later consistent trade price)` };
+          } else if (d1 === true && d2 === undefined) flagUnconfirmed = true;
         }
       }
-      if (before > 0 && q < 0.005 * before && market.pricePointAt(id, day) && day - (market.pricePointAt(id, day) as { day: number }).day <= 7) continue;
-      if (!o) observations.set(id, (o = { days: [], prices: [] }));
-      if (o.days[o.days.length - 1] === day) o.prices[o.prices.length - 1] = p;
-      else {
-        o.days.push(day);
-        o.prices.push(p);
+      if (reject) {
+        // C46: two or more consecutive prints that agree with each other (and no close contradicts
+        // them) confirm the new level: the earlier ones are re-accepted with this one.
+        const run = pending.get(id) ?? [];
+        const lastP = run[run.length - 1];
+        if (d2 !== true && lastP && deviates(p, lastP, day, inst) === false) {
+          for (const r of run) {
+            dropped.add(r.outlier);
+            dropped.add(r.flag);
+            outliers.push({ tx: r.tx, code: 'TRADE_PRICE_CONFIRMED_BY_RUN', severity: 'info', message: `Trade price ${r.price} of ${id} was confirmed by later consistent trade prices (${dayToIso(day)}: ${p}); used as the price` });
+            accept(id, r.day, r.price);
+          }
+          pending.delete(id);
+          unconfirmed.delete(id);
+          accept(id, day, p);
+          continue;
+        }
+        const outlier = { tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning' as const, message: reject.message };
+        const flag = { day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' as const };
+        outliers.push(outlier);
+        priceFlags.push(flag);
+        if (d2 !== true) {
+          // keep only the latest run of mutually consistent rejected prints
+          const keep = lastP && deviates(p, lastP, day, inst) === false ? run : [];
+          keep.push({ day, price: p, tx, outlier, flag });
+          pending.set(id, keep.slice(-5));
+        }
+        continue;
       }
-      let m = firstTradePrice.get(day);
-      if (!m) firstTradePrice.set(day, (m = new Map()));
-      if (!m.has(id)) m.set(id, p);
+      pending.delete(id);
+      // C46: a print that agrees with a previous unconfirmed print (no close against it) confirms it
+      const prevUnc = unconfirmed.get(id);
+      if (prevUnc && d1 === false && d2 !== true) {
+        dropped.add(prevUnc.outlier);
+        dropped.add(prevUnc.flag);
+        unconfirmed.delete(id);
+      }
+      if (flagUnconfirmed) {
+        const outlier = { tx, code: 'TRADE_PRICE_UNCONFIRMED', severity: 'info' as const, message: `Trade price ${p} of ${id} moved more than ${pct} % from ${prevRef!.price.toFixed(4)} and there is no later close to confirm it; used as the price — please confirm` };
+        const flag = { day, instrumentId: id, code: 'TRADE_PRICE_UNCONFIRMED' as const };
+        outliers.push(outlier);
+        priceFlags.push(flag);
+        unconfirmed.set(id, { outlier, flag });
+      }
+      if (before > 0 && q < 0.005 * before && sameDay && day - sameDay.day <= 7) continue;
+      accept(id, day, p);
     }
   }
 
@@ -378,8 +436,8 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     observations,
     firstTradePrice,
     maturities,
-    outliers,
-    priceFlags,
+    outliers: dropped.size ? outliers.filter((x) => !dropped.has(x)) : outliers,
+    priceFlags: dropped.size ? priceFlags.filter((x) => !dropped.has(x)) : priceFlags,
   };
 }
 

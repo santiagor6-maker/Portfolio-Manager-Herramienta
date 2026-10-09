@@ -1,7 +1,7 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
-import { daysBetween, monthOf, monthRange, nextMonth } from '../common/dates';
+import { daysBetween, lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, monthRange, nextMonth } from '../common/dates';
 import { round2, sum } from '../common/util';
-import type { ParamMeta } from '../common/types';
+import type { ParamMeta, TaxIssue } from '../common/types';
 
 export type DarfStatus = 'paga' | 'paga_em_atraso' | 'pendente' | 'vencida';
 
@@ -189,3 +189,118 @@ export function matchDarfPayments<T extends { month: YearMonth; amount: number; 
 }
 
 export const sumAmounts = (xs: { amount: number }[]) => sum(xs.map((x) => x.amount));
+
+/**
+ * A monthly DARF of an individual (6015 B3, 4600 GCAP/crypto, 0190 carnê-leão): same shape and
+ * same machinery for every code (T61).
+ */
+export interface DarfGuide {
+  /** Month of apuração (período de apuração). */
+  month: YearMonth;
+  periodoApuracao: ISODate;
+  code: string;
+  amount: number;
+  dueDate: ISODate;
+  /** Months whose sub-R$10 tax was rolled into this DARF. */
+  includesMonths: YearMonth[];
+  status: DarfStatus;
+  payment?: DarfPayment;
+  /** Late charges for the recorded payment, or for paying on `asOf` when overdue and unpaid. */
+  late?: DarfLateCharges;
+  sicalc: SicalcData;
+}
+
+/** Minimum DARF value: below it the tax is not paid but added to the next month (Lei 9.430/1996 art. 68). */
+export const DARF_MINIMUM = 10;
+
+/** A DARF for `month` (due the last bank business day of the following month). */
+export function newDarf(code: string, month: YearMonth, amount: number, includesMonths: YearMonth[] = [month]): DarfGuide {
+  const periodoApuracao = lastDayOfMonth(month);
+  const dueDate = lastBrazilBusinessDayOfMonth(nextMonth(month));
+  const a = round2(amount);
+  return { month, periodoApuracao, code, amount: a, dueDate, includesMonths, status: 'pendente', sicalc: sicalcData(code, periodoApuracao, dueDate, a) };
+}
+
+/**
+ * Applies the R$ 10 minimum to monthly amounts of one receita code: amounts below the minimum are
+ * accumulated (not paid) until the running total reaches it; the DARF is then issued in that month
+ * with `includesMonths` listing every month it covers.
+ */
+export function accumulateDarfs(
+  code: string,
+  items: { month: YearMonth; amount: number }[],
+  minimum = DARF_MINIMUM,
+): { darfs: DarfGuide[]; byMonth: Map<YearMonth, DarfGuide>; carried: Map<YearMonth, number>; pendingOut: number; pendingMonths: YearMonth[] } {
+  const darfs: DarfGuide[] = [];
+  const byMonth = new Map<YearMonth, DarfGuide>();
+  const carried = new Map<YearMonth, number>();
+  let pending = 0;
+  let pendingMonths: YearMonth[] = [];
+  for (const it of [...items].sort((a, b) => a.month.localeCompare(b.month))) {
+    if (it.amount <= 0) continue;
+    const total = pending + it.amount;
+    if (round2(total) >= minimum) {
+      const d = newDarf(code, it.month, total, [...pendingMonths, it.month]);
+      darfs.push(d);
+      byMonth.set(it.month, d);
+      pending = 0;
+      pendingMonths = [];
+    } else {
+      pending = total;
+      pendingMonths.push(it.month);
+      carried.set(it.month, round2(total));
+    }
+  }
+  return { darfs, byMonth, carried, pendingOut: round2(pending), pendingMonths };
+}
+
+/**
+ * Payment status and late charges of DARFs (T61: shared by 6015, 4600 and 0190): matches the
+ * payments by code and month, marks paga / paga_em_atraso / vencida, computes multa and Selic,
+ * refreshes the Sicalc data with the payment date and warns when the payment is short.
+ */
+export function settleDarfs(
+  darfs: DarfGuide[],
+  payments: DarfPayment[],
+  opts: { asOf?: ISODate; selicMonthly?: Record<YearMonth, number>; label?: string } = {},
+): TaxIssue[] {
+  const issues: TaxIssue[] = [];
+  const label = opts.label ? `${opts.label} ` : '';
+  const matched = matchDarfPayments(darfs, payments);
+  for (const d of darfs) {
+    const p = matched.get(d);
+    if (p) {
+      d.payment = p;
+      if (p.date > d.dueDate) {
+        d.status = 'paga_em_atraso';
+        d.late = darfLateCharges(d.amount, d.dueDate, p.date, opts.selicMonthly);
+        d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: p.date, charges: d.late });
+      } else d.status = 'paga';
+      const expected = d.late?.total ?? d.amount;
+      if (p.amount + 0.05 < expected) {
+        issues.push({
+          level: 'warning',
+          code: 'DARF_UNDERPAID',
+          message: `DARF ${label}de ${d.month}: pago R$ ${p.amount.toFixed(2)} de R$ ${expected.toFixed(2)} devidos (com acréscimos, se houver).`,
+        });
+      }
+    } else if (opts.asOf && opts.asOf > d.dueDate) {
+      d.status = 'vencida';
+      d.late = darfLateCharges(d.amount, d.dueDate, opts.asOf, opts.selicMonthly);
+      d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: opts.asOf, charges: d.late });
+      if (d.late.missingSelicMonths.length) {
+        issues.push({
+          level: 'info',
+          code: 'SELIC_MISSING',
+          message: `DARF ${label}vencido de ${d.month}: informe a Selic mensal de ${d.late.missingSelicMonths.join(', ')} para calcular os juros (ou use o Sicalc).`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+/** Payments usable for one receita code: explicit code match only (an uncoded payment stays with 6015). */
+export function paymentsForCode(code: string, explicit: DarfPayment[] = [], txs: Transaction[] = []): DarfPayment[] {
+  return [...explicit, ...darfPaymentsFromTransactions(txs)].filter((p) => p.code === code);
+}

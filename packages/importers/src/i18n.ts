@@ -401,6 +401,11 @@ const R3: Catalog = {
     pt: 'O arquivo não traz sinais: "{value}" foi tomado como {type} (entrada). Se for uma saída, associe a palavra ao tipo correto no mapeamento.',
     en: 'The file has no signs: "{value}" was taken as {type} (inflow). If it is an outflow, map that word to the right type.',
   },
+  TICKER_RENAMED: {
+    es: '{from} cambió de código: se usa {to} (misma acción).',
+    pt: '{from} mudou de código: usa-se {to} (mesma ação).',
+    en: '{from} was renamed: {to} is used (same security).',
+  },
   RECONCILIATION_UNASSIGNED: {
     es: '{count} movimientos de este corredor no tienen cuenta y podrían ser de otra cuenta (usados en la conciliación: {used}). Asígnales la cuenta para una conciliación exacta.',
     pt: '{count} movimentações desta corretora não têm conta e podem ser de outra conta (usadas na conciliação: {used}). Atribua a conta para uma conciliação exata.',

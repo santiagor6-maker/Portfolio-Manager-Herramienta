@@ -9,6 +9,7 @@
  *   (DELETE /api/cache without token from a direct loopback socket),
  *   CACHE_DIR (.cache/market-data), CACHE_MAX_FILES (20000),
  *   MD_CUSTOM_FEEDS_FILE (JSON array of user-defined feeds),
+ *   MD_DIVIDENDS_FILE (JSON array of declared dividends with payment dates, e.g. BVC installments),
  *   MD_FROZEN_DIR (directory of *.json recorded histories of delisted securities, see frozen.ts),
  *   SYNC_SECRET (≥16 chars; enables POST /api/sync/ibkr-flex), SYNC_DIR (.data/sync),
  *   IBKR_FLEX_DAILY ("portfolioId[:credentialId],..."; daily Flex sync into the inbox) / IBKR_FLEX_HOUR (6 UTC),
@@ -20,7 +21,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { serve } from '@hono/node-server';
-import { keysFromEnv, MarketDataService, validateFrozen, type CustomFeedInstrument, type FrozenHistory } from '@pm/market-data';
+import { keysFromEnv, MarketDataService, validateDeclaredDividends, validateFrozen, type CustomFeedInstrument, type DeclaredDividend, type FrozenHistory } from '@pm/market-data';
 import { createApp, DEFAULT_CORS_ORIGINS } from './app';
 import { FileStore } from './fileStore';
 import { IbkrFlexSync, msUntilHourUtc, parseDailyJobs } from './ibkrSync';
@@ -59,12 +60,19 @@ if (env.MD_FROZEN_DIR) {
   console.log(`Loaded ${frozenHistories.length} frozen histor${frozenHistories.length === 1 ? 'y' : 'ies'} from ${dir}`);
 }
 
+let dividendCalendar: DeclaredDividend[] = [];
+if (env.MD_DIVIDENDS_FILE) {
+  dividendCalendar = validateDeclaredDividends(JSON.parse(readFileSync(resolve(env.MD_DIVIDENDS_FILE), 'utf8')));
+  console.log(`Loaded ${dividendCalendar.length} declared dividend(s) from ${env.MD_DIVIDENDS_FILE}`);
+}
+
 const store = new FileStore(cacheDir, { maxFiles: Number(env.CACHE_MAX_FILES ?? 20_000) });
 const service = new MarketDataService({
   store,
   keys: keysFromEnv(env),
   customFeeds,
   frozenHistories,
+  dividendCalendar,
   httpOptions: {
     onRequest: ({ url, status, ms, attempt }) => {
       const u = new URL(url);

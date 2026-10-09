@@ -112,3 +112,23 @@ describe('i18n completeness', () => {
     expect(keys(resources.en.translation).sort()).toEqual(es);
   });
 });
+
+describe('price warnings (core round 5)', () => {
+  it('parses month/summary warnings and finds the trades behind them', async () => {
+    const { parsePriceWarnings, flaggedTransactionIds } = await import('../components/PriceWarnings');
+    expect(parsePriceWarnings(['DEGENERATE_SUBPERIOD', 'TRADE_PRICE_OUTLIER:XNAS:MSFT,XBOG:ISA', 'TRADE_PRICE_UNCONFIRMED:BTC'])).toEqual([
+      { code: 'TRADE_PRICE_OUTLIER', instrumentIds: ['XNAS:MSFT', 'XBOG:ISA'] },
+      { code: 'TRADE_PRICE_UNCONFIRMED', instrumentIds: ['BTC'] },
+    ]);
+    const txs: Record<string, { instrumentId: string; date: string }> = {
+      a: { instrumentId: 'XNAS:MSFT', date: '2026-03-10' },
+      b: { instrumentId: 'XNAS:MSFT', date: '2026-01-05' },
+      c: { instrumentId: 'XNYS:KO', date: '2026-03-11' },
+    };
+    const diags = ['a', 'b', 'c'].map((id) => ({ code: 'TRADE_PRICE_OUTLIER', transactionId: id, date: txs[id]!.date, severity: 'warning', message: '' }));
+    const of = (id: string) => txs[id];
+    expect(flaggedTransactionIds(diags as never, 'TRADE_PRICE_OUTLIER', of, ['XNAS:MSFT'], '2026-03-01', '2026-03-31')).toEqual(['a']);
+    // An unconfirmed price can affect later months: fall back to earlier trades of that asset.
+    expect(flaggedTransactionIds(diags as never, 'TRADE_PRICE_OUTLIER', of, ['XNAS:MSFT'], '2026-04-01', '2026-04-30')).toEqual(['a', 'b']);
+  });
+});

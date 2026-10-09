@@ -441,6 +441,12 @@ export interface IncomeEvent {
   netBase: number;
   /** e.g. 'JCP' (additive). */
   subtype?: TransactionSubtype;
+  /**
+   * Round 6 (C47): `taxes` was inferred by the engine (amount recorded net, see
+   * Transaction.amountIsNet / INTEREST_NET_ASSUMED), not recorded or certified. Tax reports must
+   * not treat it as certified withholding.
+   */
+  taxesEstimated?: boolean;
 }
 
 /** One row of the monthly tracking table (the heart of the product). */
