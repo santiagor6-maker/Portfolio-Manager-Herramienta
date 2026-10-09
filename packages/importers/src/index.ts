@@ -51,5 +51,5 @@ export { createIbkrFlexSyncHandler, createTokenVault, MemoryCredentialStore, run
 export type { CredentialStore, TokenVault, IbkrFlexSyncHandlerOptions, IbkrFlexSyncJob } from './sync/server';
 export { flexXmlToTables } from './sync/ibkr-flex';
 export type { FlexXmlTable } from './sync/ibkr-flex';
-export { accountKey, accountsCompatible } from './pipeline';
+export { accountKey, accountsCompatible, accountNumber } from './pipeline';
 export { tesouroId } from './markets';

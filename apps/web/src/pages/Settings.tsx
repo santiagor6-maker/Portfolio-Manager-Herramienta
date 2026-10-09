@@ -155,6 +155,16 @@ function DataSource() {
             </button>
           </div>
         </Field>
+        <Field label={t('ibkr.apiToken')} htmlFor="s-token" hint={t('ibkr.apiTokenHint')}>
+          <input
+            id="s-token"
+            className="input"
+            type="password"
+            autoComplete="off"
+            value={s.apiToken}
+            onChange={(e) => set('apiToken', e.target.value)}
+          />
+        </Field>
         {test && (
           <div className="flex items-center gap-2 text-[13px]">
             {test.ok ? <CheckCircle2 size={15} className="text-pos" /> : <XCircle size={15} className="text-neg" />}

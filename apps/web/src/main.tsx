@@ -7,6 +7,7 @@ import { useApp } from './store/app';
 import { bootstrap } from './services/onboarding';
 import { hydrateMarketState, refreshMarketData } from './services/marketData';
 import { ensureDefaultAlerts, evaluateAlerts } from './services/alerts';
+import { checkIbkrInboxes } from './services/ibkrSync';
 
 /** PWA: cache the app shell for offline use (production builds only). */
 function registerServiceWorker() {
@@ -30,6 +31,7 @@ async function start() {
     await hydrateMarketState();
     await ensureDefaultAlerts();
     void evaluateAlerts();
+    void checkIbkrInboxes(); // IBKR daily-sync inbox badge
     if (settings.autoRefresh) void refreshMarketData();
     registerServiceWorker();
   } catch (e) {

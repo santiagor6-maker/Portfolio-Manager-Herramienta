@@ -62,6 +62,20 @@ export default function TransactionsPage() {
     }
   }, [params]);
 
+  // Deep link from warnings elsewhere (e.g. "price to confirm"): /movimientos?editar=<id>.
+  const editId = params.get('editar');
+  useEffect(() => {
+    if (!editId || !txs) return;
+    const x = txs.find((r) => r.id === editId);
+    if (x) {
+      setDuplicating(undefined);
+      setEditing(x);
+      setFormOpen(true);
+    }
+    params.delete('editar');
+    setParams(params, { replace: true });
+  }, [editId, txs, params, setParams]);
+
   const closeForm = () => {
     setFormOpen(false);
     setEditing(undefined);

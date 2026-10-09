@@ -331,7 +331,8 @@ export async function exportBackup(includeMarketCache = true): Promise<BackupFil
     instruments,
     transactions,
     manualPrices,
-    settings,
+    // Secrets stay on this device: the server API token is never written to a backup file.
+    settings: settings.filter((r) => r.key !== 'apiToken'),
     watchlist,
     alerts,
     goals,

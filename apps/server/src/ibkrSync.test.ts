@@ -8,7 +8,8 @@ import { MemoryStore } from '@pm/market-data';
 import { createTestService } from '../../../packages/market-data/test/helpers';
 import { createApp } from './app';
 import { FileStore } from './fileStore';
-import { IbkrFlexSync, msUntilHourUtc, parseDailyJobs } from './ibkrSync';
+import { tokenMatches } from './app';
+import { guardedFlexFetch, IbkrFlexSync, isIbkrHost, msUntilHourUtc, parseDailyJobs } from './ibkrSync';
 
 // Recorded Flex Web Service responses from the importers package (no network).
 const FX = join(dirname(fileURLToPath(import.meta.url)), '../../../packages/importers/test/fixtures/ibkr-flex-ws');
@@ -150,6 +151,65 @@ describe('daily IBKR Flex job and inbox', () => {
     expect(() => parseDailyJobs('../etc')).toThrow(/invalid entry/);
     expect(msUntilHourUtc(6, new Date('2026-10-09T05:30:00Z'))).toBe(30 * 60_000);
     expect(msUntilHourUtc(6, new Date('2026-10-09T06:00:00Z'))).toBe(24 * 3_600_000);
+  });
+});
+
+describe('M35 hardening of the IBKR sync', () => {
+  it('the Flex token only goes to https://*.interactivebrokers.com, whatever <Url> SendRequest returns', async () => {
+    expect(isIbkrHost('https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest?t=x')).toBe(true);
+    expect(isIbkrHost('https://gdcdyn.interactivebrokers.com/x')).toBe(true);
+    for (const bad of ['https://evil.example/GetStatement', 'https://interactivebrokers.com.evil.example/x', 'http://ndcdyn.interactivebrokers.com/x', 'https://user:pw@ndcdyn.interactivebrokers.com/x', 'not a url']) {
+      expect(isIbkrHost(bad)).toBe(false);
+    }
+    const seen: string[] = [];
+    const inner = async (url: string) => {
+      seen.push(url);
+      const body = url.includes('/SendRequest') ? ws('send-request.xml').replace(/<Url>[^<]*<\/Url>/, '<Url>https://evil.example/GetStatement</Url>') : ws('statement.xml');
+      return { ok: true, status: 200, text: async () => body };
+    };
+    const sync = await IbkrFlexSync.create({ secret: SECRET, store: new MemoryStore(), fetch: inner, delayMs: 0 });
+    const app = createApp({ service: createTestService().service, log: null, apiToken: API, ibkrFlexSync: sync });
+    const post = (body: unknown) => app.request('/api/sync/ibkr-flex', { method: 'POST', headers: { Authorization: `Bearer ${API}` }, body: JSON.stringify(body) });
+    await post({ action: 'save', token: TOKEN, queryId: '1' });
+    const res = await post({ action: 'sync', portfolioId: 'p1' });
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(await res.json())).toMatch(/Refused to send the Flex token to evil\.example/);
+    expect(seen.some((u) => u.includes('evil.example'))).toBe(false);
+    await expect(guardedFlexFetch(inner)('https://evil.example/?t=x')).rejects.toThrow(/Refused/);
+  });
+
+  it('API token comparison is constant-time (hash, then XOR) and exact', async () => {
+    expect(await tokenMatches('secret-api-token', API)).toBe(true);
+    expect(await tokenMatches('secret-api-tokeN', API)).toBe(false);
+    expect(await tokenMatches('secret', API)).toBe(false);
+    expect(await tokenMatches(undefined, API)).toBe(false);
+    expect(await tokenMatches('', '')).toBe(true);
+    expect(await tokenMatches(undefined, '')).toBe(false);
+  });
+
+  it('overlapping daily runs never duplicate the inbox; an acknowledgement by ids keeps later rows', async () => {
+    const { sync, post, app } = await setup({ apiToken: API });
+    await post({ action: 'save', token: TOKEN, queryId: '987654' });
+    const [a, b] = await Promise.all([sync.runDaily([{ portfolioId: 'p1' }]), sync.runDaily([{ portfolioId: 'p1' }])]);
+    const n = a[0]!.imported! + b[0]!.imported!;
+    const inbox = await sync.inbox('p1');
+    expect(inbox.pending).toHaveLength(n);
+    expect(new Set(inbox.pending.map((t) => t.id)).size).toBe(n);
+    expect(Math.min(a[0]!.imported!, b[0]!.imported!)).toBe(0);
+
+    // The web acknowledges only what it read; the rest stays.
+    const firstId = inbox.pending[0]!.id;
+    const auth = { Authorization: `Bearer ${API}` };
+    const ack = await app.request('/api/sync/ibkr-flex/inbox?portfolioId=p1', { method: 'DELETE', headers: auth, body: JSON.stringify({ ids: [firstId] }) });
+    expect(await ack.json()).toEqual({ cleared: 1 });
+    expect((await sync.inbox('p1')).pending.map((t) => t.id)).not.toContain(firstId);
+    expect((await sync.inbox('p1')).pending).toHaveLength(n - 1);
+    const badAck = await app.request('/api/sync/ibkr-flex/inbox?portfolioId=p1', { method: 'DELETE', headers: auth, body: JSON.stringify({ ids: [1] }) });
+    expect(badAck.status).toBe(400);
+
+    // Concurrent acknowledgements and a run: no lost update.
+    await Promise.all([sync.clearInbox('p1', [inbox.pending[1]!.id]), sync.runDaily([{ portfolioId: 'p1' }]), sync.clearInbox('p1', [inbox.pending[2]!.id])]);
+    expect((await sync.inbox('p1')).pending).toHaveLength(n - 3);
   });
 });
 

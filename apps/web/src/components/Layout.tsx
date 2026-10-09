@@ -96,6 +96,7 @@ function Brand() {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
+  const inboxCount = useApp((s) => Object.values(s.ibkrInbox).reduce((a, b) => a + b, 0));
   const link = (n: NavItem) => (
     <NavLink
       key={n.to}
@@ -111,6 +112,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     >
       <span aria-hidden>{n.icon}</span>
       <span className="truncate">{t(n.key)}</span>
+      {n.to === '/importar' && inboxCount > 0 && (
+        <span className="ml-auto chip !h-5 !px-1.5 !text-[11px] !bg-accent !text-white !border-accent num" data-testid="ibkr-inbox-badge" aria-label={t('ibkr.inboxCount', { count: inboxCount })} title={t('ibkr.inboxCount', { count: inboxCount })}>
+          {inboxCount}
+        </span>
+      )}
     </NavLink>
   );
   return (

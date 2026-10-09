@@ -13,6 +13,7 @@ import type { Instrument, Transaction } from '@pm/core';
 import {
   createIbkrFlexSyncHandler,
   createTokenVault,
+  FlexError,
   runIbkrFlexSyncJobs,
   type CredentialStore,
   type IbkrFlexSyncHandlerOptions,
@@ -41,7 +42,7 @@ interface InboxState extends IbkrFlexInbox {
 export interface IbkrFlexSyncMount {
   handler: (req: Request) => Promise<Response>;
   inbox(portfolioId: string): Promise<IbkrFlexInbox>;
-  clearInbox(portfolioId: string): Promise<{ cleared: number }>;
+  clearInbox(portfolioId: string, ids?: string[]): Promise<{ cleared: number }>;
 }
 
 export interface IbkrDailyJob {
@@ -77,6 +78,61 @@ export function credentialStore(store: PersistentStore, now: () => Date = () => 
   };
 }
 
+type FlexFetch = NonNullable<IbkrFlexSyncHandlerOptions['fetch']>;
+
+/** IBKR hosts allowed to receive the Flex token (SendRequest and the `<Url>` it returns). */
+export function isIbkrHost(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const h = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && !u.username && !u.password && (h === 'interactivebrokers.com' || h.endsWith('.interactivebrokers.com'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch used for IBKR (review R4, M35): the token travels in the query string, so it is only ever
+ * sent over HTTPS to *.interactivebrokers.com, whatever `<Url>` SendRequest answers. 60 s timeout.
+ */
+export function guardedFlexFetch(inner?: FlexFetch, timeoutMs = 60_000): FlexFetch {
+  const base: FlexFetch =
+    inner ??
+    (async (url, init) => {
+      const r = await globalThis.fetch(url, { headers: init?.headers ?? {}, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+      return { ok: r.ok, status: r.status, text: () => r.text() };
+    });
+  return (url, init) => {
+    if (!isIbkrHost(url)) {
+      let host = '?';
+      try {
+        host = new URL(url).host;
+      } catch {
+        // keep '?'
+      }
+      return Promise.reject(new FlexError(`Refused to send the Flex token to ${host}: only https://*.interactivebrokers.com is allowed`));
+    }
+    return base(url, init);
+  };
+}
+
+/** Promise-chain lock per key: inbox read-modify-write never interleaves (review R4, M35). */
+class KeyedLock {
+  private readonly tails = new Map<string, Promise<unknown>>();
+  run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.tails.get(key) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    const tail = next.catch(() => undefined);
+    this.tails.set(key, tail);
+    void tail.then(() => {
+      if (this.tails.get(key) === tail) this.tails.delete(key);
+    });
+    return next;
+  }
+}
+
+const txKey = (t: Transaction) => t.importHash ?? t.id;
+
 const inboxKey = (portfolioId: string) => `ibkr-flex-inbox:${SYNC_USER}:${portfolioId}`;
 export const PORTFOLIO_ID_RE = /^[\w.-]{1,100}$/;
 
@@ -84,6 +140,7 @@ export class IbkrFlexSync implements IbkrFlexSyncMount {
   readonly handler: (req: Request) => Promise<Response>;
   private readonly opts: IbkrFlexSyncHandlerOptions;
   private readonly now: () => Date;
+  private readonly lock = new KeyedLock();
 
   private constructor(
     private readonly store: PersistentStore,
@@ -102,8 +159,8 @@ export class IbkrFlexSync implements IbkrFlexSyncMount {
       store: credentialStore(o.store, now),
       authorize: () => SYNC_USER,
       userAgent: o.userAgent ?? 'PortafolioPro/1.0',
+      fetch: guardedFlexFetch(o.fetch),
     };
-    if (o.fetch) h.fetch = o.fetch;
     if (o.delayMs !== undefined) h.delayMs = o.delayMs;
     if (o.maxAttempts !== undefined) h.maxAttempts = o.maxAttempts;
     return new IbkrFlexSync(o.store, h, now);
@@ -124,15 +181,28 @@ export class IbkrFlexSync implements IbkrFlexSyncMount {
     return rest;
   }
 
-  async clearInbox(portfolioId: string): Promise<{ cleared: number }> {
-    const s = await this.state(portfolioId);
-    const cleared = s.pending.length;
-    await this.write({ ...s, pending: [], instruments: [] });
-    return { cleared };
+  /**
+   * The web app acknowledges what it imported. With `ids` only those transactions leave the inbox,
+   * so rows added by a sync that finished after the web read the inbox are not lost.
+   */
+  async clearInbox(portfolioId: string, ids?: string[]): Promise<{ cleared: number }> {
+    return this.lock.run(portfolioId, async () => {
+      const s = await this.state(portfolioId);
+      const ack = ids ? new Set(ids) : undefined;
+      const pending = ack ? s.pending.filter((t) => !ack.has(t.id) && !ack.has(txKey(t))) : [];
+      const used = new Set(pending.map((t) => t.instrumentId));
+      await this.write({ ...s, pending, instruments: ack ? s.instruments.filter((i) => used.has(i.id)) : [] });
+      return { cleared: s.pending.length - pending.length };
+    });
   }
 
   /** Run the daily sync for each job; errors are reported per job and recorded in its inbox. */
   async runDaily(jobs: IbkrDailyJob[]): Promise<Awaited<ReturnType<typeof runIbkrFlexSyncJobs>>> {
+    // One daily run at a time; inbox writes are additionally locked per portfolio.
+    return this.lock.run('\u0000daily', () => this.runDailyUnlocked(jobs));
+  }
+
+  private async runDailyUnlocked(jobs: IbkrDailyJob[]): Promise<Awaited<ReturnType<typeof runIbkrFlexSyncJobs>>> {
     // Transactions actually added per portfolio (a row may yield several, e.g. a separate FX fee).
     const added = new Map<string, number>();
     const mapped: IbkrFlexSyncJob[] = jobs.map((j) => {
@@ -143,19 +213,23 @@ export class IbkrFlexSync implements IbkrFlexSyncMount {
           const s = await this.state(j.portfolioId);
           return { transactions: s.seen, instruments: s.seenInstruments };
         },
-        save: async (result) => {
-          const s = await this.state(j.portfolioId);
-          const known = new Set(s.seenInstruments.map((i) => i.id));
-          const fresh = result.instruments.filter((i) => !known.has(i.id));
-          added.set(j.portfolioId, result.transactions.length);
-          await this.write({
-            ...s,
-            seen: [...s.seen, ...result.transactions],
-            seenInstruments: [...s.seenInstruments, ...fresh],
-            pending: [...s.pending, ...result.transactions],
-            instruments: [...s.instruments, ...fresh.filter((i) => !s.instruments.some((x) => x.id === i.id))],
-          });
-        },
+        save: (result) =>
+          this.lock.run(j.portfolioId, async () => {
+            // Re-read under the lock and dedupe again: the state may have changed since load().
+            const s = await this.state(j.portfolioId);
+            const seenKeys = new Set(s.seen.map(txKey));
+            const txs = result.transactions.filter((t) => !seenKeys.has(txKey(t)));
+            const known = new Set(s.seenInstruments.map((i) => i.id));
+            const fresh = result.instruments.filter((i) => !known.has(i.id));
+            added.set(j.portfolioId, (added.get(j.portfolioId) ?? 0) + txs.length);
+            await this.write({
+              ...s,
+              seen: [...s.seen, ...txs],
+              seenInstruments: [...s.seenInstruments, ...fresh],
+              pending: [...s.pending, ...txs],
+              instruments: [...s.instruments, ...fresh.filter((i) => !s.instruments.some((x) => x.id === i.id))],
+            });
+          }),
       };
       if (j.credentialId) job.credentialId = j.credentialId;
       if (j.account) job.account = j.account;
@@ -165,11 +239,10 @@ export class IbkrFlexSync implements IbkrFlexSyncMount {
       r.ok && added.has(r.portfolioId) ? { ...r, imported: added.get(r.portfolioId)! } : r,
     );
     for (const r of results) {
-      const s = await this.state(r.portfolioId);
       const lastRun: NonNullable<IbkrFlexInbox['lastRun']> = { at: this.now().toISOString(), ok: r.ok };
       if (r.imported !== undefined) lastRun.imported = r.imported;
       if (r.error) lastRun.error = r.error;
-      await this.write({ ...s, lastRun });
+      await this.lock.run(r.portfolioId, async () => this.write({ ...(await this.state(r.portfolioId)), lastRun }));
     }
     return results;
   }

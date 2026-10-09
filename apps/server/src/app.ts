@@ -141,6 +141,19 @@ function clientId(c: Context, trustProxy: boolean): string {
   return socketAddress(c) ?? 'anonymous';
 }
 
+const sha256 = async (s: string) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+
+/**
+ * Constant-time token check (review R4, M35): both sides are hashed first, so neither the length
+ * nor the position of the first differing byte leaks through timing. WebCrypto: works serverless.
+ */
+export async function tokenMatches(given: string | undefined, expected: string): Promise<boolean> {
+  const [a, b] = await Promise.all([sha256(given ?? ''), sha256(expected)]);
+  let diff = given === undefined ? 1 : 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
+  return diff === 0;
+}
+
 function hostName(host: string | undefined): string {
   if (!host) return '';
   if (host.startsWith('[')) return host.slice(0, host.indexOf(']') + 1).toLowerCase();
@@ -204,7 +217,7 @@ export function createApp(opts: AppOptions = {}): Hono {
     if (opts.apiToken && c.req.path !== '/api/health' && c.req.method !== 'OPTIONS') {
       const auth = c.req.header('authorization');
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : c.req.header('x-api-key');
-      if (token !== opts.apiToken) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API token' } }, 401);
+      if (!(await tokenMatches(token, opts.apiToken))) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API token' } }, 401);
     }
     if (limiter && c.req.method !== 'OPTIONS' && c.req.path !== '/api/health') {
       const id = clientId(c, !!opts.trustProxy);
@@ -408,11 +421,33 @@ export function createApp(opts: AppOptions = {}): Hono {
     c.header('Cache-Control', 'no-store');
     return c.json(await opts.ibkrFlexSync!.inbox(portfolioParam(c)));
   });
-  app.delete('/api/sync/ibkr-flex/inbox', async (c) => {
-    const denied = syncGuard(c);
-    if (denied) return denied;
-    return c.json(await opts.ibkrFlexSync!.clearInbox(portfolioParam(c)));
-  });
+  // Acknowledge: optional JSON body { ids: [...] } removes only the transactions the web imported
+  // (anything synced after the web read the inbox stays); without a body the inbox is emptied.
+  app.delete(
+    '/api/sync/ibkr-flex/inbox',
+    async (c, next) => syncGuard(c) ?? next(),
+    bodyLimit({
+      maxSize: syncMaxBody,
+      onError: (c) => c.json({ error: { code: 'BAD_REQUEST', message: `Body too large (max ${syncMaxBody} bytes)` } }, 413),
+    }),
+    async (c) => {
+      const portfolioId = portfolioParam(c);
+      const text = await c.req.text();
+      let ids: string[] | undefined;
+      if (text.trim()) {
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          bad('Body must be JSON: { "ids": ["transaction id", ...] }');
+        }
+        const raw = (body as { ids?: unknown })?.ids;
+        if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) bad('"ids" must be an array of transaction ids');
+        ids = raw as string[];
+      }
+      return c.json(await opts.ibkrFlexSync!.clearInbox(portfolioId, ids));
+    },
+  );
 
   return app;
 }

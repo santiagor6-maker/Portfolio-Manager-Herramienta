@@ -95,6 +95,14 @@ const ACTIVITY_SECTIONS = new Set([
   'Change in NAV', 'Mark-to-Market Performance Summary', 'Realized & Unrealized Performance Summary', 'Codes', 'Notes/Legal Notes',
 ]);
 
+const IBKR_ACCOUNT_RE = /^D?U\d{5,10}$|^F\d{6,10}$/i;
+
+/** Label every draft with the statement's account number unless the user chose an account label. */
+function labelAccount(rows: ParsedRow[], account: string, ctx: ParseContext): void {
+  if (ctx.options.account) return;
+  for (const row of rows) for (const d of [row.draft, ...(row.extra ?? [])]) if (d && !d.account) d.account = account.toUpperCase();
+}
+
 export const ibkrActivityPreset: PresetDefinition = {
   id: 'ibkr-activity',
   label: 'Interactive Brokers — Activity Statement (CSV)',
@@ -409,9 +417,12 @@ export const ibkrActivityPreset: PresetDefinition = {
     if (reported.positions.length || reported.cash.length) {
       const asOf = ctx.options.asOfDate ?? periodEnd;
       if (asOf) reported.asOf = asOf;
-      reported.accountIds = accountIds.filter(Boolean);
       ctx.reported = reported;
     }
+    // I20: the account number (U1234567) identifies the account for dedup and reconciliation.
+    const numbers = accountIds.filter((a) => IBKR_ACCOUNT_RE.test(a));
+    if (reported.positions.length || reported.cash.length) reported.accountIds = numbers.length ? numbers : accountIds.filter(Boolean);
+    if (numbers.length === 1) labelAccount(rows, numbers[0]!, ctx);
     return rows;
   },
 };
@@ -468,6 +479,7 @@ export const ibkrFlexPreset: PresetDefinition = {
     const flexReported: NonNullable<ParseContext['reported']> = { source: 'ibkr-flex', positions: [], cash: [] };
     const corpSeen = new Set<string>();
     const hasExecutions = table.rows.some((r) => r.some((c) => cellToString(c).toUpperCase() === 'EXECUTION'));
+    const rowAccount = new Map<ParsedRow, string>();
     table.rows.forEach((r, idx) => {
       const first = cellToString(r[0]);
       if (FLEX_MARKERS.has(first)) return;
@@ -483,6 +495,8 @@ export const ibkrFlexPreset: PresetDefinition = {
       const getS = (...names: string[]) => cellToString(get(...names));
       const row = ctx.newRow(idx, r);
       rows.push(row);
+      const acctId = getS('ClientAccountID', 'AccountID', 'AccountId');
+      if (IBKR_ACCOUNT_RE.test(acctId)) rowAccount.set(row, acctId.toUpperCase());
       const currency = getS('CurrencyPrimary', 'Currency');
       const symbol = ibkrSymbol(getS('Symbol'));
       const isin = getS('ISIN', 'SecurityID');
@@ -680,10 +694,16 @@ export const ibkrFlexPreset: PresetDefinition = {
     mergeWithholding(ctx, dividends, taxes);
     if (flexReported.positions.length) {
       if (ctx.options.asOfDate) flexReported.asOf = ctx.options.asOfDate;
-      const ids = new Set(['Interactive Brokers']);
-      for (const r of table.rows) for (const c of r) if (/^U\d{5,10}$/.test(cellToString(c))) ids.add(cellToString(c));
-      flexReported.accountIds = [...ids];
+      const ids = new Set(rowAccount.values());
+      flexReported.accountIds = ids.size ? [...ids] : ['Interactive Brokers'];
       ctx.reported = flexReported;
+    }
+    if (!ctx.options.account) {
+      for (const row of rows) {
+        const a = rowAccount.get(row);
+        if (!a) continue;
+        for (const d of [row.draft, ...(row.extra ?? [])]) if (d && !d.account) d.account = a;
+      }
     }
     return rows;
   },

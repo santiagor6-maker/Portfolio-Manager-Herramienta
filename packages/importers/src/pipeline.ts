@@ -410,18 +410,45 @@ interface DupEntry {
 
 const ACCOUNT_NOISE = /\b(cctvm|ctvm|dtvm|s a|sa|s a s|sas|ltda|corretora|corredores|comisionista|de|do|da|del|y|e|valores|investimentos|investimento|invest|banco|bank|llc|inc|plc|grupo|the)\b/g;
 
-/** Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu". */
-export function accountKey(account: string | undefined): string | undefined {
-  if (!account) return undefined;
-  const n = normalizeText(account);
-  const k = n.replace(ACCOUNT_NOISE, ' ').replace(/\s+/g, ' ').trim();
-  return (k || n).split(' ')[0];
+/** Same institution under different spellings (after noise removal, first word). */
+const INSTITUTION_ALIASES: Record<string, string> = {
+  interactive: 'ibkr', ib: 'ibkr', ibkr: 'ibkr',
+  nubank: 'nu', nuinvest: 'nu', easynvest: 'nu',
+  charles: 'schwab', schwab: 'schwab',
+  t212: 'trading212', trading: 'trading212', trading212: 'trading212',
+  modalmais: 'modal', btgpactual: 'btg', itau: 'itau', itaú: 'itau', ion: 'itau',
+};
+
+/** Broker account numbers that identify ONE account (IBKR U1234567 / DU1234567 paper / F-prefixed FA). */
+const ACCOUNT_NUMBER_RE = /\b(D?U\d{5,10}|F\d{6,10})\b/i;
+
+/** The broker account number inside an account label ("U1234567", "IBKR U1234567"), upper-cased. */
+export function accountNumber(account: string | undefined): string | undefined {
+  const m = account ? ACCOUNT_NUMBER_RE.exec(account) : null;
+  return m ? m[1]!.toUpperCase() : undefined;
 }
 
-/** Accounts are compatible when either is unknown or both normalize to the same institution. */
+/** Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu"; "U1234567" → "ibkr". */
+export function accountKey(account: string | undefined): string | undefined {
+  if (!account) return undefined;
+  if (accountNumber(account)) return 'ibkr';
+  const n = normalizeText(account);
+  const k = n.replace(ACCOUNT_NOISE, ' ').replace(/\s+/g, ' ').trim();
+  const first = (k || n).split(' ')[0]!;
+  return INSTITUTION_ALIASES[first] ?? first;
+}
+
+/**
+ * Accounts are compatible when either is unknown, or both are the same institution and they do not
+ * carry two different account numbers ("U1111111" vs "U2222222" are two IBKR accounts; "IBKR" is
+ * compatible with both).
+ */
 export function accountsCompatible(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return true;
-  return accountKey(a) === accountKey(b);
+  if (accountKey(a) !== accountKey(b)) return false;
+  const na = accountNumber(a);
+  const nb = accountNumber(b);
+  return !na || !nb || na === nb;
 }
 
 const near = (a: number | undefined, b: number | undefined, rel: number, absTol: number) =>
@@ -705,7 +732,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   stats.currencies = [...currencies].sort();
 
-  const reconciliation = ctx.reported ? reconcile(ctx, resolver, [...sameAccount(existingTx, source, ctx), ...transactions]) : undefined;
+  const reconciliation = ctx.reported ? reconcileBestFit(ctx, resolver, existingTx, source, transactions) : undefined;
   const allIssues = [...ctx.fileIssues, ...parsed.flatMap((r) => r.issues)];
   const errors = allIssues.filter((i) => i.severity === 'error');
   const warnings = allIssues.filter((i) => i.severity !== 'error');
@@ -743,19 +770,50 @@ function sourceFamily(source: string | undefined): string | undefined {
 }
 
 /**
- * Existing transactions that belong to the statement's account (I20): same account/institution when
- * both sides have one, the statement's account ids (e.g. IBKR U1234567), or the same broker family
- * for transactions without account. Other brokers' holdings never enter the comparison.
+ * Existing transactions that belong to the statement's account (I20/I20b):
+ *  - statements that report account numbers (IBKR U1234567) only take transactions of that account
+ *    (or labelled with the bare institution);
+ *  - otherwise the user's account option, then the statement's institution;
+ *  - transactions without any account are "unassigned" when they come from the same broker family:
+ *    the caller decides with them or without them (best fit) and says so.
  */
-function sameAccount(existing: Transaction[], source: string, ctx: ParseContext): Transaction[] {
+function sameAccount(existing: Transaction[], source: string, ctx: ParseContext): { assigned: Transaction[]; unassigned: Transaction[] } {
   const acct = ctx.options.account;
   const ids = ctx.reported?.accountIds ?? [];
+  const numbered = ids.filter((a) => accountNumber(a));
   const fam = sourceFamily(source);
-  return existing.filter((t) => {
-    if (t.account && acct) return accountsCompatible(t.account, acct);
-    if (t.account && ids.some((a) => accountsCompatible(a, t.account))) return true;
-    return sourceFamily(t.source) === fam;
-  });
+  const assigned: Transaction[] = [];
+  const unassigned: Transaction[] = [];
+  for (const t of existing) {
+    if (t.account) {
+      let ok: boolean;
+      if (numbered.length) ok = numbered.some((a) => accountsCompatible(a, t.account));
+      else if (acct) ok = accountsCompatible(t.account, acct);
+      else if (ids.length) ok = ids.some((a) => accountsCompatible(a, t.account));
+      else ok = sourceFamily(t.source) === fam;
+      if (ok) assigned.push(t);
+    } else if (sourceFamily(t.source) === fam) unassigned.push(t);
+  }
+  return { assigned, unassigned };
+}
+
+/** Reconcile with or without the family's unassigned transactions, whichever explains the statement better. */
+function reconcileBestFit(ctx: ParseContext, resolver: InstrumentResolver, existing: Transaction[], source: string, imported: Transaction[]): Reconciliation {
+  const { assigned, unassigned } = sameAccount(existing, source, ctx);
+  const withU = reconcile(ctx, resolver, [...assigned, ...unassigned, ...imported]);
+  let rec = withU;
+  if (unassigned.length) {
+    const without = reconcile(ctx, resolver, [...assigned, ...imported]);
+    const n = (r: Reconciliation) => r.positionDifferences.length + r.cashDifferences.length;
+    if (n(without) < n(withU)) {
+      rec = without;
+      ctx.fileIssues.push(ctx.issue('RECONCILIATION_UNASSIGNED', 'info', { count: unassigned.length }));
+    }
+  }
+  if (rec.positionDifferences.length || rec.cashDifferences.length) {
+    ctx.fileIssues.push(ctx.issue('RECONCILIATION_DIFF', 'warning', { count: rec.positionDifferences.length + rec.cashDifferences.length }));
+  }
+  return rec;
 }
 
 function reconcile(ctx: ParseContext, resolver: InstrumentResolver, all: Transaction[]): Reconciliation {
@@ -786,9 +844,6 @@ function reconcile(ctx: ParseContext, resolver: InstrumentResolver, all: Transac
   for (const c of rep.cash) {
     const computed = round(cash.get(c.currency) ?? 0, 6);
     if (Math.abs(computed - c.amount) > 0.01) rec.cashDifferences.push({ currency: c.currency, reported: c.amount, computed, difference: round(c.amount - computed, 6) });
-  }
-  if (rec.positionDifferences.length || rec.cashDifferences.length) {
-    ctx.fileIssues.push(ctx.issue('RECONCILIATION_DIFF', 'warning', { count: rec.positionDifferences.length + rec.cashDifferences.length }));
   }
   return rec;
 }
