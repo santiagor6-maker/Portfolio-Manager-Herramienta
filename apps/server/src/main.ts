@@ -12,7 +12,8 @@
  *   MD_FROZEN_DIR (directory of *.json recorded histories of delisted securities, see frozen.ts),
  *   SYNC_SECRET (≥16 chars; enables POST /api/sync/ibkr-flex), SYNC_DIR (.data/sync),
  *   IBKR_FLEX_DAILY ("portfolioId[:credentialId],..."; daily Flex sync into the inbox) / IBKR_FLEX_HOUR (6 UTC),
- *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12): local price snapshot,
+ *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12) / SNAPSHOT_YEARS (5,
+ *   closed years recorded on the first run): local price snapshot,
  *   provider keys: BRAPI_TOKEN, TWELVEDATA_API_KEY, FMP_API_KEY, EODHD_API_TOKEN,
  *   ALPHAVANTAGE_API_KEY (+ALPHAVANTAGE_PREMIUM=1), STOOQ_API_KEY, COINGECKO_API_KEY, SOCRATA_APP_TOKEN.
  */
@@ -109,9 +110,15 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
 const snapshotExchanges = (env.SNAPSHOT_EXCHANGES ?? 'XBOG,XLON').split(',').map((x) => x.trim()).filter((x) => x && x !== 'none');
 if (snapshotExchanges.length) {
   const hours = Number(env.SNAPSHOT_HOURS ?? 12);
+  // The first run also records the closed years (immutable, recorded once: later runs read them
+  // from the store); then only the current year is refreshed (review R4, M34).
+  const backfillYears = Number(env.SNAPSHOT_YEARS ?? 5);
+  let first = true;
   const run = async () => {
     const started = Date.now();
-    const r = await service.recordSnapshot(snapshotExchanges);
+    const from = first && backfillYears > 0 ? `${new Date().getUTCFullYear() - backfillYears}-01-01` : undefined;
+    first = false;
+    const r = await service.recordSnapshot(snapshotExchanges, from ? { from } : {});
     console.log(`snapshot ${snapshotExchanges.join(',')}: ${r.ok} recorded, ${r.failed.length} failed in ${Math.round((Date.now() - started) / 1000)}s`);
   };
   setTimeout(() => void run().catch((e) => console.error('snapshot failed', e)), 30_000).unref();

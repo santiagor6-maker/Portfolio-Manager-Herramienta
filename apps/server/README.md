@@ -32,6 +32,7 @@ npm run start -w @pm/server      # o: npx tsx apps/server/src/main.ts
 | `MD_FROZEN_DIR` | — | carpeta con historias congeladas (`*.json`) de valores que ya no cotizan, grabadas con `packages/market-data/scripts/record-frozen.ts`. Un archivo inválido se omite con un aviso |
 | `SNAPSHOT_EXCHANGES` | `XBOG,XLON` | bolsas cuyos instrumentos del catálogo se graban en el snapshot local (último recurso si fallan todos los proveedores). `none` lo desactiva |
 | `SNAPSHOT_HOURS` | 12 | intervalo del snapshot; la primera ejecución es 30 s después del arranque |
+| `SNAPSHOT_YEARS` | 5 | años cerrados que la primera ejecución del snapshot graba (son inmutables: se graban una vez y después solo se refresca el año en curso). `0` graba solo el año en curso |
 | `SYNC_SECRET` | — | activa la sincronización con IBKR (`/api/sync/ibkr-flex`). Clave para cifrar los tokens Flex (AES-256-GCM): mínimo 16 caracteres, mejor 32 aleatorios. Si cambia, hay que volver a guardar los tokens |
 | `SYNC_DIR` | `.data/sync` | almacén de tokens cifrados y bandejas de la sincronización diaria. Va aparte de la caché: no se poda ni se borra con `DELETE /api/cache`. Archivos con permisos 0600 |
 | `IBKR_FLEX_DAILY` | — | sincronización diaria opcional: `portfolioId[:credentialId]` separados por comas (por ejemplo `p1,p2:ira`). Requiere `SYNC_SECRET` |

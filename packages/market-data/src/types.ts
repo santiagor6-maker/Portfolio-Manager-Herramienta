@@ -56,6 +56,14 @@ export interface MarketPriceSeries extends PriceSeries {
   lastTradeDate?: ISODate;
   /** True when the last trade is older than 7 days (suspended, delisted or very illiquid). */
   stale?: boolean;
+  /**
+   * Set when the source covers only part of the requested range (review R4, M34): the local
+   * snapshot has only the years this server recorded. `coverageFrom`/`coverageTo` are the first
+   * and last dates the source actually has.
+   */
+  partial?: boolean;
+  coverageFrom?: ISODate;
+  coverageTo?: ISODate;
 }
 
 /**

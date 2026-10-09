@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 175 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5)
+npx vitest run packages/tax      # 193 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5, 18 ronda 6)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -286,3 +286,24 @@ partes por custodia y lleva un *pool* de unidades en tránsito.
 | T56 | baja | Una venta sin unidades registradas se convierte en una fila de **custo pendente** (`pendingCost`): cuenta para el límite de R$ 35 mil, no calcula ganancia y retiene el DARF (`CRYPTO_SALE_COST_PENDING`). Si había una salida previa sin entrada (P6), primero se infiere la llegada a la custodia de la venta (`TRANSFER_IN_INFERRED`, transacción sintética con el costo de origen) |
 
 Además, Bens e Direitos deja vacía la localización (con aviso) de la cripto con custodia no confirmada, como una billetera propia o una cuenta no reconocida.
+
+---
+
+## Respuesta a la revisión ronda 6
+
+Revisión: `reviews/tax-r6.md`. Las pruebas de regresión están en `src/review-r6.test.ts`
+(escenarios Q2b, Q4, Q4b, Q5, Q7 y Q8 del revisor).
+
+Regla general: **un costo no confirmado nunca genera un DARF emitido**. El impuesto se calcula y
+se muestra, pero se retiene la parte que depende de ese costo hasta que el usuario lo confirme.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T57 | media | Las unidades de una entrada sin salida correspondiente (depósito externo) tienen **costo provisorio**: el valor informado en la entrada o, si no hay valor, cero ("custo pendente"). La custodia lleva la cuenta de esas unidades a través de ventas parciales, traslados y llegadas inferidas. La venta que toma unidades provisorias se marca `provisionalCost` (`CRYPTO_SALE_COST_PROVISIONAL`) y su DARF se retiene, igual que en T56. Q4 → impuesto R$ 67.500 visible, DARF retenido; Q4b → costo provisorio R$ 300.000, R$ 22.500 retenidos. Para confirmar el costo se usa `transferBasis` o la nota `[custo: AAAA-MM-DD @ preço]`; con eso el DARF se emite con el costo confirmado |
+| T58 | media | Hay un límite para el emparejamiento tardío: `transferMaxLateDays`, 90 días por defecto. Una salida más antigua **no se empareja**: se propone (`TRANSFER_MATCH_PROPOSED`, nivel warning), la entrada conserva su propio valor como costo provisorio y la salida sigue "em trânsito" en Bens e Direitos. El usuario confirma con `confirmedTransfers` (id de la entrada → id de la salida) y el costo de origen se traslada sin límite de días. Entre la ventana preferente (30 días) y el límite, el emparejamiento es automático, pero `TRANSFER_MATCHED_LATE` es ahora un warning que menciona el valor propio de la entrada. Una llegada inferida (venta sin entrada) más allá del límite traslada el costo solo como provisorio. Q5 → costo R$ 500.000 (valor de la entrada), con propuesta |
+| T59 | baja | El mes de cripto separa dos montos. `darf` es el DARF 4600 de las ventas confirmadas, listo para pagar. `darfHeldAmount` es el impuesto retenido de las partes ambiguas (custodia no confirmada, costo provisorio o pendiente). Cada venta retenida se marca `held`; si hay retención parcial se avisa con `CRYPTO_DARF_PARTIAL`. Si el límite de R$ 35 mil solo se supera contando partes no confirmadas, se avisa (`CRYPTO_EXEMPTION_DEPENDS_ON_UNCONFIRMED`) de que el DARF podría ser restituible. El CSV del paquete agrega `darf_valor` y `valor_retido`. Q2b → DARF de R$ 750 (ETH) y R$ 2.700 retenidos (BTC) |
+| T60 | baja | `TRANSFER_PAIR_AMBIGUOUS` solo se emite cuando las salidas candidatas suman más que la entrada (alguna quedaría fuera) y empatan con costos distintos. Si una llegada en dos partes se completa con una entrada posterior, la diferencia no se trata como comisión. Una entrada de cripto sin pareja se avisa una sola vez (antes la avisaban el ruteo y el reporte del exterior). Q7 y Q8 → sin avisos; costos de R$ 250.000 y R$ 200.000 |
+
+Las opciones nuevas (`transferBasis`, `confirmedTransfers`, `transferMaxLateDays`) llegan al ruteo
+de cripto desde `brazilCryptoReport`, `brazilForeignAnnualReport`, `brazilBensDireitos` y
+`brazilTaxPack`.

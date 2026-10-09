@@ -634,14 +634,20 @@ export class MarketDataService {
   /** Locally recorded Yahoo chunks (possibly expired) covering [from, to], or undefined. */
   private async snapshot(symbol: string, from: ISODate, to: ISODate): Promise<ProviderHistory | undefined> {
     const parts: ProviderHistory[] = [];
+    let missingYears = 0;
     for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) {
       const c = await this.cache.getStale<ProviderHistory>(`hist:${YEAR_CHUNK_VERSION}:yahoo:${symbol}:${y}`);
       if (c) parts.push(c);
+      else missingYears++;
     }
     const points = parts.flatMap((p) => p.points).filter((p) => p.date >= from && p.date <= to);
     if (!points.length) return undefined;
     const last = parts[parts.length - 1]!;
+    const firstDate = points[0]!.date;
     const lastDate = points[points.length - 1]!.date;
+    // Partial: a year of the range was never recorded, or the recording starts well after `from`
+    // (more than a week: a holiday stretch is not a gap) (review R4, M34).
+    const partial = missingYears > 0 || daysBetween(from, firstDate) > 7;
     return {
       ...last,
       points,
@@ -649,7 +655,14 @@ export class MarketDataService {
       splits: parts.flatMap((p) => p.splits).filter((s) => s.date >= from && s.date <= to),
       session: undefined,
       source: 'snapshot',
-      notes: [...new Set([...parts.flatMap((p) => p.notes), `live providers unavailable: closes recorded locally by this server (last ${lastDate})`])],
+      coverage: { from: firstDate, to: lastDate, partial },
+      notes: [
+        ...new Set([
+          ...parts.flatMap((p) => p.notes),
+          `live providers unavailable: closes recorded locally by this server (last ${lastDate})`,
+          ...(partial ? [`PARTIAL: the local snapshot only covers ${firstDate}..${lastDate} of the requested range`] : []),
+        ]),
+      ],
     };
   }
 
@@ -800,6 +813,7 @@ export class MarketDataService {
         source: h.source,
         ...(lastTradeDate ? { lastTradeDate } : {}),
         ...(stale ? { stale } : {}),
+        ...(h.coverage?.partial ? { partial: true, coverageFrom: h.coverage.from, coverageTo: h.coverage.to } : {}),
       },
       actions,
       ...(fallbacks.length ? { fallbacks } : {}),

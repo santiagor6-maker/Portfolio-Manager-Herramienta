@@ -230,7 +230,10 @@ export function cryptoInTransitAt(r: CryptoRouting, date: string): { piece: Cryp
  *   asset currency and in BRL; a shortfall up to `transferMaxFeePct` is the network fee (full cost carried);
  * - a sale/transfer from a custody without units first pulls pending in-transit units (inferred arrival);
  *   if there are none, the remainder becomes a "custo pendente" sale piece (counted in sales, DARF withheld);
- * - an IN without a matching OUT keeps its own amount as cost, flagged TRANSFER_COST_UNKNOWN.
+ * - an IN without a matching OUT keeps its own amount (or zero) only as a PROVISIONAL cost, flagged
+ *   TRANSFER_COST_UNKNOWN; sales drawing on those units have their DARF withheld (T57);
+ * - OUTs older than `transferMaxLateDays` are never paired automatically, only proposed
+ *   (TRANSFER_MATCH_PROPOSED); `confirmedTransfers` / `transferBasis` confirm (T58).
  */
 export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions = {}): CryptoRouting {
   const custody: Record<string, CryptoCustody> = { ...(opts.cryptoCustody ?? {}) };
