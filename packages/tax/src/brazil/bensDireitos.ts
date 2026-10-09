@@ -3,7 +3,7 @@ import { b3Root, type TransferBasisMap } from '../common/basis';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { instrumentMap, sum } from '../common/util';
-import type { BrCategory, CryptoCustody } from './classify';
+import { cryptoInTransitAt, routeCryptoByCustody, type BrCategory, type CryptoCustody, type CryptoTransitPiece } from './classify';
 import { B3_CNPJ, BENS_E_DIREITOS_CODES } from './config';
 import { brazilCryptoReport } from './crypto';
 import { brazilForeignAnnualReport, type PtaxProvider } from './exterior';
@@ -26,6 +26,8 @@ export interface BensDireitosItem {
   /** "Situação em 31/12" of the previous and current year, at acquisition cost in BRL. */
   situacaoAnterior: number;
   situacaoAtual: number;
+  /** Crypto units in transit between custodies at 31/12 (T55). */
+  emTransito?: boolean;
   /** Foreign assets (DIRPF 2025+, Lei 14.754): result of the year per asset. */
   exterior?: {
     lucroPrejuizoBrl: number;
@@ -181,6 +183,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
   }
 
   // Crypto
+  const cryptoRouting = routeCryptoByCustody(input, { cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
   const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, cryptoCustody: opts.cryptoCustody, accountCustody: opts.accountCustody });
   const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
   const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
@@ -193,15 +196,26 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       : STABLE.test(ref.symbol)
         ? BENS_E_DIREITOS_CODES.CRYPTO_STABLE
         : BENS_E_DIREITOS_CODES.CRYPTO_ALT;
+    const custodyHere = cryptoRouting.custody[id] ?? 'desconhecida';
+    if (custodyHere !== 'brasil') {
+      issues.push({
+        level: 'warning',
+        code: 'CRYPTO_LOCATION_UNKNOWN',
+        instrumentId: id,
+        message: `Custódia de ${ref.symbol} não confirmada (carteira própria ou conta não reconhecida): informe o país/local em Bens e Direitos.`,
+      });
+    }
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
       codigoDescricao: code.descricao,
-      localizacao: 'Brasil',
+      localizacao: custodyHere === 'brasil' ? 'Brasil' : '',
       cnpj: '',
       instrumentId: id,
       ticker: ref.symbol,
-      discriminacao: c ? `${fmt(c.quantity)} ${ref.symbol}, custo médio de aquisição.` : `${ref.symbol}: alienado em ${year}.`,
+      discriminacao: c
+        ? `${fmt(c.quantity)} ${ref.symbol}${custodyHere === 'brasil' ? '' : ' (custódia não confirmada)'}, custo médio de aquisição.`
+        : `${ref.symbol}: alienado em ${year}.`,
       quantidade: c?.quantity ?? 0,
       situacaoAnterior: p?.costBrl ?? 0,
       situacaoAtual: c?.costBrl ?? 0,
@@ -270,6 +284,56 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
         rendimentosBrl: sum(income.map((i) => i.grossBrl)),
         impostoPagoExteriorBrl: sum(income.map((i) => i.foreignTaxBrl)),
       },
+      codeMeta: code.meta,
+    });
+  }
+
+  // T55: crypto units in transit at 31/12 (left a custody, arrival recorded only later) are still owned.
+  const routing = cryptoRouting;
+  const transitAt = (d: string) => {
+    const m = new Map<string, { units: number; brl: number; piece: CryptoTransitPiece }>();
+    for (const x of cryptoInTransitAt(routing, d)) {
+      const k = `${x.piece.instrumentId}|${x.piece.bucket}`;
+      const cur = m.get(k);
+      m.set(k, { units: (cur?.units ?? 0) + x.units, brl: (cur?.brl ?? 0) + x.brl, piece: cur?.piece ?? x.piece });
+    }
+    return m;
+  };
+  const tCur = transitAt(`${year}-12-31`);
+  const tPrev = transitAt(`${year - 1}-12-31`);
+  for (const k of new Set([...tCur.keys(), ...tPrev.keys()])) {
+    const c = tCur.get(k);
+    const p = tPrev.get(k);
+    const piece = (c ?? p)!.piece;
+    const code = /^BTC/i.test(piece.symbol)
+      ? BENS_E_DIREITOS_CODES.CRYPTO_BTC
+      : STABLE.test(piece.symbol)
+        ? BENS_E_DIREITOS_CODES.CRYPTO_STABLE
+        : BENS_E_DIREITOS_CODES.CRYPTO_ALT;
+    const loc = piece.bucket === 'brasil' ? 'Brasil' : piece.country;
+    if (!loc) {
+      issues.push({
+        level: 'warning',
+        code: 'CRYPTO_LOCATION_UNKNOWN',
+        instrumentId: piece.instrumentId,
+        message: `Informe o país da custódia de origem de ${piece.symbol} em trânsito (Bens e Direitos).`,
+      });
+    }
+    items.push({
+      grupo: code.grupo,
+      codigo: code.codigo,
+      codigoDescricao: code.descricao,
+      localizacao: loc,
+      cnpj: '',
+      instrumentId: piece.sourceId,
+      ticker: piece.symbol,
+      discriminacao: c
+        ? `${fmt(c.units)} ${piece.symbol} EM TRÂNSITO em 31/12/${year}: saída da custódia ${piece.bucket} em ${piece.outDate}, entrada no destino registrada depois (ou ainda não registrada). Custo de aquisição.`
+        : `${piece.symbol}: em trânsito em 31/12/${year - 1}, recebido no destino em ${year}.`,
+      quantidade: c?.units ?? 0,
+      situacaoAnterior: p?.brl ?? 0,
+      situacaoAtual: c?.brl ?? 0,
+      emTransito: true,
       codeMeta: code.meta,
     });
   }

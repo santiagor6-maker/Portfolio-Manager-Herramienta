@@ -363,8 +363,13 @@ export function Layout() {
 
   // Empty database (e.g. after "delete all"): start the onboarding wizard.
   const portfolioCount = useLiveQuery(() => db.portfolios.count(), []);
+  // Debounced and re-checked: replacing the sample during an import briefly leaves 0 portfolios.
   useEffect(() => {
-    if (ready && portfolioCount === 0) setOnboardingOpen(true);
+    if (!ready || portfolioCount !== 0) return;
+    const id = setTimeout(() => {
+      void db.portfolios.count().then((n) => n === 0 && setOnboardingOpen(true));
+    }, 1000);
+    return () => clearTimeout(id);
   }, [ready, portfolioCount, setOnboardingOpen]);
 
   // Keyboard shortcut: N = new transaction (outside inputs/dialogs).

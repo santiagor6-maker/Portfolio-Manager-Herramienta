@@ -61,6 +61,8 @@ export interface BrForeignSaleRow {
   /** Average acquisition cost in the foreign currency. */
   costFx: number;
   gainBrl: number;
+  /** Sold units without recorded acquisition (crypto): gain pending, excluded from the base (T56). */
+  pendingCost?: boolean;
 }
 
 export interface BrForeignIncomeRow {
@@ -246,7 +248,7 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
     cash: pool.snapshot(),
   });
 
-  const txs = sortTransactions(input.transactions).filter((t) => t.date <= `${year}-12-31`);
+  const txs = sortTransactions(input.transactions, { outBeforeIn: true }).filter((t) => t.date <= `${year}-12-31`);
   let curYear: number | undefined;
   const firstYear = txs[0] ? yearOf(txs[0].date) : year;
   for (const tx of txs) {
@@ -338,6 +340,26 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
       }
       case 'SELL':
       case 'TRANSFER_OUT': {
+        if (tx.type === 'SELL' && routed.pendingCostSales.has(tx.id)) {
+          const ps = rate('sell', ccy, tx.date);
+          const proceedsFx = grossAmount(tx) - fees;
+          agg(ty).sales.push({
+            transactionId: tx.id,
+            date: tx.date,
+            instrumentId: id,
+            symbol: displaySymbol(id, inst),
+            currency: ccy,
+            quantity: tx.quantity ?? 0,
+            proceedsFx,
+            ptaxSell: ps,
+            proceedsBrl: proceedsFx * ps,
+            costBrl: 0,
+            costFx: 0,
+            gainBrl: 0,
+            pendingCost: true,
+          });
+          break;
+        }
         const qRequested = tx.quantity ?? 0;
         const q = Math.min(qRequested, p.qty);
         if (qRequested > p.qty + 1e-9) {

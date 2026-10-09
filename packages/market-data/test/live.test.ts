@@ -341,7 +341,7 @@ describe.skipIf(!LIVE)('LIVE contract tests for providers validated only with sy
       }
       if (RECORD) console.log('[contract] RECORD=1: re-record fixtures with the curl commands listed in the README (section Pruebas).');
     },
-    T,
+    300_000, // blocked hosts are retried with backoff before being reported unreachable
   );
 });
 

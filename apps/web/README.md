@@ -121,18 +121,69 @@ src/
   portafolio vacío, rendimiento con 2.500+ movimientos.
 - `src/__tests__/txValidation.test.ts` — validación del formulario de movimientos.
 - `src/__tests__/Money.test.tsx` — componentes reaccionan a moneda/idioma/modo privado (jsdom).
+- `src/__tests__/r2-logic.test.ts` — ronda 2: cierres pendientes, rebalanceo, cifrado del respaldo,
+  regla única de anualización, colores del mapa de calor, columnas, nombres de bolsa, TRM/PTAX,
+  eventos corporativos → movimientos, paridad de claves i18n es/pt/en.
+- `src/__tests__/picker.test.tsx` — el buscador nunca crea un activo manual «fantasma» (W1).
 - `e2e/smoke.spec.ts` — Playwright: resumen con datos de ejemplo, cambio de moneda, página mensual,
   agregar un movimiento, validación, capturas de escritorio/teléfono/oscuro, sin scroll horizontal.
+- `e2e/regression-r1.spec.ts` — regresiones de la revisión ronda 1 (escenarios y CSV del revisor):
+  un caso por brecha W1–W20, incluido `big.csv` (3.000 movimientos).
 - `e2e/live.spec.ts` — actualización real desde el servidor de precios (si está corriendo).
+
+Totales: 54 pruebas unitarias (8 archivos) y 23 pruebas e2e (+1 en vivo que se omite sin servidor).
 
 Capturas en `e2e/screenshots/`.
 
 ## Pendiente / limitaciones conocidas
 
-- Las fechas de dividendos «próximos» son una estimación (mismo mes del año anterior); no hay aún un
-  calendario de dividendos anunciados del proveedor.
+- La sincronización entre dispositivos es solo por respaldo cifrado (AES-GCM + PBKDF2) y por el
+  informe HTML autocontenido; no hay servidor de sincronización.
+- No hay conexión automática con corredores ni con B3/CEI; los movimientos entran a mano, por CSV/XLSX
+  o por PDF (notas SINACOR, extractos colombianos, CDT).
+- La serie IBR de los datos de ejemplo termina en septiembre; «% del IBR» se calcula con los meses
+  cubiertos y la interfaz muestra «datos hasta …».
 - La TWR del mes en curso queda en 0 % hasta que haya precios del mes (los datos de ejemplo terminan
   el 30-sep-2026).
-- El bundle principal pesa ~990 kB (ECharts); se podría dividir más.
-- Si el motor agrega `indexSeries`, instrumentos con causación (CDT) o rendimiento por posición, se
-  pueden mostrar en Posiciones / Rendimiento sin cambiar el resto de la app.
+- Metas usa `goalProjection` con el valor del análisis; `goalProjectionForPortfolio` (que necesita el
+  `EngineInput` del worker) queda para la próxima ronda.
+
+## Respuesta a la revisión ronda 1
+
+Revisión: `reviews/web-r1.md`. Cada brecha tiene su prueba en `e2e/regression-r1.spec.ts` o en
+`src/__tests__/r2-logic.test.ts`.
+
+| Brecha | Arreglo |
+|---|---|
+| W1 (alta) | El buscador no ofrece «crear» mientras carga; Enter rápido espera los resultados y elige la coincidencia exacta. Crear activo manual es un flujo explícito (editor con divisa, país, clase, bolsa y aviso si ya existe uno cotizado). |
+| W2 (alta) | Hoja de impresión (A4 horizontal, colores exactos, sin menús) y página **Informe** (`/informe`): portada, KPIs, gráfico, mapa de calor, tabla mensual completa, distribución, posiciones, dividendos, efecto divisa y metodología. Se imprime a PDF o se descarga como HTML autocontenido. |
+| W3 (alta) | Tabla mensual con selector de columnas (Esencial / Completa / a medida), columna del mes fija, modo compacto, Nominal/Real y tarjetas en el teléfono. La vista esencial (efecto precio, efecto divisa, índice y diferencia) cabe a 1440 px sin scroll. |
+| W4 (alta) | Rentabilidad real (IPC/IPCA/CPI/HICP) y «% del CDI/IBR» en Resumen, Rendimiento y Mensual. Formulario de CDT/CDB con causación (fija o indexada, % del índice, spread, base de días, vencimiento). Rendimiento por posición, bandeja de eventos corporativos (`applyCorporateActions`) y Metas. |
+| W5 | El cierre de mes detecta **todos** los fin de mes faltantes de cada activo manual, empieza por el más antiguo y avanza al siguiente al confirmar. Resumen avisa de los cierres pendientes. |
+| W6 | Precio sugerido (cierre del día, se descarga si falta) con aviso si difiere >5 %; cambio de divisa comparado con la TRM/PTAX del día; «Agregar y nuevo», duplicar movimiento y atajo `N`. |
+| W7 | El menú móvil es un diálogo modal: foco atrapado, Escape cierra y el foco vuelve al botón. |
+| W8 | Dividendos: año corrido contra el mismo periodo del año anterior, además del año completo. |
+| W9 | Una sola regla de anualización: nada se anualiza por debajo de un año (TWR, TIR, índices). |
+| W10 | Respaldo cifrado con contraseña e informe HTML autocontenido para compartir. |
+| W11 | Alertas (precio sobre/bajo, movimiento diario, cierre de mes, dividendo) con notificaciones, lista de seguimiento, objetivos de distribución con rebalanceo (por operación o con aporte nuevo), metas con simulador «¿y si…?». |
+| W12 | Calendario de dividendos: eventos anunciados por el proveedor (chip «anunciado») más estimados por historial, con retención estimada. |
+| W13 | Asistente de inicio en 3 pasos, lista «Primeros pasos», datos de ejemplo congelados (no se actualizan) y etiqueta «desde el cierre del …» en vez de «hoy». |
+| W14 | Divisas: KPIs en dinero, composición multiplicativa precio × divisa y cascada. |
+| W15 | Importación: nombres enriquecidos (catálogo y servidor), columnas de comisiones y retención, formatos por confirmar con muestras, posibles duplicados con casillas, eventos corporativos y cambios de activos como asistente, PDF (SINACOR, extractos colombianos, CDT) con mapeo de títulos, perfiles de corredor (`listBrokerProfiles`). |
+| W16 | Nombres de bolsa legibles (BVC, B3, NASDAQ…) en vez de códigos MIC. |
+| W17 | «Borrar todo» no vuelve a sembrar el ejemplo; el estado del servidor de precios se guarda y se restaura. |
+| W18 | Encabezado compacto en el teléfono (tema dentro del menú). |
+| W19 | Cada gráfico tiene resumen accesible y tabla «Ver datos». |
+| W20 | Bundle principal de ~990 kB a ~193 kB (gráficos, PDF e importadores bajo demanda); PWA con manifiesto y service worker. |
+
+**Integración con el motor (core rondas 2–4).** El worker crea un solo `createEngine(input)` por cambio
+de datos y llama a sus métodos. Se usan: `positionPerformance`, `realTwr` / `percentOfIndex` con
+`indexSeries`, `ledgerDiagnostics` (panel en Movimientos, incluidos `TRADE_PRICE_OUTLIER`,
+`TRADE_PRICE_UNCONFIRMED`, `LATE_REDEMPTION`, `INTEREST_ALREADY_RECORDED` y `COUPON_EXCEEDS_ACCRUAL`),
+`applyCorporateActions`, `goalProjection`, el valor neto estimado de renta fija
+(`netMarketValueBase` / `estimated`, en Posiciones) y la nota de inflación estimada
+(`inflationEstimated` / `inflationThrough`, en Rendimiento).
+
+**Otros arreglos de esta ronda.** El cambio de moneda hecho antes de que carguen los ajustes ya no se
+pierde; los diálogos no le quitan el foco a un campo en el que ya se escribe; el asistente de inicio
+no se abre cuando una importación reemplaza el ejemplo.

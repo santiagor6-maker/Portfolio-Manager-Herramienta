@@ -74,8 +74,11 @@ await importFile({ data: file }, { portfolioId: 'p1', mapping: { headerRow: 0, c
       existe y, si no, un contador de ocurrencias, para que dos compras idénticas el mismo día sigan
       siendo dos.
     - Al reimportar, las filas ya importadas quedan como `duplicate`.
-    - Si un movimiento coincide con otro de distinta fuente (mismo activo, tipo y cantidad, a ±3 días),
-      se avisa como "posible duplicado". Pasa, por ejemplo, entre B3 Negociação y Movimentação.
+    - Si un movimiento coincide con otro ya guardado de distinta fuente **y de la misma cuenta o
+      institución** (mismo activo, tipo y cantidad, a ±3 días hábiles), queda como "posible duplicado".
+      Pasa, por ejemplo, entre B3 Negociação y Movimentação.
+    - Dos filas idénticas dentro del mismo archivo **nunca se descartan**: se importan las dos con la
+      marca `POSSIBLE_DUPLICATE_IN_FILE`.
 
 ## Formatos soportados
 
@@ -229,8 +232,9 @@ escritores mínimos de `test/helpers/` (PDF, XLS y XLSX).
 - **Símbolos sin ticker.** DEGIRO no trae ticker: los ISIN que no están en el directorio interno se
   importan con el ISIN como símbolo y el usuario debe corregirlos.
 - **Bolsa de EE.UU.** Si el ticker no está en la lista interna ni en el catálogo inyectado, el activo
-  queda como `US:SÍMBOLO` (configurable con `defaultUsExchange`) y se avisa; cuando llega la bolsa real
-  se reutiliza y se sugiere la actualización en `instrumentUpdates`.
+  queda como `XNYS:SÍMBOLO`, el mismo valor por defecto que usa `@pm/market-data` (configurable con
+  `defaultUsExchange`), y se avisa. Cuando llega la bolsa real se reutiliza el activo y se sugiere la
+  actualización en `instrumentUpdates`.
 - **No soportados.** Opciones, futuros y CFD se omiten con aviso. Los traspasos de custodia entre
   corredores de B3 se omiten.
 - **Cotización en peniques.** Las acciones de Londres se guardan en GBP, pero Yahoo cotiza `.L` en
@@ -315,7 +319,7 @@ Uso recomendado: desde `apps/server`, porque IBKR no envía CORS y así el token
 
 **I7 — Duplicados entre fuentes y dentro del archivo.**
 - Nuevo estado **`possible_duplicate`**, excluido por defecto, con `duplicateOf` (fuente, fecha, línea, id).
-- Criterio: mismo tipo, activo y moneda; misma cantidad (y precio ±0,5 %) o mismo monto. La ventana es de **±3 días hábiles** si la fuente es otra, el mismo día si la fuente es la misma, e idéntica si es dentro del archivo, salvo que las referencias del corredor sean distintas.
+- Criterio: mismo tipo, activo y moneda; misma cantidad (y precio ±0,5 %) o mismo monto. La ventana es de **±3 días hábiles** si la fuente es otra y el mismo día si la fuente es la misma, salvo que las referencias del corredor sean distintas. (Ronda 3: además deben coincidir cuenta o institución, y dentro del archivo solo se marca; ver I21.)
 - Cubre BUY, SELL, TRANSFER, DIVIDEND, INTEREST, DEPOSIT, WITHDRAWAL, FEE, TAX, FX_CONVERSION y SPLIT.
 - La UI acepta con `acceptDuplicates: 'in-file' | 'all' | [líneas]`.
 
@@ -326,8 +330,8 @@ Uso recomendado: desde `apps/server`, porque IBKR no envía CORS y así el token
 | Tickers de la BVC | Siempre `XBOG`, aunque la fila esté en USD (con `CURRENCY_MISMATCH`) |
 | `CURRENCY_MISMATCH` | Se avisa en **cada** fila, no solo al crear el activo |
 | Acciones de EE. UU. compradas en COP (MGC) | El activo de EE. UU. (`XNAS:AAPL`); la operación se queda en COP (`MGC_FOREIGN_LISTING`) |
-| Ticker de EE. UU. desconocido | `US:ENB`, sin inventar XNAS |
-| Llega después la bolsa real (IBKR NYSE) | Se reutiliza `US:ENB` y se devuelve `instrumentUpdates` |
+| Ticker de EE. UU. desconocido | `XNYS:ENB` (valor por defecto de `@pm/market-data`; ronda 3) |
+| Llega después la bolsa real (por ejemplo, NASDAQ) | Se reutiliza el activo y se devuelve `instrumentUpdates` |
 | EUR sin ISIN ni bolsa conocida | Error `EXCHANGE_REQUIRED`, que se resuelve con `securityMap: { SAN: 'XMAD' }`; hay una lista de tickers europeos sin ambigüedad |
 
 **I9 — Signo.**
@@ -414,7 +418,170 @@ Con `positionsMode: 'opening'` (+ `asOfDate`) las posiciones se importan como TR
   - PDF reales de cada corredora: SINACOR de XP, Clear, BTG, Nu e Inter; extractos de Trii, tyba, Davivienda y A&V; CDT de varios bancos.
   - La semántica de la tasa de cambio de T212/DEGIRO.
   - El supuesto de JCP neto en B3.
-- **Tabla de emisores de SINACOR:** cubre unas 70 compañías; las demás piden `securityMap`. Se podría ampliar con la lista de emisores de B3.
+- **Tabla de nombres de pregão de SINACOR:** ver la ronda 3 (I23).
 - **Lector `.xls`:** no lee celdas `RSTRING` antiguas (BIFF5) ni hojas protegidas con cifrado.
 - **MGC:** la operación en COP queda sin `fxRateToBase`; el motor la convierte con la TRM del día.
 - **Eventos corporativos (incorporação/cisão):** se entregan como sugerencias; falta el asistente en la UI.
+
+## Respuesta a la revisión ronda 2
+
+Revisión: `reviews/importers-r2.md` (6,5 frente a 8 de Sharesight). Las regresiones están en
+`test/review-r2.test.ts`, organizadas por número de brecha.
+
+**Línea base:**
+- Antes: 146 pruebas.
+- Ahora: **189 pruebas**, todas pasan (`npx vitest run packages/importers`).
+- `npx tsc -p packages/importers --noEmit` termina sin errores. Los archivos de prueba también pasan el typecheck.
+
+### Altas
+
+**I21 — Duplicados que borraban movimientos legítimos.**
+- La comparación semántica solo cruza movimientos de **cuentas compatibles**. `accountKey()` normaliza
+  el nombre de la cuenta o institución (quita "S.A.", "CCTVM", "Corretora", "Invest"…), y
+  `accountsCompatible()` exige que coincidan cuando ambas lo informan. Así, un dividendo de PETR4 en XP y
+  otro en BTG el mismo día se importan los dos.
+- Cada movimiento existente solo puede "absorber" una fila importada. Tres lotes iguales de B3 contra un
+  existente dan uno duplicado y dos nuevos.
+- Las filas idénticas **dentro del mismo archivo** ya no se bloquean: se importan con la marca
+  `POSSIBLE_DUPLICATE_IN_FILE`. Es informativa en presets de corredor y es un aviso en archivos
+  genéricos, plantillas y PDF.
+- La reimportación exacta (mismo `importHash`) sigue quedando `duplicate`.
+
+**I22 — Flex XML.**
+- `flexXmlToTables()` lee Trades, CashTransactions, Transfers, OpenPositions, **CorporateActions** y
+  **SalesTaxes**. Cualquier otro elemento con datos genera `UNHANDLED_SECTION`; ya nada se descarta en
+  silencio.
+- Splits: los tipos FS/RS o la descripción "SPLIT a FOR b" dan `SPLIT` con proporción a/b, una sola vez
+  por evento. El tipo SD da `STOCK_DIVIDEND`. Spin-offs, fusiones y cambios de símbolo van a
+  `corporateActions` con el aviso `CORPORATE_ACTION_PENDING`.
+- Nivel de detalle: se ignoran las filas `SUMMARY`, `SYMBOL_SUMMARY`, `ASSET_SUMMARY` y `CLOSED_LOT`
+  (salvo en posiciones), y las `ORDER` cuando hay `EXECUTION`. Los dividendos ya no se cuentan dos veces.
+- Sales tax → `TAX` asociado al activo.
+
+**I23 — Ticker de SINACOR.**
+- El ticker solo se deduce cuando es seguro. Se usa el ticker explícito si aparece, o el **nombre de
+  pregão exacto** + la clase (ON/PN/PNA/PNB/PNC/UNT/CI/DRN/DR1-3):
+  - `B3_PREGAO_ROOTS` tiene 120 nombres. Por ejemplo, "GERDAU MET PN" → **GOAU4** y "GERDAU PN" → GGBR4.
+  - `B3_ETF_PREGAO` tiene 11 ETF (CI). Por ejemplo, "ISHARES BOVA CI" → BOVA11.
+  - `B3_BDR_PREGAO` tiene 22 BDR (DRN). Por ejemplo, "APPLE DRN" → AAPL34.
+- Ya no hay coincidencia por la primera palabra. Si el nombre no está en la tabla, se **pregunta**:
+  - la fila queda con `UNKNOWN_SECURITY`;
+  - `result.unknownSecurities` lista `{ key, lines, suggestions }`;
+  - la UI responde con `securityMap`.
+
+**I4 — Fechas ambiguas.** La monotonía solo decide cuando:
+- hay al menos 8 fechas;
+- la otra lectura tiene más de una inversión;
+- el resultado no contradice la pista del archivo (idioma de los encabezados o moneda: es/pt, COP o BRL
+  apuntan a DD/MM; en o USD, a MM/DD).
+
+En cualquier otro caso se pide confirmación, sugiriendo la pista. Un extracto agrupado por especie en el
+que MM/DD "queda ordenado" ya no se lee como MM/DD.
+
+**I2 — Sincronización montable en el servidor.** `src/sync/server.ts` usa la Fetch API
+(`Request`/`Response`) y WebCrypto. Funciona en Node 20 o superior, Deno, Bun y Workers.
+
+```ts
+import { createIbkrFlexSyncHandler, createTokenVault, runIbkrFlexSyncJobs } from '@pm/importers';
+const vault = await createTokenVault(process.env.SYNC_SECRET!); // ≥ 16 caracteres; mejor 32 aleatorios
+const handler = createIbkrFlexSyncHandler({
+  vault,
+  store, // CredentialStore propio (get/set/delete) o MemoryCredentialStore
+  authorize: async (req) => userIdFromSession(req), // undefined → 401
+});
+app.post('/api/sync/ibkr-flex', (c) => handler(c.req.raw)); // Hono
+```
+
+- Acciones (cuerpo JSON):
+  - `save { token, queryId, credentialId? }` guarda el token cifrado con AES-256-GCM.
+  - `sync { credentialId, portfolioId, existingTransactions?, existingInstruments?, account?, catalog? }`
+    devuelve un `ImportResult`.
+  - `delete { credentialId }` borra la credencial.
+- Respuestas HTTP:
+  - 401 sin usuario, 400 si la petición es inválida y 404 si no hay credencial;
+  - 502 o 503 ante errores de IBKR, con `{ error: { code: 'FLEX_1012', message } }` en español.
+- Las credenciales se guardan por usuario (`ibkr-flex:<usuario>:<credencial>`), así que un usuario no
+  puede usar la de otro. El token no vuelve al navegador.
+- Para la rutina diaria, `runIbkrFlexSyncJobs(jobs, { vault, store })` ejecuta cada trabajo
+  `{ userId, portfolioId, load, save }`. Si un trabajo falla, los demás siguen.
+- La conexión con `apps/server` la hace el coordinador.
+
+### Medias
+
+**I24 — Layouts de SINACOR, contraseña y OCR.**
+- La cabecera se lee con etiquetas arriba y valores abajo, o apilada en la misma línea ("Nr. nota 123",
+  "Data pregão 12/03/2024"), como en las notas de Nu e Inter.
+- Si se detecta una nota sin operaciones, se avisa `NOTE_WITHOUT_TRADES`.
+- Contraseña: `options.pdfPassword`. Sin ella, o si es incorrecta, se devuelve `needsPassword:
+  'required' | 'incorrect'` y el error `PDF_PASSWORD_REQUIRED/INCORRECT`. El mensaje recuerda que XP,
+  Clear y Rico usan los primeros dígitos del CPF. Las pruebas usan un PDF cifrado de verdad (RC4).
+- **No hay OCR.** Un PDF escaneado devuelve `PDF_NO_TEXT` y se pide el PDF original.
+
+**I25 — Costos e IRRF de SINACOR.**
+- El IRRF de day trade se asigna a las ventas day trade y el IRRF normal (0,005 %), a las demás ventas.
+  Las operaciones day trade llevan el aviso `DAY_TRADE`.
+- Un costo marcado "C" (crédito) resta.
+- Los costos generales se prorratean entre **todas** las operaciones, opciones incluidas. La parte de
+  las opciones omitidas se descarta con `FEES_OF_SKIPPED`, y la taxa de termo/opções solo se asigna a
+  derivados.
+- Dos notas distintas con operaciones idénticas el mismo día se importan las dos, porque la referencia
+  es `nota:<número>:<línea>`.
+
+**I26 — CDT.**
+- Las tasas nominales (N.M.V., N.T.V., N.S.V., N.A.V. y las anticipadas) se convierten a E.A., con el
+  aviso `CDT_RATE_NOMINAL`.
+- "Intereses al vencimiento" ya no se confunde con la fecha de vencimiento.
+- Se lee la retención en la fuente (`CDT_WITHHOLDING`, que queda en la nota).
+- Un vencimiento igual o anterior a la apertura es el error `CDT_INVALID_DATES`.
+
+**I20 — Conciliación entre corredores.** Solo se concilia contra los movimientos de la misma cuenta, ya
+sea por `options.account`, por las cuentas que informa el extracto (U-número de IBKR, cuenta de Activity)
+o por la misma familia de fuente (IBKR, B3/notas, DEGIRO). Las posiciones de Schwab ya no aparecen como
+diferencias en un extracto de IBKR.
+
+**I28 — Ids compatibles con `@pm/market-data`.** Se revisaron `packages/market-data/src/symbols.ts` y su
+README:
+- Ya no existen los ids `US:`. Un ticker de EE. UU. sin bolsa conocida queda como `XNYS:SÍMBOLO`, igual
+  que `parseYahooSymbol`, con `providerSymbols.yahoo` sin sufijo.
+- Hay un solo activo por símbolo de EE. UU. Si después se conoce otra bolsa, se devuelve
+  `instrumentUpdates` (`EXCHANGE_REFINED`).
+- Tesouro Direto: `tesouroId()` da `TD:<código>-<vencimiento>`, con los códigos NTNB, NTNBP, NTNF, LTN,
+  LFT y NTNC, `pricing: 'auto'` y `providerSymbols.tesouro`. Por ejemplo, Tesouro IPCA+ 2035 →
+  `TD:NTNBP-2035-05-15`.
+- Fondos (FIC): se buscan por nombre exacto en los activos del usuario y en `options.catalog`, antes de
+  crear un activo `MANUAL`.
+
+**I3 — Varias monedas en un archivo.**
+- El separador decimal del archivo lo decide la moneda dominante.
+- Si una fila en otra moneda trae un valor ambiguo, se resuelve con el precio de referencia o queda
+  `pending`, con `needsConfirmation: [{ kind: 'numberFormat', scope: 'rows', affectedLines }]`. Las
+  demás filas se importan.
+- La UI responde por fila con `rowNumberFormats: { 4: 'dot' }`.
+
+**I13 — Cobertura.**
+- Fidelity: el money market base (SPAXX, FDRXX, FZFXX, SPRXX, CORE) se trata como efectivo. Las
+  compras y reinversiones se omiten con `MONEY_MARKET_SWEEP`, y su dividendo es `INTEREST`.
+- "Traslado", "Liquidación" y "Transferência" toman la dirección del signo. Si el archivo no trae ningún
+  signo, se usa la entrada y se avisa `DIRECTION_ASSUMED` para que el usuario corrija el mapeo
+  (`typeValues`).
+
+### Bajas
+
+**I29 — Sección de portafolio en extractos PDF.** La tabla "Portafolio al cierre" (también "Posición",
+"Saldos" o "Resumen de portafolio") corta la tabla de movimientos y alimenta `reconciliation`. La fecha
+de corte se toma del "Periodo" del extracto.
+
+### Confianza y límites
+
+- **Sin OCR.** Las notas escaneadas se rechazan con un mensaje claro.
+- **Nombres de pregão.** No hay acceso al cadastro de B3 sin conexión, así que la tabla es limitada (120
+  emisores, 11 ETF y 22 BDR). Lo que no está en la tabla se pregunta y nunca se adivina. La respuesta del
+  usuario (`securityMap`) puede guardarse y reutilizarse.
+- **Renda+ y Educa+.** `@pm/market-data` tiene los códigos `RENDA` y `EDUCA`, pero el id usa la fecha
+  de vencimiento real (fin de los pagos), que no se puede deducir con certeza del año del nombre. Por eso
+  no se adivina: si `options.catalog` trae el título con el mismo nombre, se usa su id `TD:`; si no,
+  queda como `MANUAL`.
+- **XP, BTG y Avenue.** Sus extratos propios siguen sin analizador dedicado, porque no se conoce un
+  formato estable. Las notas SINACOR y los archivos de B3 cubren las operaciones de XP y BTG.
+- **Formatos sin archivo real.** Los PDF de SINACOR y de los extractos colombianos se validaron con
+  archivos sintéticos fieles al layout, no con archivos reales de usuarios.

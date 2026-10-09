@@ -29,6 +29,9 @@ npm run start -w @pm/server      # o: npx tsx apps/server/src/main.ts
 | `CACHE_DIR` | `.cache/market-data` | caché persistente |
 | `CACHE_MAX_FILES` | 20000 | poda LRU de la caché en disco |
 | `MD_CUSTOM_FEEDS_FILE` | — | JSON con feeds de precios definidos por el usuario (ver README de market-data) |
+| `MD_FROZEN_DIR` | — | carpeta con historias congeladas (`*.json`) de valores que ya no cotizan, grabadas con `packages/market-data/scripts/record-frozen.ts`. Un archivo inválido se omite con un aviso |
+| `SNAPSHOT_EXCHANGES` | `XBOG,XLON` | bolsas cuyos instrumentos del catálogo se graban en el snapshot local (último recurso si fallan todos los proveedores). `none` lo desactiva |
+| `SNAPSHOT_HOURS` | 12 | intervalo del snapshot; la primera ejecución es 30 s después del arranque |
 | `BRAPI_TOKEN`, `TWELVEDATA_API_KEY`, `FMP_API_KEY`, `EODHD_API_TOKEN`, `ALPHAVANTAGE_API_KEY` (+`ALPHAVANTAGE_PREMIUM=1`), `STOOQ_API_KEY`, `COINGECKO_API_KEY`, `SOCRATA_APP_TOKEN` | — | activan o mejoran los proveedores de respaldo |
 
 `src/app.ts` exporta `createApp({ service, corsOrigin, apiToken, rateLimit, trustProxy, maxBodyBytes, log })`

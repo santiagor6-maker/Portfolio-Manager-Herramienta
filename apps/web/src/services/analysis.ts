@@ -258,13 +258,14 @@ export function computeAnalysis(ds: Dataset): Analysis {
   const firstDate = txs.reduce((min, t) => (t.date < min ? t.date : min), txs[0]!.date);
   out.firstDate = firstDate;
 
-  // The core memoizes one engine per input object: every call below shares the ledger pass.
-  const E = input;
+  // One explicit engine per input change: every call below shares the ledger pass and its caches
+  // (≈0.5 ms per call vs ≈10 ms for the stateless API on 30k transactions).
+  const E = core.createEngine(input);
 
   const issues = attempt('validateTransactions', () => core.validateTransactions(txs, ds.instruments, { today: ds.asOf }));
   if (issues) out.issues = issues;
 
-  out.valuation = attempt('valuePortfolio', () => core.valuePortfolio(E, ds.asOf));
+  out.valuation = attempt('valuePortfolio', () => E.valuation(ds.asOf));
 
   const periods: [SummaryKey, core.PeriodKey][] = [
     ['MTD', 'MTD'],
@@ -274,22 +275,22 @@ export function computeAnalysis(ds: Dataset): Analysis {
     ['SI', 'SI'],
   ];
   for (const [key, period] of periods) {
-    const s = attempt(`performanceSummary.${key}`, () => core.performanceSummary(E, period, ds.asOf));
+    const s = attempt(`performanceSummary.${key}`, () => E.summary(period, ds.asOf));
     if (s) out.summaries[key] = s;
   }
 
   const spanDays = (Date.parse(ds.asOf) - Date.parse(firstDate)) / 86_400_000;
-  out.series = attempt('valueSeries', () => core.valueSeries(E, { from: firstDate, to: ds.asOf, step: spanDays > 730 ? 'week' : 'day' })) ?? [];
+  out.series = attempt('valueSeries', () => E.series({ from: firstDate, to: ds.asOf, step: spanDays > 730 ? 'week' : 'day' })) ?? [];
   const dailyFrom = addDays(ds.asOf, -400) > firstDate ? addDays(ds.asOf, -400) : firstDate;
   out.dailySeries =
-    spanDays > 730 ? (attempt('valueSeries.daily', () => core.valueSeries(E, { from: dailyFrom, to: ds.asOf, step: 'day' })) ?? []) : out.series;
+    spanDays > 730 ? (attempt('valueSeries.daily', () => E.series({ from: dailyFrom, to: ds.asOf, step: 'day' })) ?? []) : out.series;
   if (out.inflationIndex && market.indexLevel) {
     out.series = withRealInvested(out.series, market, out.inflationIndex);
     out.dailySeries = withRealInvested(out.dailySeries, market, out.inflationIndex);
   }
 
   const benchmarks = ds.benchmarks.filter((b) => ds.prices.some((p) => p.instrumentId === b));
-  out.monthly = attempt('monthlyPerformance', () => core.monthlyPerformance(E, { to: ds.asOf.slice(0, 7), benchmarks, asOf: ds.asOf })) ?? [];
+  out.monthly = attempt('monthlyPerformance', () => E.monthly({ to: ds.asOf.slice(0, 7), benchmarks, asOf: ds.asOf })) ?? [];
 
   // Rate indices often lag (BanRep/BCB publish with delay): when the engine leaves a period's
   // "% of index" empty, derive it from the months the index covers and record that coverage.
@@ -341,10 +342,10 @@ export function computeAnalysis(ds: Dataset): Analysis {
     );
   }
 
-  out.positions = attempt('positionPerformance', () => core.positionPerformance(E, 'SI', ds.asOf)) ?? [];
-  out.positionsYtd = attempt('positionPerformance.YTD', () => core.positionPerformance(E, 'YTD', ds.asOf)) ?? [];
-  out.income = attempt('incomeEvents', () => core.incomeEvents(E)) ?? [];
-  out.realized = attempt('realizedGains', () => core.realizedGains(E)) ?? [];
+  out.positions = attempt('positionPerformance', () => E.positions('SI', ds.asOf)) ?? [];
+  out.positionsYtd = attempt('positionPerformance.YTD', () => E.positions('YTD', ds.asOf)) ?? [];
+  out.income = attempt('incomeEvents', () => E.income()) ?? [];
+  out.realized = attempt('realizedGains', () => E.realized()) ?? [];
 
   if (out.valuation) out.upcomingDividends = upcomingDividends(ds, out.valuation, out.income, market);
   const sug = attempt('applyCorporateActions', () => suggestions(ds, txs));
@@ -352,7 +353,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     out.suggestions = sug.suggestions;
     out.reviewActions = sug.review;
   }
-  out.diagnostics = attempt('ledgerDiagnostics', () => core.ledgerDiagnostics(E)) ?? [];
+  out.diagnostics = attempt('ledgerDiagnostics', () => E.diagnostics()) ?? [];
   out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
 
   return finish(out, t0);

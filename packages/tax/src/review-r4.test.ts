@@ -77,7 +77,7 @@ describe('T48 — transfers between custodians carry the cost basis', () => {
     expect(c.months[0]).toMatchObject({ darfBlockedUnknownCustody: true });
     expect(c.months[0]!.tax).toBeCloseTo((0.9995 * 450_000 - 200_000) * 0.15, 6);
   });
-  it('transfer pairs are matched by asset, quantity (±2%) and date (≤ 10 days)', () => {
+  it('transfer pairs carry cost; round 5 (T53): late arrivals still match, flagged', () => {
     const r = routeCryptoByCustody(inp(transfer('Binance')));
     expect(Object.values(r.transferBasis)[0]).toMatchObject({ totalCost: 40_000, fxRate: 5 });
     const far = [
@@ -85,7 +85,9 @@ describe('T48 — transfers between custodians carry the cost basis', () => {
       tx({ date: '2025-06-01', type: 'TRANSFER_OUT', instrumentId: BTC.id, quantity: 1, currency: 'USD', account: 'Mercado Bitcoin' }),
       tx({ date: '2025-07-15', type: 'TRANSFER_IN', instrumentId: BTC.id, quantity: 1, currency: 'USD', account: 'Binance' }),
     ];
-    expect(Object.keys(routeCryptoByCustody(inp(far)).transferBasis)).toHaveLength(0);
+    const rf = routeCryptoByCustody(inp(far));
+    expect(Object.values(rf.transferBasis)[0]).toMatchObject({ totalCost: 40_000 });
+    expect(rf.issues.map((i) => i.code)).toContain('TRANSFER_MATCHED_LATE');
   });
 });
 

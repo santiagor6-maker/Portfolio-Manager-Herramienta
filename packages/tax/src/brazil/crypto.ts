@@ -44,6 +44,8 @@ export interface CryptoSale {
   grossBrl: number;
   costBrl: number;
   gainBrl: number;
+  /** Sold units without recorded acquisition: counted in the month's sales, gain pending (T56). */
+  pendingCost?: boolean;
 }
 
 export interface CryptoMonth {
@@ -55,6 +57,8 @@ export interface CryptoMonth {
   darf?: { code: '4600'; amount: number; dueDate: ISODate; sicalc: SicalcData };
   /** Tax computed but DARF withheld because the custody of some sold asset is not confirmed (T22). */
   darfBlockedUnknownCustody?: boolean;
+  /** Some sales of the month have pending cost (gain not computed; DARF withheld). */
+  pendingCost?: boolean;
 }
 
 export interface CryptoPosition {
@@ -135,7 +139,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       .filter(([, p]) => p.qty > 1e-12)
       .map(([id, p]) => ({ instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: p.qty, costBrl: p.cost }));
   let prev: CryptoPosition[] | undefined;
-  for (const tx of sortTransactions(input.transactions).filter((t) => isCrypto(t.instrumentId) && t.date <= `${opts.year}-12-31`)) {
+  for (const tx of sortTransactions(input.transactions, { outBeforeIn: true }).filter((t) => isCrypto(t.instrumentId) && t.date <= `${opts.year}-12-31`)) {
     if (!prev && tx.date > `${opts.year - 1}-12-31`) prev = snap();
     const id = tx.instrumentId!;
     const p = pos.get(id) ?? { qty: 0, cost: 0 };
@@ -146,6 +150,11 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       const carried = routed.transferBasis[tx.id];
       // T48: a transfer from another custody carries its original BRL cost.
       p.cost += carried ? carried.totalCost * carried.fxRate : (grossAmount(tx) + (tx.fees ?? 0)) * rate;
+    } else if (tx.type === 'SELL' && routed.pendingCostSales.has(tx.id)) {
+      if (tx.date.startsWith(`${opts.year}-`)) {
+        const grossBrl = grossAmount(tx) * rate;
+        sales.push({ transactionId: tx.id, date: tx.date, instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: tx.quantity ?? 0, grossBrl, costBrl: 0, gainBrl: 0, pendingCost: true });
+      }
     } else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') {
       const q = Math.min(tx.quantity ?? 0, p.qty);
       if ((tx.quantity ?? 0) > p.qty + 1e-12) {
@@ -186,8 +195,9 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
           'se estiver no exterior ou em carteira própria fora do país, Lei 14.754 anual. Informe cryptoCustody para gerar o DARF.',
       });
     }
-    const ambiguous = list.some((x) => routed.unconfirmedSales.has(x.transactionId));
-    const blocked = tax > 0 && (unknown.length > 0 || ambiguous);
+    const ambiguous = list.some((x) => routed.unconfirmedSales.has(x.transactionId) || x.pendingCost);
+    const pending = list.some((x) => x.pendingCost);
+    const blocked = (tax > 0 && (unknown.length > 0 || ambiguous)) || pending;
     months.push({
       month,
       salesBrl,
@@ -196,6 +206,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       tax,
       darf: tax > 0 && !blocked ? { code: '4600', amount: tax, dueDate: due, sicalc: sicalcData('4600', lastDayOfMonth(month), due, tax) } : undefined,
       darfBlockedUnknownCustody: blocked || undefined,
+      pendingCost: list.some((x) => x.pendingCost) || undefined,
     });
   }
   return {

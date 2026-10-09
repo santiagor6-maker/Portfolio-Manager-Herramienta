@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 162 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4)
+npx vitest run packages/tax      # 175 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -266,3 +266,23 @@ Revisión: `reviews/tax-r4.md`. Las pruebas de regresión están en `src/review-
 | T49 | baja | Reconocimiento difuso de venues: prefijos sobre el nombre normalizado ("MercadoBitcoin S.A.", "mercado-bitcoin", "Coinbase Pro"), entidad local por sufijo ("OKX Brasil", "Binance BR"), Bitso como brasileña, billeteras (Ledger, Trezor, MetaMask…) como custodia desconocida. `accountCustody` acepta coincidencia por prefijo. Listas `needs-verification` |
 | T50 | baja | Bens e Direitos de cripto en el exterior usa el país del custodio (`CRYPTO_VENUE_COUNTRY`: Coinbase y Kraken US, Bitstamp LU, Bybit AE…). Si el venue tiene varias entidades (Binance) o no se reconoce, la localización queda vacía y se avisa con `CRYPTO_LOCATION_UNKNOWN` |
 | T51 | baja | Las fechas en número de serie de Excel (base 1899-12-30) se convierten en `officialDocRowsFromTable` (`excelSerialToIso`). `informeFromB3Movimentacao` informa las filas con valor sin fecha (`IMPORT_ROWS_WITHOUT_DATE`) y las movimentaciones no usadas (`IMPORT_ROWS_IGNORED`); `reconcileBrazil` propaga esos avisos |
+
+---
+
+## Respuesta a la revisión ronda 5
+
+Revisión: `reviews/tax-r5.md`. Las pruebas de regresión están en `src/review-r5.test.ts`
+(escenarios P1–P9 del revisor).
+
+`routeCryptoByCustody` ahora **reescribe** las transacciones de cripto: divide ventas y salidas en
+partes por custodia y lleva un *pool* de unidades en tránsito.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T52 | alta | Una venta o salida consume primero la custodia nombrada por la cuenta y después las demás en el orden documentado `CRYPTO_CONSUMPTION_ORDER` (Brasil, desconocida, exterior: Brasil primero por conservadurismo). Si abarca varias custodias **se divide en una transacción por custodia**, cada una con su costo medio, y se avisa con `CRYPTO_SALE_SPLIT_ACROSS_CUSTODY`. Las partes que no salen de la custodia nombrada (o todas, si no hay cuenta y varias custodias tienen unidades) retienen el DARF. Nunca quedan unidades fantasma. P5b → 0,5 por GCAP (DARF retenido) + 0,5 por Lei 14.754; Bens e Direitos en 0 |
+| T53 | media | Emparejamiento de traslados: varias entradas por salida y varias salidas por entrada (costo proporcional); en un mismo día las salidas se procesan antes que las entradas; una diferencia de hasta `transferMaxFeePct` (10% por defecto) se toma como comisión de red y se traslada el costo completo (aviso `TRANSFER_FEE_ASSUMED` si supera 2%). Hay una ventana preferente configurable (`transferWindowDays`, 30 días) y las salidas sin pareja se arrastran (`TRANSFER_MATCHED_LATE`). Una entrada sin pareja nunca queda con costo 0 en silencio: usa su propio valor o se avisa con `TRANSFER_COST_UNKNOWN` ("ZERO") |
+| T54 | media | Al emparejar el mismo día se prefieren las salidas de la misma custodia que el destino y luego la cantidad más parecida; un empate con costos distintos genera `TRANSFER_PAIR_AMBIGUOUS`. En los reportes por régimen, las salidas del mismo día se procesan antes que las entradas (`sortTransactions(..., { outBeforeIn: true })`). P4 → Ledger con costo R$ 200.000 y Binance con R$ 300.000 |
+| T55 | media | Las unidades en tránsito al 31/12 (salieron y su entrada se registró después, o todavía no) aparecen en Bens e Direitos como ítem 08 "EM TRÂNSITO" de la custodia de origen, a costo (`emTransito`, `cryptoInTransitAt`). P9 → 1 BTC a R$ 200.000 en 2025 |
+| T56 | baja | Una venta sin unidades registradas se convierte en una fila de **custo pendente** (`pendingCost`): cuenta para el límite de R$ 35 mil, no calcula ganancia y retiene el DARF (`CRYPTO_SALE_COST_PENDING`). Si había una salida previa sin entrada (P6), primero se infiere la llegada a la custodia de la venta (`TRANSFER_IN_INFERRED`, transacción sintética con el costo de origen) |
+
+Además, Bens e Direitos deja vacía la localización (con aviso) de la cripto con custodia no confirmada, como una billetera propia o una cuenta no reconocida.
