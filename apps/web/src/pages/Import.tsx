@@ -14,6 +14,8 @@ import { bulkAddTransactions } from '../db/repo';
 import { parseDecimal } from '../lib/parse';
 import { createPortfolio } from '../db/repo';
 import { downloadText } from '../lib/export';
+import { IbkrSyncCard, syncErrorText, type SyncOrigin } from '../components/IbkrSync';
+import { clearIbkrInbox } from '../services/ibkrSync';
 import { CURRENCY_CODES } from '../lib/currencies';
 import { formatDate, formatMoney, formatNumber } from '../lib/format';
 import { TxTypeBadge } from './Transactions';
@@ -53,6 +55,8 @@ export default function ImportPage() {
   const [answers, setAnswers] = useState<ImportAnswers>({});
   const [caChoices, setCaChoices] = useState<Record<number, CaChoice>>({});
   const [updates, setUpdates] = useState<Set<string>>(new Set());
+  /** Set when the preview comes from the IBKR Flex sync instead of a file. */
+  const [syncOrigin, setSyncOrigin] = useState<SyncOrigin>();
   const profile = profiles.find((p) => p.id === profileId);
 
   const resolvePortfolio = async (): Promise<string> => {
@@ -92,8 +96,18 @@ export default function ImportPage() {
     }
   };
 
+  const onSyncResult = (r: ImportResult, origin: SyncOrigin, pid: string) => {
+    setFile(undefined);
+    setPortfolioId(pid);
+    setSyncOrigin(origin);
+    setResult(r);
+    setUpdates(new Set((r.instrumentUpdates ?? []).map((u) => u.id)));
+    setStep('preview');
+  };
+
   const onFile = (fl: File | undefined) => {
     if (!fl) return;
+    setSyncOrigin(undefined);
     setFile(fl);
     void process(fl);
   };
@@ -103,7 +117,15 @@ export default function ImportPage() {
     setBusy(true);
     try {
       const pid = await resolvePortfolio();
-      const r = await commitImport(result, pid, `import:${result.detection.presetId}`);
+      const r = await commitImport(result, pid, syncOrigin ? 'sync:ibkr-flex' : `import:${result.detection.presetId}`);
+      // Daily-sync inbox: tell the server these transactions were picked up.
+      if (syncOrigin === 'ibkr-inbox') {
+        try {
+          await clearIbkrInbox(pid);
+        } catch (e) {
+          setError(syncErrorText(e, t));
+        }
+      }
       // Corporate events and instrument updates the user confirmed in the review.
       const known = await db.instruments.toArray();
       const resolve = (sym?: string) => (sym ? [...known, ...result.instruments].find((i) => i.symbol.toUpperCase() === sym.toUpperCase()) : undefined);
@@ -130,6 +152,7 @@ export default function ImportPage() {
     setError(undefined);
     setAnswers({});
     setCaChoices({});
+    setSyncOrigin(undefined);
   };
 
   const rerun = (patch: ImportAnswers) => {
@@ -284,6 +307,7 @@ export default function ImportPage() {
               </div>
             </div>
           </Card>
+          <IbkrSyncCard resolvePortfolio={resolvePortfolio} account={account} onResult={onSyncResult} />
         </div>
       )}
 
