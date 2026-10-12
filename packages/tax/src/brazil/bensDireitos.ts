@@ -394,7 +394,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       message: `${pc.symbol} enviados em ${pc.outDate} marcados como alienados (transitResolution): fora de Bens e Direitos. Se foi venda, registre-a como SELL (GCAP/Lei 14.754); se doação, verifique o ITCMD.`,
     });
   }
-  for (const [k, st] of tc.stale) {
+  for (const st of tc.stale.values()) {
     issues.push({
       level: 'error',
       code: 'CRYPTO_TRANSIT_STALE',
@@ -404,7 +404,6 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
         `EXCLUÍDOS de Bens e Direitos ${year} (custo R$ ${fmt2(st.brl)}). Decida: alienados/doados (transitResolution "alienado"; registre SELL se foi venda) ` +
         'ou ainda seus (transitResolution "mantido", ou registre a entrada).',
     });
-    if (!tPrev.has(k)) continue;
   }
   for (const k of new Set([...tCur.keys(), ...tPrev.keys()])) {
     const c = tCur.get(k);
