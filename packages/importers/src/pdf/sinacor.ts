@@ -19,78 +19,88 @@ import type { DraftTransaction, ParsedRow } from '../types';
 import { normalizeText, round } from '../util';
 import type { ParseContext } from '../presets/common';
 import type { PdfDocument, PdfLine } from './extract';
+import { B3_BDR_MULTICLASS, B3_BDR_PREGAO, B3_DATED_ROOTS, B3_ETF_PREGAO, B3_FII_PREGAO, B3_PREGAO_ROOTS, BDR_CLASSES, CLASS_DIGIT, SPEC_MARKS, normName, suggestB3Names } from './b3-names';
+
+export { B3_PREGAO_ROOTS, B3_ETF_PREGAO, B3_FII_PREGAO, B3_BDR_PREGAO, B3_BDR_MULTICLASS } from './b3-names';
+
+/** Outcome of reading a specification: a certain ticker, or why it must be asked (with candidates). */
+export interface SpecResolution {
+  ticker?: string;
+  /** Candidates for the user, best first. */
+  suggestions: string[];
+  /** Why it is not certain: unknown name, a BDR class letter, or a multi-class BDR without class. */
+  reason?: 'unknown' | 'bdr_class' | 'multiclass';
+}
+
+function splitSpec(spec: string): { tokens: string[]; clsIdx: number } {
+  const tokens = spec.toUpperCase().replace(/[./&'-]/g, ' ').split(/\s+/).filter(Boolean);
+  // The class is the first class token after at least one name token ("COGNA ON ON NM" → first ON at 1).
+  const clsIdx = tokens.findIndex((t, i) => i > 0 && (CLASS_DIGIT[t] !== undefined || BDR_CLASSES.has(t)));
+  return { tokens, clsIdx };
+}
 
 /**
- * B3 "nome de pregão" (as printed by SINACOR in Especificação do título) → ticker root.
- * Matched by EXACT equality of the normalized name (never by prefix: "GERDAU MET" is GOAU, not GGBR).
+ * Read a SINACOR specification. Explicit tickers win ("FII KINEA RI KNCR11 CI ER" → KNCR11). Otherwise
+ * the nome de pregão must match a table exactly, and for BDRs any letter after DRN that is not a known
+ * mark ("ALPHABET DRN C") makes it uncertain. `date` (ISO) selects dated names (NATURA).
+ * `extra` adds catalog names for the suggestions.
  */
-export const B3_PREGAO_ROOTS: Record<string, string> = {
-  petrobras: 'PETR', vale: 'VALE', itausa: 'ITSA', itauunibanco: 'ITUB', bradesco: 'BBDC', brasil: 'BBAS', 'ambev s a': 'ABEV',
-  weg: 'WEGE', b3: 'B3SA', 'magaz luiza': 'MGLU', 'suzano s a': 'SUZB', gerdau: 'GGBR', 'gerdau met': 'GOAU', eletrobras: 'ELET',
-  petrorio: 'PRIO', prio: 'PRIO', raiadrogasil: 'RADL', 'lojas renner': 'LREN', localiza: 'RENT', 'klabin s a': 'KLBN',
-  sanepar: 'SAPR', cemig: 'CMIG', copel: 'CPLE', bbseguridade: 'BBSE', embraer: 'EMBR', jbs: 'JBSS', 'sid nacional': 'CSNA',
-  usiminas: 'USIM', natura: 'NTCO', hapvida: 'HAPV', 'rumo s a': 'RAIL', energisa: 'ENGI', equatorial: 'EQTL', sabesp: 'SBSP',
-  'btgp banco': 'BPAC', 'santander br': 'SANB', cielo: 'CIEL', tim: 'TIMS', 'telef brasil': 'VIVT', ultrapar: 'UGPA', 'ccr sa': 'CCRO',
-  cosan: 'CSAN', 'brf sa': 'BRFS', mrv: 'MRVE', 'cyrela realt': 'CYRE', hypera: 'HYPE', totvs: 'TOTS', multiplan: 'MULT', taesa: 'TAEE',
-  alupar: 'ALUP', 'engie brasil': 'EGIE', 'cpfl energia': 'CPFE', 'tran paulist': 'TRPL', bradespar: 'BRAP', petroreconcavo: 'RECV',
-  petrorecsa: 'RECV', vibra: 'VBBR', 'caixa seguri': 'CXSE', 'porto seguro': 'PSSA', fleury: 'FLRY', grendene: 'GRND', marcopolo: 'POMO',
-  'randon part': 'RAPT', azul: 'AZUL', gol: 'GOLL', 'cvc brasil': 'CVCB', 'yduqs part': 'YDUQ', cogna: 'COGN', assai: 'ASAI',
-  'carrefour br': 'CRFB', alpargatas: 'ALPA', 'sao martinho': 'SMTO', 'slc agricola': 'SLCE', '3tentos': 'TTEN', 'irbbrasil re': 'IRBR',
-  banrisul: 'BRSR', 'abc brasil': 'ABCB', odontoprev: 'ODPV', dexco: 'DXCO', eztec: 'EZTC', direcional: 'DIRR', tenda: 'TEND',
-  iguatemi: 'IGTI', allos: 'ALOS', 'jhsf part': 'JHSF', vamos: 'VAMO', simpar: 'SIMH', ecorodovias: 'ECOR', eneva: 'ENEV',
-  'csn mineracao': 'CMIN', braskem: 'BRKM', unipar: 'UNIP', 'positivo tec': 'POSI', lwsa: 'LWSA', 'casas bahia': 'BHIA', petz: 'PETZ',
-  smartfit: 'SMFT', 'kepler weber': 'KEPL', tupy: 'TUPY', 'iochp maxion': 'MYPK', 'metal leve': 'LEVE', 'fras le': 'FRAS',
-  'santos brp': 'STBP', 'aes brasil': 'AESB', neoenergia: 'NEOE', copasa: 'CSMG', 'grupo mateus': 'GMAT', vulcabras: 'VULC',
-  guararapes: 'GUAR', 'c a modas': 'CEAB', 'vivara s a': 'VIVA', 'cury s a': 'CURY', planoeplano: 'PLPL', 'm diasbranco': 'MDIA',
-  camil: 'CAML', marfrig: 'MRFG', 'boa safra': 'SOJA', 'p acucar cbd': 'PCAR', 'arezzo co': 'ARZZ', 'sul america': 'SULA',
-};
-
-/** ETFs (class CI) by nome de pregão → ticker. */
-export const B3_ETF_PREGAO: Record<string, string> = {
-  'ishares bova': 'BOVA11', 'ishares smal': 'SMAL11', 'ishare sp500': 'IVVB11', 'ishares sp500': 'IVVB11', 'ishares brax': 'BRAX11',
-  'ishares ecoo': 'ECOO11', 'it now ibov': 'BOVV11', 'it now idiv': 'DIVO11', 'it now pibb': 'PIBB11', 'it now spxi': 'SPXI11',
-  'hashdex nci': 'HASH11',
-};
-
-/** BDRs (class DRN) by nome de pregão → ticker (BDR codes do not follow the issuer's US ticker). */
-export const B3_BDR_PREGAO: Record<string, string> = {
-  apple: 'AAPL34', amazon: 'AMZO34', microsoft: 'MSFT34', alphabet: 'GOGL34', tesla: 'TSLA34', 'tesla inc': 'TSLA34', nvidia: 'NVDC34',
-  'nvidia corp': 'NVDC34', netflix: 'NFLX34', 'coca cola': 'COCA34', walmart: 'WALM34', 'walt disney': 'DISB34', disney: 'DISB34',
-  mercadolibre: 'MELI34', 'visa inc': 'VISA34', jpmorgan: 'JPMC34', mcdonalds: 'MCDC34', pfizer: 'PFIZ34', nike: 'NIKE34',
-  berkshire: 'BERK34', johnson: 'JNJB34', intel: 'ITLC34',
-};
-
-const CLASS_DIGIT: Record<string, string> = { ON: '3', PN: '4', PNA: '5', PNB: '6', PNC: '7', UNT: '11', UNIT: '11', CI: '11' };
-const BDR_CLASSES = new Set(['DRN', 'DR1', 'DR2', 'DR3']);
+export function resolveSpec(spec: string, date?: string, extra?: { name: string; ticker: string }[]): SpecResolution {
+  const { tokens, clsIdx } = splitSpec(spec);
+  const explicit = tokens.find((t) => B3_TICKER_RE_STRICT.test(t));
+  if (explicit) return { ticker: explicit.replace(/F$/, ''), suggestions: [] };
+  if (clsIdx <= 0) {
+    const name = normName(tokens.join(' '));
+    return { suggestions: suggestB3Names(name, { extra }).slice(0, 5).map((c) => c.ticker), reason: 'unknown' };
+  }
+  const cls = tokens[clsIdx]!;
+  const name = normName(tokens.slice(0, clsIdx).join(' '));
+  const after = tokens.slice(clsIdx + 1);
+  if (BDR_CLASSES.has(cls)) {
+    const letters = after.filter((t) => !SPEC_MARKS.has(t));
+    const multi = B3_BDR_MULTICLASS[name];
+    const single = B3_BDR_PREGAO[name];
+    const sugg = () => [...(multi ?? []), ...(single ? [single] : []), ...suggestB3Names(name, { kind: 'bdr', extra }).map((c) => c.ticker)];
+    if (letters.length) return { suggestions: [...new Set(sugg())].slice(0, 5), reason: 'bdr_class' };
+    if (multi) return { suggestions: multi, reason: 'multiclass' };
+    if (single) return { ticker: single, suggestions: [] };
+    return { suggestions: [...new Set(sugg())].slice(0, 5), reason: 'unknown' };
+  }
+  if (cls === 'CI') {
+    const t = B3_ETF_PREGAO[name] ?? B3_FII_PREGAO[name];
+    if (t) return { ticker: t, suggestions: [] };
+    return { suggestions: suggestB3Names(name, { kind: 'ci', extra }).slice(0, 5).map((c) => c.ticker), reason: 'unknown' };
+  }
+  const dated = B3_DATED_ROOTS[name];
+  const root = dated ? [...dated].reverse().find((d) => !date || d.from <= date)?.root : B3_PREGAO_ROOTS[name];
+  if (root) return { ticker: `${root}${CLASS_DIGIT[cls]}`, suggestions: [] };
+  const digit = CLASS_DIGIT[cls];
+  return { suggestions: suggestB3Names(name, { kind: 'share', digit, extra }).slice(0, 5).map((c) => c.ticker), reason: 'unknown' };
+}
 
 /**
  * "PETROBRAS PN N2" → PETR4; "GERDAU MET PN N1" → GOAU4; "ISHARES BOVA CI ER" → BOVA11; "APPLE DRN" → AAPL34;
  * "FII KINEA RI KNCR11 CI ER" → KNCR11 (explicit ticker). Unknown or uncertain → undefined (ask the user).
  */
-export function sinacorTicker(spec: string): string | undefined {
-  const tokens = spec.toUpperCase().split(/\s+/).filter(Boolean);
-  const explicit = tokens.find((t) => B3_TICKER_RE_STRICT.test(t));
-  if (explicit) return explicit.replace(/F$/, '');
-  const clsIdx = tokens.findIndex((t) => CLASS_DIGIT[t] !== undefined || BDR_CLASSES.has(t));
-  if (clsIdx <= 0) return undefined;
-  const cls = tokens[clsIdx]!;
-  const name = normalizeText(tokens.slice(0, clsIdx).join(' '));
-  if (BDR_CLASSES.has(cls)) return B3_BDR_PREGAO[name];
-  if (cls === 'CI') return B3_ETF_PREGAO[name];
-  const root = B3_PREGAO_ROOTS[name];
-  return root ? `${root}${CLASS_DIGIT[cls]}` : undefined;
+export function sinacorTicker(spec: string, date?: string): string | undefined {
+  return resolveSpec(spec, date).ticker;
 }
 
-/** Candidate tickers to show when a specification is unknown (same first word of the name). */
-export function sinacorSuggestions(spec: string): string[] {
-  const tokens = spec.toUpperCase().split(/\s+/).filter(Boolean);
-  const clsIdx = tokens.findIndex((t) => CLASS_DIGIT[t] !== undefined || BDR_CLASSES.has(t));
-  const first = normalizeText(tokens[0] ?? '');
-  const digit = clsIdx > 0 ? CLASS_DIGIT[tokens[clsIdx]!] : undefined;
-  const out: string[] = [];
-  for (const [n, root] of Object.entries(B3_PREGAO_ROOTS)) if (n.split(' ')[0] === first) out.push(digit ? `${root}${digit}` : root);
-  for (const [n, t] of Object.entries({ ...B3_ETF_PREGAO, ...B3_BDR_PREGAO })) if (n.split(' ')[0] === first) out.push(t);
-  return [...new Set(out)].slice(0, 6);
+/** Candidate tickers to show when a specification is unknown (fuzzy match over the tables). */
+export function sinacorSuggestions(spec: string, extra?: { name: string; ticker: string }[]): string[] {
+  const r = resolveSpec(spec, undefined, extra);
+  return r.ticker ? [r.ticker] : r.suggestions;
+}
+
+/**
+ * Catalog instruments (e.g. @pm/market-data `CATALOG.instruments`) as extra names for suggestions:
+ * "Petrobras PN" → name "petrobras", ticker PETR4.
+ */
+export function catalogNames(catalog: { exchange: string; symbol: string; name: string }[] | undefined): { name: string; ticker: string }[] {
+  return (catalog ?? [])
+    .filter((i) => i.exchange === 'BVMF')
+    .map((i) => ({ name: normName(i.name.replace(/\b(ON|PN|PNA|PNB|UNT|UNIT|CI|S\.?A\.?)\b|\(.*?\)/gi, ' ')), ticker: i.symbol }))
+    .filter((x) => x.name);
 }
 
 const MARKETS = ['VISTA', 'FRACIONARIO', 'OPCAO DE COMPRA', 'OPCAO DE VENDA', 'EXERC OPC COMPRA', 'EXERC OPC VENDA', 'TERMO', 'LEILAO', 'FUTURO'];

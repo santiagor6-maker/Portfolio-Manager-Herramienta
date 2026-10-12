@@ -135,7 +135,7 @@ export function accruedLotValues(
   inst: Instrument,
   lots: LotState[],
   day: number,
-): { values: number[]; missingIndex: boolean; anchor?: PriceInfo; principal: number[] } {
+): { values: number[]; missingIndex: boolean; anchor?: PriceInfo; principal: number[]; anchors: number[] } {
   const mult = multiplier(inst.priceMultiplier);
   // Anchor = market/manual price only. Trade prints of other lots do not re-anchor: each
   // CDT/CDB purchase is its own contract with its own rate (round 3, F8).
@@ -143,6 +143,7 @@ export function accruedLotValues(
   let missingIndex = false;
   // value of each lot at its anchor (values - principal = interest accrued since the anchor)
   const principal: number[] = [];
+  const anchors: number[] = [];
   const values = lots.map((l) => {
     let unit: number;
     let anchor: number;
@@ -162,9 +163,10 @@ export function accruedLotValues(
       f = 1;
     }
     principal.push(l.quantity * unit);
+    anchors.push(anchor);
     return l.quantity * unit * f;
   });
-  return { values, missingIndex, anchor: info, principal };
+  return { values, missingIndex, anchor: info, principal, anchors };
 }
 
 /** Per-currency FX memo for the last fxDay seen (the daily loop values many positions per day). */

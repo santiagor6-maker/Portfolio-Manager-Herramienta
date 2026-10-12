@@ -3,7 +3,8 @@ import { b3Root, type TransferBasisMap } from '../common/basis';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { instrumentMap, sum } from '../common/util';
-import { cryptoInTransitAt, routeCryptoByCustody, type BrCategory, type CryptoCustody, type CryptoTransitPiece } from './classify';
+import { daysBetween } from '../common/dates';
+import { cryptoCostStatusAt, cryptoInTransitAt, routeCryptoByCustody, type BrCategory, type CryptoCustody, type CryptoTransitPiece } from './classify';
 import { B3_CNPJ, BENS_E_DIREITOS_CODES } from './config';
 import { brazilCryptoReport } from './crypto';
 import { brazilForeignAnnualReport, type PtaxProvider } from './exterior';
@@ -28,6 +29,14 @@ export interface BensDireitosItem {
   situacaoAtual: number;
   /** Crypto units in transit between custodies at 31/12 (T55). */
   emTransito?: boolean;
+  /**
+   * Crypto cost not confirmed (T62): 'provisorio' = value of a deposit without matching OUT (or a
+   * carried cost only proposed); 'pendente' = deposit without any value (cost 0). Also written in
+   * `discriminacao`.
+   */
+  costStatus?: 'provisorio' | 'pendente';
+  /** Units in transit excluded from the 31/12 position: unconfirmed for `transitMaxMonths` (T63). */
+  transitoExcluido?: boolean;
   /** Foreign assets (DIRPF 2025+, Lei 14.754): result of the year per asset. */
   exterior?: {
     lucroPrejuizoBrl: number;
@@ -70,6 +79,18 @@ export interface BensDireitosOptions {
   confirmedTransfers?: Record<string, string>;
   /** Max days between OUT and IN for automatic crypto pairing (default 90, T58). */
   transferMaxLateDays?: number;
+  /**
+   * Months after which crypto units still "em trânsito" without a confirmed arrival are EXCLUDED from
+   * the 31/12 position (with an error asking for a decision) instead of carried year after year.
+   * Default 12 (T63).
+   */
+  transitMaxMonths?: number;
+  /**
+   * Decision on a TRANSFER_OUT left without arrival (key: the TRANSFER_OUT id): 'alienado' (given or
+   * sold outside — no longer owned; register a SELL if it was a sale) or 'mantido' (still owned,
+   * e.g. own wallet not registered: kept "em trânsito" without time limit) — T63.
+   */
+  transitResolution?: Record<string, 'alienado' | 'mantido'>;
 }
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
@@ -196,6 +217,24 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     transferMaxLateDays: opts.transferMaxLateDays,
   };
   const cryptoRouting = routeCryptoByCustody(input, cx);
+  // T62: provisional/pending crypto cost is written on the line the user copies to the DIRPF.
+  const costStatusOf = (vid: string): BensDireitosItem['costStatus'] => {
+    const st = cryptoCostStatusAt(cryptoRouting, vid, `${year}-12-31`);
+    const cs = st.pending > 1e-9 ? 'pendente' : st.provisional > 1e-9 ? 'provisorio' : undefined;
+    if (cs) {
+      issues.push({
+        level: 'warning',
+        code: 'BENS_COST_NOT_CONFIRMED',
+        instrumentId: vid,
+        message:
+          `Bens e Direitos ${year}: custo de ${vid.split('#')[0]} ${cs === 'pendente' ? 'PENDENTE (depósito sem valor, custo 0)' : 'PROVISÓRIO (valor do depósito)'} ` +
+          'em parte da posição — informe o custo de aquisição (transferBasis) antes de declarar.',
+      });
+    }
+    return cs;
+  };
+  const costTag = (cs: BensDireitosItem['costStatus']) =>
+    cs === 'pendente' ? ' (custo pendente — informar custo de aquisição)' : cs === 'provisorio' ? ' (custo provisório — confirmar)' : '';
   const cr = brazilCryptoReport(input, { year, categoryOverrides: opts.categoryOverrides, ...cx });
   const crPrev = new Map(cr.positionsPrevYear.map((p) => [p.instrumentId, p]));
   const crCur = new Map(cr.positions.map((p) => [p.instrumentId, p]));
@@ -217,6 +256,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
         message: `Custódia de ${ref.symbol} não confirmada (carteira própria ou conta não reconhecida): informe o país/local em Bens e Direitos.`,
       });
     }
+    const cs = c ? costStatusOf(id) : undefined;
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
@@ -225,8 +265,9 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       cnpj: '',
       instrumentId: id,
       ticker: ref.symbol,
+      costStatus: cs,
       discriminacao: c
-        ? `${fmt(c.quantity)} ${ref.symbol}${custodyHere === 'brasil' ? '' : ' (custódia não confirmada)'}, custo médio de aquisição.`
+        ? `${fmt(c.quantity)} ${ref.symbol}${custodyHere === 'brasil' ? '' : ' (custódia não confirmada)'}, custo médio de aquisição${costTag(cs)}.`
         : `${ref.symbol}: alienado em ${year}.`,
       quantidade: c?.quantity ?? 0,
       situacaoAnterior: p?.costBrl ?? 0,
@@ -279,6 +320,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       });
     }
     const income = foreign.income.filter((i) => i.instrumentId === id);
+    const fcs = isCrypto && c ? costStatusOf(id) : undefined;
     items.push({
       grupo: code.grupo,
       codigo: code.codigo,
@@ -288,11 +330,12 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       instrumentId: id,
       ticker: symbol,
       discriminacao: c
-        ? `${fmt(c.quantity)} ${isCrypto ? 'unidades de' : isFund ? 'cotas' : 'ações'} ${symbol}${c.name ? ` (${c.name})` : ''}, custo ${c.currency} ${fmt2(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}.`
+        ? `${fmt(c.quantity)} ${isCrypto ? 'unidades de' : isFund ? 'cotas' : 'ações'} ${symbol}${c.name ? ` (${c.name})` : ''}, custo ${c.currency} ${fmt2(c.costFx)} convertido pela PTAX de compra das datas de aquisição${opts.brokerLabel ? `, custodiadas na ${opts.brokerLabel}` : ''}${costTag(fcs)}.`
         : `${symbol}: posição totalmente vendida em ${year}.`,
       quantidade: c?.quantity ?? 0,
       situacaoAnterior: p?.costBrl ?? 0,
       situacaoAtual: c?.costBrl ?? 0,
+      costStatus: fcs,
       exterior: {
         lucroPrejuizoBrl: sum(sales.map((s) => s.gainBrl)),
         rendimentosBrl: sum(income.map((i) => i.grossBrl)),
@@ -304,21 +347,70 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
 
   // T55: crypto units in transit at 31/12 (left a custody, arrival recorded only later) are still owned.
   const routing = cryptoRouting;
-  const transitAt = (d: string) => {
-    const m = new Map<string, { units: number; brl: number; piece: CryptoTransitPiece }>();
-    for (const x of cryptoInTransitAt(routing, d)) {
-      const k = `${x.piece.instrumentId}|${x.piece.bucket}`;
-      const cur = m.get(k);
-      m.set(k, { units: (cur?.units ?? 0) + x.units, brl: (cur?.brl ?? 0) + x.brl, piece: cur?.piece ?? x.piece });
-    }
-    return m;
+  // T63: units in transit without a confirmed arrival are not carried forever.
+  const maxMonths = opts.transitMaxMonths ?? 12;
+  const maxLate = opts.transferMaxLateDays ?? 90;
+  const monthsElapsed = (from: string, to: string) => {
+    const [y1, m1, d1] = from.split('-').map(Number) as [number, number, number];
+    const [y2, m2, d2] = to.split('-').map(Number) as [number, number, number];
+    return (y2 - y1) * 12 + (m2 - m1) - (d2 < d1 ? 1 : 0);
   };
-  const tCur = transitAt(`${year}-12-31`);
-  const tPrev = transitAt(`${year - 1}-12-31`);
+  type TransitAgg = { units: number; brl: number; piece: CryptoTransitPiece; provisional: number; pending: number; unconfirmed: boolean };
+  const transitAt = (d: string) => {
+    const m = new Map<string, TransitAgg>();
+    const stale = new Map<string, TransitAgg>();
+    const disposed: CryptoTransitPiece[] = [];
+    for (const x of cryptoInTransitAt(routing, d)) {
+      const res = opts.transitResolution?.[x.piece.outTxId.split('~')[0]!];
+      if (res === 'alienado') {
+        disposed.push(x.piece);
+        continue;
+      }
+      const isStale = res !== 'mantido' && monthsElapsed(x.piece.outDate, d) >= maxMonths;
+      const target = isStale ? stale : m;
+      const k = `${x.piece.instrumentId}|${x.piece.bucket}`;
+      const cur = target.get(k);
+      const share = x.piece.units > 0 ? x.units / x.piece.units : 0;
+      target.set(k, {
+        units: (cur?.units ?? 0) + x.units,
+        brl: (cur?.brl ?? 0) + x.brl,
+        piece: cur?.piece ?? x.piece,
+        provisional: (cur?.provisional ?? 0) + (x.piece.provisional ?? 0) * share,
+        pending: (cur?.pending ?? 0) + (x.piece.pending ?? 0) * share,
+        unconfirmed: (cur?.unconfirmed ?? false) || (res !== 'mantido' && daysBetween(x.piece.outDate, d) > maxLate),
+      });
+    }
+    return { m, stale, disposed };
+  };
+  const tc = transitAt(`${year}-12-31`);
+  const tCur = tc.m;
+  const tPrev = transitAt(`${year - 1}-12-31`).m;
+  for (const pc of tc.disposed) {
+    if (pc.outDate.slice(0, 4) !== String(year)) continue;
+    issues.push({
+      level: 'info',
+      code: 'CRYPTO_TRANSIT_DISPOSED',
+      instrumentId: pc.instrumentId,
+      message: `${pc.symbol} enviados em ${pc.outDate} marcados como alienados (transitResolution): fora de Bens e Direitos. Se foi venda, registre-a como SELL (GCAP/Lei 14.754); se doação, verifique o ITCMD.`,
+    });
+  }
+  for (const [k, st] of tc.stale) {
+    issues.push({
+      level: 'error',
+      code: 'CRYPTO_TRANSIT_STALE',
+      instrumentId: st.piece.instrumentId,
+      message:
+        `${fmt(st.units)} ${st.piece.symbol} saíram de ${st.piece.bucket} em ${st.piece.outDate} e há mais de ${maxMonths} meses não têm entrada confirmada: ` +
+        `EXCLUÍDOS de Bens e Direitos ${year} (custo R$ ${fmt2(st.brl)}). Decida: alienados/doados (transitResolution "alienado"; registre SELL se foi venda) ` +
+        'ou ainda seus (transitResolution "mantido", ou registre a entrada).',
+    });
+    if (!tPrev.has(k)) continue;
+  }
   for (const k of new Set([...tCur.keys(), ...tPrev.keys()])) {
     const c = tCur.get(k);
     const p = tPrev.get(k);
     const piece = (c ?? p)!.piece;
+    const excluded = !c && tc.stale.has(k);
     const code = /^BTC/i.test(piece.symbol)
       ? BENS_E_DIREITOS_CODES.CRYPTO_BTC
       : STABLE.test(piece.symbol)
@@ -342,12 +434,18 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
       instrumentId: piece.sourceId,
       ticker: piece.symbol,
       discriminacao: c
-        ? `${fmt(c.units)} ${piece.symbol} EM TRÂNSITO em 31/12/${year}: saída da custódia ${piece.bucket} em ${piece.outDate}, entrada no destino registrada depois (ou ainda não registrada). Custo de aquisição.`
-        : `${piece.symbol}: em trânsito em 31/12/${year - 1}, recebido no destino em ${year}.`,
+        ? `${fmt(c.units)} ${piece.symbol} EM TRÂNSITO em 31/12/${year}: saída da custódia ${piece.bucket} em ${piece.outDate}, entrada no destino registrada depois (ou ainda não registrada)` +
+          (c.unconfirmed ? ' — SEM ENTRADA CONFIRMADA, confirme o destino' : '') +
+          `. Custo de aquisição${costTag(c.pending > 1e-9 ? 'pendente' : c.provisional > 1e-9 ? 'provisorio' : undefined)}.`
+        : excluded
+          ? `${piece.symbol}: em trânsito desde ${piece.outDate} sem entrada confirmada há mais de ${maxMonths} meses — EXCLUÍDO em 31/12/${year}; confirme se foi alienado ou se continua seu.`
+          : `${piece.symbol}: em trânsito em 31/12/${year - 1}, recebido no destino em ${year}.`,
       quantidade: c?.units ?? 0,
       situacaoAnterior: p?.brl ?? 0,
       situacaoAtual: c?.brl ?? 0,
       emTransito: true,
+      costStatus: c ? (c.pending > 1e-9 ? 'pendente' : c.provisional > 1e-9 ? 'provisorio' : undefined) : undefined,
+      transitoExcluido: excluded || undefined,
       codeMeta: code.meta,
     });
   }

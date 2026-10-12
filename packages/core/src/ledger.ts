@@ -21,12 +21,12 @@ import type {
   TransactionType,
 } from './types';
 import type { EngineInput, EngineOptions } from './api';
-import { dayToIso, isStrictIsoDate, isoToDay } from './dates';
+import { dayToIso, days360, isStrictIsoDate, isoToDay } from './dates';
 import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
 import { accrualFactor, accruedLotValues, priceInfo } from './pricing';
 import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
-import { fixedIncomeTax, residenceOf, taxRegimeFor } from './fitax';
+import { fixedIncomeTax, irRate, residenceOf, taxRegimeFor } from './fitax';
 
 export const TYPE_RANK: Record<TransactionType, number> = {
   SPLIT: -1,
@@ -467,6 +467,19 @@ export function priceFlagWarnings(ctx: EngineContext, startDay: number, endDay: 
 }
 
 const CASH_EPS = 1e-7;
+
+/** Who a coupon belongs to and how much interest accrued over its period (see Ledger.couponPlan). */
+interface CouponPlan {
+  values: number[];
+  principal: number[];
+  since: number[];
+  ent: number[];
+  units: number;
+  totalQ: number;
+  p: number;
+  pStart: number;
+  conv: number;
+}
 const NO_ACCOUNT = '';
 
 interface InternalRealized extends RealizedGain {
@@ -1093,16 +1106,21 @@ export class Ledger {
       if (tx.quantity && tx.price) gross = tx.quantity * tx.price;
       else if (tx.price && tx.instrumentId) gross = held * tx.price;
     }
-    if (tx.type === 'INTEREST' && tx.taxes === undefined && tx.instrumentId && held > 0 && gross > 0) {
-      const g = this.grossFromNetInterest(tx, day, gross);
+    let plan: CouponPlan | undefined;
+    let inst: Instrument | undefined;
+    if (tx.instrumentId) {
+      inst = this.instrument(tx.instrumentId, tx);
+      if (held <= 0) this.diag(tx, day, 'INCOME_WITHOUT_POSITION', `${tx.type} for ${tx.instrumentId} while no units are held`, 'warning');
+      if (inst.accrual && held > 0 && gross > 0) plan = this.couponPlan(tx, inst, day, gross);
+    }
+    let inferred = false;
+    if (plan && inst && tx.type === 'INTEREST' && tx.taxes === undefined) {
+      const g = this.inferGross(tx, inst, day, gross, plan);
       if (g !== undefined) {
         taxes = g - gross;
         gross = g;
+        inferred = true;
       }
-    }
-    if (tx.instrumentId) {
-      this.instrument(tx.instrumentId, tx);
-      if (held <= 0) this.diag(tx, day, 'INCOME_WITHOUT_POSITION', `${tx.type} for ${tx.instrumentId} while no units are held`, 'warning');
     }
     const net = gross - taxes - fees;
     if (net >= 0) this.credit(tx, tx.currency, net);
@@ -1120,6 +1138,7 @@ export class Ledger {
       netBase: net * rate,
     };
     if (tx.subtype) ev.subtype = tx.subtype;
+    if (inferred) ev.taxesEstimated = true;
     this.income.push(ev);
     this.bk.income += net * rate;
     if (tx.instrumentId) {
@@ -1127,35 +1146,31 @@ export class Ledger {
       const nb = net * this.X(tx.currency, day, this.hintFor(tx.currency));
       pf.endOutBase += nb;
       pf.incomeBase += nb;
-      const inst = this.instrumentOf.get(tx.instrumentId);
-      if (inst?.accrual && held > 0) this.payCoupon(tx, inst, day, gross);
+      if (plan && inst) this.payCoupon(tx, inst, day, gross, plan, tx.taxes === undefined && !inferred);
     }
     this.recordCosts(tx, day, fees, taxes);
   }
 
   /**
-   * Coupon / periodic interest of an accrual instrument (C36): the gross payment leaves the
-   * accrued value. Each lot is re-anchored at the payment day at (accrued value - its share of
-   * the coupon), so later accrual, the net value and the redemption at maturity only include
-   * interest accrued since the last payment.
-   * C42: the coupon belongs to the units held at the record date: `quantity` on the transaction
-   * when given, else the holding before a sale/purchase in the 15 days before payment when that
-   * explains the amount better (sold ex-coupon). The reduction of each lot is limited to the
-   * interest it accrued (since its anchor, or over the coupon period: since the previous coupon,
-   * the issue date or at most a year, which covers interest bought with a dirty price); a coupon
-   * above that is income that leaves the principal intact (COUPON_EXCEEDS_ACCRUED_INTEREST).
+   * Who a coupon belongs to (C42): the units held at the record date — `quantity` on the
+   * transaction when given, else the holding before a sale/purchase in the 15 days before payment
+   * when that explains the amount better (sold ex-coupon). Units bought after the record date
+   * (newest lots) are not entitled. `p` is the interest accrued per unit over the coupon period,
+   * taken from the entitled lot that accrued the longest since its anchor.
    */
-  private payCoupon(tx: Transaction, inst: Instrument, day: number, grossTx: number): void {
+  private couponPlan(tx: Transaction, inst: Instrument, day: number, amountTx: number): CouponPlan | undefined {
     const b = this.books.get(inst.id);
-    if (!b || b.quantity <= 0 || !(grossTx > 0)) return;
-    const coupon = grossTx * this.convert(tx, day, tx.currency, inst.currency);
-    const { values, principal } = accruedLotValues(this.ctx, inst, b.lots, day);
+    if (!b || b.quantity <= 0) return undefined;
     const totalQ = b.lots.reduce((s, l) => s + l.quantity, 0);
-    if (!(totalQ > 0)) return;
+    if (!(totalQ > 0)) return undefined;
+    const conv = this.convert(tx, day, tx.currency, inst.currency);
+    const coupon = amountTx * conv;
+    const { values, principal, anchors } = accruedLotValues(this.ctx, inst, b.lots, day);
+    const since = values.map((v, i) => Math.max(0, v - (principal[i] ?? v)));
     let units = totalQ;
     if (num(tx.quantity) > 0) units = num(tx.quantity);
     else {
-      const accrued = values.reduce((s, v, i) => s + Math.max(0, v - (principal[i] ?? v)), 0);
+      const accrued = since.reduce((s, x) => s + x, 0);
       const cands = this.unitsBeforePayment(tx, inst.id, day, totalQ);
       if (cands.length > 1 && accrued > 0) {
         const per = accrued / totalQ;
@@ -1169,60 +1184,131 @@ export class Ledger {
           }
         }
       }
-      if (units !== totalQ) this.diag(tx, day, 'COUPON_RECORD_DATE_UNITS', `${tx.type} of ${grossTx} on ${inst.id} apportioned over the ${units} units held at the record date (${totalQ} held on the payment date)`, 'info');
+      if (units !== totalQ) this.diag(tx, day, 'COUPON_RECORD_DATE_UNITS', `${tx.type} of ${amountTx} on ${inst.id} apportioned over the ${units} units held at the record date (${totalQ} held on the payment date)`, 'info');
     }
-    const perUnit = coupon / units;
+    const ent = b.lots.map((l) => l.quantity);
+    if (units < totalQ - QTY_EPS) {
+      // the newest units were bought after the record date
+      let notEntitled = totalQ - units;
+      const order = b.lots.map((_, i) => i).sort((x, y) => (b.lots[y] as LotState).openDay - (b.lots[x] as LotState).openDay);
+      for (const i of order) {
+        if (notEntitled <= 0) break;
+        const take = Math.min(notEntitled, ent[i] as number);
+        ent[i] = (ent[i] as number) - take;
+        notEntitled -= take;
+      }
+    }
+    let p = 0;
+    let pStart = day;
+    b.lots.forEach((l, i) => {
+      if (!((ent[i] as number) > 0) || !(l.quantity > 0)) return;
+      const per = (since[i] as number) / l.quantity;
+      if (per > p) {
+        p = per;
+        pStart = anchors[i] as number;
+      }
+    });
+    return { values, principal, since, ent, units, totalQ, p, pStart, conv };
+  }
+
+  /**
+   * Coupon / periodic interest of an accrual instrument (C36): the payment leaves the accrued
+   * value and each entitled lot is re-anchored at the payment day, so later accrual, the net value
+   * and the redemption at maturity only include interest accrued since the last payment.
+   * - Round 6 (C47/C43): a payment between 70 % and 102 % of the interest accrued over the period
+   *   settles that interest: each lot drops by the full period interest. The shortfall is
+   *   withholding or a day-count/rate convention of the issuer, never interest still owed, so no
+   *   phantom accrued interest stays (INTEREST_BELOW_ACCRUED, info, when nothing explains it).
+   * - C42: otherwise the reduction of each lot is its share of the coupon, limited to the interest
+   *   it accrued (since its anchor, or over the coupon period: since the previous coupon, the issue
+   *   date or at most a year, which covers interest bought with a dirty price); a coupon above that
+   *   is income that leaves the principal intact (COUPON_EXCEEDS_ACCRUED_INTEREST).
+   */
+  private payCoupon(tx: Transaction, inst: Instrument, day: number, grossTx: number, plan: CouponPlan, unexplained: boolean): void {
+    const b = this.books.get(inst.id);
+    if (!b || !(grossTx > 0)) return;
+    const coupon = grossTx * plan.conv;
+    const perUnit = coupon / plan.units;
+    const E = plan.ent.reduce((s, x) => s + x, 0);
+    const P = plan.p * E;
+    const R = P > 1e-12 ? (perUnit * E) / P : Infinity;
+    const settle = R >= 0.7 && R <= 1.02;
     const spec = inst.accrual;
     const issue = spec?.issueDate && isStrictIsoDate(spec.issueDate) ? isoToDay(spec.issueDate) : -Infinity;
     const periodStart = Math.max(this.lastCoupon.get(inst.id) ?? -Infinity, issue, day - 366);
     const fPeriod = accrualFactor(this.ctx, inst, periodStart, day) ?? 1;
     let excess = 0;
     b.lots.forEach((l, i) => {
-      const v = values[i] ?? 0;
-      const want = perUnit * l.quantity;
-      const sinceAnchor = Math.max(0, v - (principal[i] ?? v));
-      const cap = Math.max(sinceAnchor, fPeriod > 1 ? v * (1 - 1 / fPeriod) : 0);
-      let cut = want;
-      if (want > cap * 1.02 + 1e-9 * Math.max(1, v)) {
+      const e = plan.ent[i] ?? 0;
+      if (!(e > 0)) return;
+      const v = plan.values[i] ?? 0;
+      const cap = Math.max(plan.since[i] ?? 0, fPeriod > 1 ? v * (1 - 1 / fPeriod) * (e / l.quantity) : 0);
+      const want = perUnit * e;
+      let cut: number;
+      if (settle) cut = Math.min(plan.p * e, Math.max(cap, want));
+      else if (want > cap * 1.02 + 1e-9 * Math.max(1, v)) {
         cut = cap;
         excess += want - cap;
-      }
+      } else cut = want;
       l.unitValue = Math.max(0, v - cut) / l.quantity;
       l.anchorDay = day;
     });
     this.lastCoupon.set(inst.id, day);
     if (excess > 0) this.diag(tx, day, 'COUPON_EXCEEDS_ACCRUED_INTEREST', `${tx.type} of ${grossTx} on ${inst.id} exceeds the interest accrued by ${excess.toFixed(2)} ${inst.currency}; the excess is income and the principal is kept intact — check the amount`, 'warning');
+    if (settle && R < 0.98 && unexplained) {
+      this.diag(tx, day, 'INTEREST_BELOW_ACCRUED', `${tx.type} of ${grossTx} on ${inst.id} is ${(R * 100).toFixed(1)} % of the ${(P / plan.conv).toFixed(2)} accrued over the period; the difference is treated as withholding or the issuer's day-count convention, not as interest still owed. If the amount is net of withholding, set amountIsNet or taxes`, 'info');
+    }
   }
 
   /**
-   * C43: interest of a withholding instrument (CO_RETENCION, BR_IR_REGRESSIVE) recorded without
-   * `taxes` whose amount matches the accrued interest net of the expected withholding (and not
-   * the gross) was recorded net: returns the inferred gross (INTEREST_NET_ASSUMED), so the
-   * withheld part does not stay as phantom accrued interest.
+   * C43/C47: gross of an interest recorded net of withholding (CO_RETENCION, BR_IR_REGRESSIVE,
+   * IR by each lot's holding period), only when it is unambiguous:
+   * - `amountIsNet: true` on the transaction: always inferred;
+   * - automatically only when the expected withholding rate is at least 3x the spread between
+   *   plausible day counts (ACT/365, ACT/360, 30/360; at least 1.5 %), so the amount is closer to
+   *   the net than to the gross under every day count, and the amount is within 0.5 % of the
+   *   expected net. A 4 % Colombian withholding never qualifies (INTEREST_POSSIBLY_NET, info).
+   * The inferred withholding is marked `IncomeEvent.taxesEstimated` (not certified).
    */
-  private grossFromNetInterest(tx: Transaction, day: number, amount: number): number | undefined {
-    const inst = this.instrumentOf.get(tx.instrumentId as string) ?? this.ctx.instruments.get(tx.instrumentId as string);
-    const b = inst?.accrual ? this.books.get(inst.id) : undefined;
-    if (!inst || !b || b.quantity <= 0) return undefined;
+  private inferGross(tx: Transaction, inst: Instrument, day: number, amount: number, plan: CouponPlan): number | undefined {
+    if (tx.amountIsNet === false) return undefined;
     const regime = taxRegimeFor(inst, this.ctx.taxResidence);
     if (regime !== 'CO_RETENCION' && regime !== 'BR_IR_REGRESSIVE') return undefined;
-    const { values, principal } = accruedLotValues(this.ctx, inst, b.lots, day);
-    let interest = 0;
-    let tax = 0;
+    const b = this.books.get(inst.id);
+    if (!b) return undefined;
+    const explicit = tx.amountIsNet === true;
+    let I = 0;
+    let T = 0;
+    let E = 0;
+    let wRate = 0;
     b.lots.forEach((l, i) => {
-      const a = Math.max(0, (values[i] ?? 0) - (principal[i] ?? 0));
-      interest += a;
-      tax += fixedIncomeTax(regime, day - l.openDay, a, inst.accrual).total;
+      const e = plan.ent[i] ?? 0;
+      if (!(e > 0)) return;
+      const rate = regime === 'CO_RETENCION' ? (inst.accrual?.withholdingRate ?? 0.04) : irRate(day - l.openDay);
+      const a = plan.p * e;
+      I += a;
+      T += a * rate;
+      E += e;
+      wRate += e * rate;
     });
-    const r = this.convert(tx, day, inst.currency, tx.currency);
-    interest *= r;
-    tax *= r;
-    const net = interest - tax;
-    if (!(interest > 0) || !(tax > 0) || !(net > 0)) return undefined;
-    const errNet = Math.abs(amount / net - 1);
-    if (errNet > 0.02 || errNet >= Math.abs(amount / interest - 1)) return undefined;
-    const g = (amount * interest) / net;
-    this.diag(tx, day, 'INTEREST_NET_ASSUMED', `${tx.type} of ${amount} on ${inst.id} matches the accrued interest net of the expected withholding; recorded as gross ${g.toFixed(2)} with ${(g - amount).toFixed(2)} withheld (add \`taxes\` to override)`, 'info');
+    let tau = I > 0 ? T / I : E > 0 ? wRate / E : 0;
+    if (!(tau > 0 && tau < 1)) return undefined;
+    if (!explicit) {
+      if (!(I > 0)) return undefined;
+      const net = ((I - T) / plan.conv);
+      const d = day - plan.pStart;
+      if (d <= 0) return undefined;
+      const spread = Math.max(0.015, 365 / 360 - 1, Math.abs(days360(plan.pStart, day) / d - 1));
+      const close = Math.abs(amount / net - 1) <= 0.005;
+      if (tau < 3 * spread) {
+        if (close) this.diag(tx, day, 'INTEREST_POSSIBLY_NET', `${tx.type} of ${amount} on ${inst.id} matches the accrued interest net of the expected withholding, but a different day count would also explain it as gross; recorded as gross. If it is net, set amountIsNet or taxes`, 'info');
+        return undefined;
+      }
+      if (!close || Math.abs(amount - I / plan.conv) <= Math.abs(amount - net)) return undefined;
+      tau = T / I;
+    }
+    const g = amount / (1 - tau);
+    this.diag(tx, day, 'INTEREST_NET_ASSUMED', `${tx.type} of ${amount} on ${inst.id} ${explicit ? 'recorded as net (amountIsNet)' : 'matches the accrued interest net of the expected withholding'}; gross ${g.toFixed(2)} with an estimated ${(g - amount).toFixed(2)} withheld (taxesEstimated; add \`taxes\` from the certificate to override)`, 'info');
     return g;
   }
 
