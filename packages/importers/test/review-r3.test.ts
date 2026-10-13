@@ -7,7 +7,7 @@ import type { Instrument, Transaction } from '@pm/core';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   accountsCompatible,
   importEmail,
@@ -27,6 +27,9 @@ import { buildExcelXls, DAVIVIENDA_MOVES, DAVIVIENDA_MOVES_P2, TRII_MOVES, xlsMo
 import { NOTES, noteTotals, type NoteSpec } from './fixtures/real-like/sinacor';
 import { byLine } from './helpers/load';
 import { writeXlsx } from './helpers/xlsx-writer';
+
+// pdf.js loads lazily: the first PDF of a cold run can take several seconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 const O = { portfolioId: 'p' };
 const txs = (r: ImportResult) => r.transactions;

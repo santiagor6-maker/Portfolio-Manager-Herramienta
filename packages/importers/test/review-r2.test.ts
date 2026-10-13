@@ -3,7 +3,7 @@
  * Inputs reproduce the reviewer's adversarial scripts (scratchpad/review-imp/t5..t10).
  */
 import type { Instrument, Transaction } from '@pm/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   accountKey,
   createIbkrFlexSyncHandler,
@@ -24,6 +24,9 @@ import { byLine } from './helpers/load';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// pdf.js loads lazily: the first PDF of a cold run can take several seconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 const O = { portfolioId: 'p' };
 const txs = (r: ImportResult) => r.transactions;

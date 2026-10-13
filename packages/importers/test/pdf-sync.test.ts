@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   extractPdf,
   FlexError,
@@ -17,6 +17,9 @@ import {
 } from '../src';
 import { writePdf } from './helpers/pdf-writer';
 import { byLine, fixture, importFixture } from './helpers/load';
+
+// pdf.js loads lazily: the first PDF of a cold run can take several seconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 const ws = (name: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ibkr-flex-ws', name), 'utf8');
 
