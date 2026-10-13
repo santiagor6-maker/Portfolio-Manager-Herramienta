@@ -4,7 +4,7 @@
  * The Flex token never stays in the browser: the server stores it encrypted with SYNC_SECRET.
  */
 import type { Instrument, Transaction } from '@pm/core';
-import type { ImportResult, ImportRow } from '@pm/importers';
+import type { ImportResult } from '@pm/importers';
 import { db } from '../db/schema';
 import { getMeta, setMeta } from '../db/repo';
 import { useApp } from '../store/app';
@@ -149,60 +149,22 @@ export async function checkIbkrInboxes(): Promise<number> {
   return total;
 }
 
-function dedupKey(t: Transaction): string {
-  return [t.date, t.type, t.instrumentId ?? '', t.quantity ?? '', t.amount ?? '', t.currency].join('|');
-}
-
 /**
- * Turns the inbox (already-built transactions) into an ImportResult so it goes through the same
- * preview / confirm flow as a file. De-duplicates by import hash, then by date+type+asset+amounts.
+ * Turns the inbox (already-built transactions) into an ImportResult through the importer pipeline
+ * (`importTransactionBatch`, importers R4), so it gets the same preview, duplicate detection against
+ * the user's existing trades (any source) and instrument matching as a file import.
  */
-export function inboxToImportResult(inbox: IbkrInbox, existing: Transaction[], knownInstruments: Instrument[]): ImportResult {
-  const hashes = new Set(existing.map((t) => t.importHash).filter(Boolean));
-  const keys = new Map(existing.map((t) => [dedupKey(t), t]));
-  const known = new Set(knownInstruments.map((i) => i.id));
-  const rows: ImportRow[] = [];
-  const transactions: Transaction[] = [];
-  const byType: ImportResult['stats']['byType'] = {};
-  const currencies = new Set<string>();
-  inbox.pending.forEach((tx, i) => {
-    const t = { ...tx, portfolioId: inbox.portfolioId };
-    const dup = (t.importHash && hashes.has(t.importHash)) || keys.get(dedupKey(t));
-    if (dup) {
-      const other = typeof dup === 'object' ? dup : existing.find((e) => e.importHash === t.importHash);
-      rows.push({ line: i + 1, status: 'duplicate', transaction: t, issues: [], duplicateOf: { transactionId: other?.id, source: other?.source, date: t.date, inFile: false } });
-      return;
-    }
-    rows.push({ line: i + 1, status: 'ok', transaction: t, issues: [] });
-    transactions.push(t);
-    byType[t.type] = (byType[t.type] ?? 0) + 1;
-    currencies.add(t.currency);
-  });
-  const used = new Set(transactions.map((t) => t.instrumentId).filter(Boolean));
-  const instruments = inbox.instruments.filter((i) => used.has(i.id) && !known.has(i.id));
-  const dates = transactions.map((t) => t.date).sort();
-  return {
-    detection: { fileKind: 'json', presetId: 'ibkr-flex-inbox', presetLabel: 'Interactive Brokers (Flex)', presetConfidence: 'high', score: 1 },
-    transactions,
-    instruments,
-    rows,
-    warnings: [],
-    errors: [],
-    stats: {
-      totalRows: rows.length,
-      imported: transactions.length,
-      duplicates: rows.length - transactions.length,
-      skipped: 0,
-      errors: 0,
-      warnings: 0,
-      byType,
-      firstDate: dates[0],
-      lastDate: dates[dates.length - 1],
-      currencies: [...currencies],
-      newInstruments: instruments.length,
-      matchedInstruments: used.size - instruments.length,
-      possibleDuplicates: 0,
-      pending: 0,
+export async function inboxToImportResult(inbox: IbkrInbox, existing: Transaction[], knownInstruments: Instrument[]): Promise<ImportResult> {
+  const [{ importTransactionBatch }, { CATALOG }, { newId }] = await Promise.all([import('@pm/importers'), import('../lib/catalog'), import('../lib/ids')]);
+  return importTransactionBatch(
+    { pending: inbox.pending, instruments: inbox.instruments, source: 'sync:ibkr-flex' },
+    {
+      portfolioId: inbox.portfolioId,
+      existingTransactions: existing,
+      existingInstruments: knownInstruments,
+      catalog: CATALOG,
+      acceptDuplicates: 'none',
+      idFactory: () => newId('tx'),
     },
-  };
+  );
 }

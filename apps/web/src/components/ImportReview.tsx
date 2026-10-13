@@ -12,6 +12,7 @@ import { Card } from './ui';
 import { InstrumentPicker } from './InstrumentPicker';
 import { useFmt } from '../store/app';
 import { formatDate, formatPct } from '../lib/format';
+import { parseDecimal } from '../lib/parse';
 import type { DateFormat, ImportAnswers, ImportResult, NumberFormat } from '../services/importers';
 import { unresolvedSecurities } from '../services/importers';
 import { MANUAL_EXCHANGES, exchangeLabel } from '../lib/exchanges';

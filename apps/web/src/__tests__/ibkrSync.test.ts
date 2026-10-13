@@ -120,13 +120,15 @@ describe('IBKR Flex sync client', () => {
     expect(calls[0]!.url).toBe('http://srv:8787/api/sync/ibkr-flex/inbox?portfolioId=p1');
     expect(useApp.getState().ibkrInbox.p1).toBe(2);
 
-    const r = inboxToImportResult(inbox, [existing], []);
+    // Through the importer pipeline (importTransactionBatch): the exact duplicate is filtered out.
+    const r = await inboxToImportResult(inbox, [existing], []);
     expect(r.rows.map((x) => x.status)).toEqual(['duplicate', 'ok']);
-    expect(r.transactions.map((t) => t.id)).toEqual(['n2']);
+    expect(r.transactions).toHaveLength(1);
+    expect(r.transactions[0]).toMatchObject({ date: '2026-10-02', instrumentId: 'XNYS:KO', portfolioId: 'p1' });
     expect(r.instruments.map((i) => i.id)).toEqual(['XNYS:KO']);
-    expect(r.stats).toMatchObject({ imported: 1, duplicates: 1, newInstruments: 1 });
 
-    await clearIbkrInbox('p1', r.rows.map((x) => x.transaction!.id));
+    // Acknowledged by the inbox ids of every reviewed row.
+    await clearIbkrInbox('p1', inbox.pending.map((x) => x.id));
     expect(calls[1]).toMatchObject({ method: 'DELETE', url: 'http://srv:8787/api/sync/ibkr-flex/inbox?portfolioId=p1', body: { ids: ['n1', 'n2'] } });
     expect(useApp.getState().ibkrInbox.p1).toBe(0);
   });

@@ -1,0 +1,250 @@
+{
+  "part": "tax",
+  "round": 8,
+  "score": 8,
+  "competitorName": "Gorila",
+  "competitorScore": 7,
+  "approved": false,
+  "fixed": [
+    "T61",
+    "T62",
+    "T63"
+  ],
+  "gaps": [
+    {
+      "id": "T64",
+      "severity": "alta",
+      "text": "Se ignoran los SPLIT con subtype TICKER_CHANGE o MERGER (targetInstrumentId): la venta del ticker nuevo queda sin costo ni impuesto (CIBEST como pendiente de costo; ALOS3 como venta en corto) y el ticker viejo sigue en el patrimonio y en Bens e Direitos."
+    },
+    {
+      "id": "T65",
+      "severity": "media",
+      "text": "Se ignora el SPLIT con subtype SPINOFF (costFraction, targetInstrumentId): la empresa original conserva todo el costo y las acciones escindidas no aparecen en Bens e Direitos."
+    },
+    {
+      "id": "T66",
+      "severity": "media",
+      "text": "subtype JCP no se usa: un JCP sin retención ni nota se clasifica como dividendo exento (línea 09) en vez de tributación exclusiva con IRRF esperado de 17,5%."
+    },
+    {
+      "id": "T67",
+      "severity": "media",
+      "text": "Transaction.amountIsNet se ignora: un interés registrado neto (CDT 9,6M) se declara como bruto con retención 0 y sin aviso, sin cuadrar con la exógena ni con el informe de rendimentos."
+    },
+    {
+      "id": "T68",
+      "severity": "media",
+      "text": "Un DARF solo admite un pago: los pagos parciales o complementarios no se suman (DARF_UNDERPAID falso, segundo pago sin usar), un pago de menos queda como paga y un pago de más no se avisa."
+    },
+    {
+      "id": "T69",
+      "severity": "baja",
+      "text": "Un DARF acumulado pagado con nota de un mes incluido anterior no se reconoce (queda vencida), y el acumulado bajo R$ 10 de hace más de un año se pierde."
+    },
+    {
+      "id": "T70",
+      "severity": "baja",
+      "text": "Un tránsito marcado mantido más un depósito real posterior se cuentan dos veces en Bens e Direitos mientras no se confirme el emparejamiento."
+    }
+  ],
+  "matrix": [
+    {
+      "feature": "Apuración mensual B3 (exención de R$ 20 mil, swing/day trade, FII, corto)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Compensación de pérdidas por categoría",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "DARF pagable (Sicalc, estado, multa e intereses, conciliación por código)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Opciones (vencimiento por serie y año, semanales, ejercicio), futuros, aluguel",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Renta fija y fondos (tabla regresiva, IOF, exentos, come-cotas)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Cripto (GCAP, exención de R$ 35 mil, custodia por cuenta, traslados entre custodios)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Proventos con línea DIRPF (dividendos, JCP, FII, aluguel; Lei 15.270)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "IRPFM con redutor (Lei 15.270)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Bens e Direitos (CNPJ, campos del exterior por activo)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Exterior Lei 14.754 y régimen anterior a 2024 (GCAP, carnê-leão)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Reporte Colombia (Formulario 210 con casillas, 160, Arts. 36-1, 153, 241, 254-1)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Diferencia en cambio realizada y componente inflacionario (Colombia)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Chequeo de retención de EE.UU. y riesgo de impuesto de sucesiones",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Parámetros por año con fuente legal y estado de verificación",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "no",
+        "Kinvo": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Simulación de venta e impuesto no realizado",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Gorila": "partial",
+        "Kinvo": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Exportación para el contador (XLSX/CSV, modelo para PDF)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial"
+      }
+    },
+    {
+      "feature": "Conciliación con documentos oficiales (informe, export B3, pré-preenchida, exógena, 1042-S)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "partial",
+        "Kinvo": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    },
+    {
+      "feature": "Ingesta directa de datos oficiales (conexión B3/DIAN sin archivo)",
+      "ours": "no",
+      "others": {
+        "Sharesight": "partial",
+        "Gorila": "yes",
+        "Kinvo": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no"
+      }
+    }
+  ]
+}

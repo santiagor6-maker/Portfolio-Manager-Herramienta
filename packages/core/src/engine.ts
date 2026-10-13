@@ -509,33 +509,37 @@ function hashValue(v: unknown): void {
  */
 const rowCache = new WeakMap<object, { vals: unknown[]; a: number; b: number }>();
 
-/** Unrolled named-property comparison (monomorphic loads, ~10x faster than keyed access). */
-function sameRow(v: unknown[], t: Transaction): boolean {
+
+/** Number of hashed Transaction fields (see rowValues). */
+const W = 24;
+
+/** Unrolled named-property comparison against a flat store (monomorphic loads, no keyed access). */
+function sameRow(v: unknown[], o: number, t: Transaction): boolean {
   return (
-    v[0] === t.id &&
-    v[1] === t.date &&
-    v[2] === t.type &&
-    v[3] === t.instrumentId &&
-    v[4] === t.quantity &&
-    v[5] === t.price &&
-    v[6] === t.currency &&
-    v[7] === t.amount &&
-    v[8] === t.fees &&
-    v[9] === t.taxes &&
-    v[10] === t.ratio &&
-    v[11] === t.toCurrency &&
-    v[12] === t.toAmount &&
-    v[13] === t.fxRateToBase &&
-    v[14] === t.account &&
-    v[15] === t.subtype &&
-    v[16] === t.targetInstrumentId &&
-    v[17] === t.costFraction &&
-    v[18] === t.portfolioId &&
-    v[19] === t.priceConfirmed &&
-    v[20] === t.amountIsNet &&
-    v[21] === t.note &&
-    v[22] === t.source &&
-    v[23] === t.importHash
+    v[o] === t.id &&
+    v[o + 1] === t.date &&
+    v[o + 2] === t.type &&
+    v[o + 3] === t.instrumentId &&
+    v[o + 4] === t.quantity &&
+    v[o + 5] === t.price &&
+    v[o + 6] === t.currency &&
+    v[o + 7] === t.amount &&
+    v[o + 8] === t.fees &&
+    v[o + 9] === t.taxes &&
+    v[o + 10] === t.ratio &&
+    v[o + 11] === t.toCurrency &&
+    v[o + 12] === t.toAmount &&
+    v[o + 13] === t.fxRateToBase &&
+    v[o + 14] === t.account &&
+    v[o + 15] === t.subtype &&
+    v[o + 16] === t.targetInstrumentId &&
+    v[o + 17] === t.costFraction &&
+    v[o + 18] === t.portfolioId &&
+    v[o + 19] === t.priceConfirmed &&
+    v[o + 20] === t.amountIsNet &&
+    v[o + 21] === t.note &&
+    v[o + 22] === t.source &&
+    v[o + 23] === t.importHash
   );
 }
 
@@ -550,9 +554,9 @@ function rowValues(t: Transaction): unknown[] {
   ];
 }
 
-function rowHash(t: Transaction): { a: number; b: number } {
+function rowHash(t: Transaction): { vals: unknown[]; a: number; b: number } {
   const hit = rowCache.get(t);
-  if (hit && sameRow(hit.vals, t)) return hit;
+  if (hit && sameRow(hit.vals, 0, t)) return hit;
   const vals = rowValues(t);
   const s0 = H0;
   const s1 = H1;
@@ -563,6 +567,67 @@ function rowHash(t: Transaction): { a: number; b: number } {
   H1 = s1;
   rowCache.set(t, e);
   return e;
+}
+
+/**
+ * C51: per-array cache of the transactions (row objects, their field values in one flat array,
+ * the row hashes and the combined hash). A call with the same array compares each row in place
+ * (pointer + unrolled field compare, no WeakMap lookups) and reuses the combined hash when nothing
+ * changed; a changed row is re-hashed through rowHash. In-place edits are still detected.
+ */
+interface TxSetCache {
+  rows: Transaction[];
+  flat: unknown[];
+  ha: Int32Array;
+  hb: Int32Array;
+  a: number;
+  b: number;
+}
+const setCache = new WeakMap<object, TxSetCache>();
+
+function txSetHash(txs: Transaction[]): TxSetCache {
+  const n = txs.length;
+  let c = setCache.get(txs);
+  let changed = false;
+  if (!c || c.rows.length !== n) {
+    c = { rows: new Array<Transaction>(n), flat: new Array<unknown>(n * W), ha: new Int32Array(n), hb: new Int32Array(n), a: 0, b: 0 };
+    setCache.set(txs, c);
+    changed = true;
+    for (let i = 0; i < n; i++) {
+      const t = txs[i] as Transaction;
+      const r = rowHash(t);
+      c.rows[i] = t;
+      for (let k = 0; k < W; k++) c.flat[i * W + k] = r.vals[k];
+      c.ha[i] = r.a;
+      c.hb[i] = r.b;
+    }
+  } else {
+    const { rows, flat } = c;
+    for (let i = 0; i < n; i++) {
+      const t = txs[i] as Transaction;
+      if (rows[i] === t && sameRow(flat, i * W, t)) continue;
+      changed = true;
+      const r = rowHash(t);
+      rows[i] = t;
+      for (let k = 0; k < W; k++) flat[i * W + k] = r.vals[k];
+      c.ha[i] = r.a;
+      c.hb[i] = r.b;
+    }
+  }
+  if (changed) {
+    const s0 = H0;
+    const s1 = H1;
+    hashReset();
+    for (let i = 0; i < n; i++) {
+      hashStep(c.ha[i] as number);
+      hashStep(c.hb[i] as number);
+    }
+    c.a = H0;
+    c.b = H1;
+    H0 = s0;
+    H1 = s1;
+  }
+  return c;
 }
 
 /**
@@ -581,11 +646,9 @@ export function inputHash(input: EngineInput): string | undefined {
   hashValue(`${input.baseCurrency ?? ''}|${JSON.stringify(input.portfolio)}|${JSON.stringify(input.options ?? null)}`);
   hashValue(JSON.stringify(input.instruments ?? []));
   const txs = input.transactions ?? [];
-  for (let i = 0; i < txs.length; i++) {
-    const r = rowHash(txs[i] as Transaction);
-    hashStep(r.a);
-    hashStep(r.b);
-  }
+  const c = txSetHash(txs);
+  hashStep(c.a);
+  hashStep(c.b);
   return `${(H0 >>> 0).toString(36)}.${(H1 >>> 0).toString(36)}.${txs.length}`;
 }
 

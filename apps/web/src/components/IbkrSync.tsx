@@ -37,7 +37,8 @@ export function IbkrSyncCard({
 }: {
   resolvePortfolio: () => Promise<string>;
   account: string;
-  onResult: (r: ImportResult, origin: SyncOrigin, portfolioId: string) => void;
+  /** `ackIds`: inbox transaction ids to acknowledge after confirming (every row reviewed). */
+  onResult: (r: ImportResult, origin: SyncOrigin, portfolioId: string, ackIds?: string[]) => void;
 }) {
   const { t } = useTranslation();
   const { locale } = useFmt();
@@ -78,7 +79,7 @@ export function IbkrSyncCard({
     run('inbox', async () => {
       if (!inbox) return;
       const [existing, known] = await Promise.all([db.transactions.where('portfolioId').equals(inbox.portfolioId).toArray(), db.instruments.toArray()]);
-      onResult(inboxToImportResult(inbox, existing, known), 'ibkr-inbox', inbox.portfolioId);
+      onResult(await inboxToImportResult(inbox, existing, known), 'ibkr-inbox', inbox.portfolioId, inbox.pending.map((x) => x.id));
     });
 
   const lastRunError = inbox?.lastRun && (inbox.lastRun.error as string | undefined);

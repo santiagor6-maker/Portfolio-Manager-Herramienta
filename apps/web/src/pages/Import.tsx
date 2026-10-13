@@ -57,6 +57,7 @@ export default function ImportPage() {
   const [updates, setUpdates] = useState<Set<string>>(new Set());
   /** Set when the preview comes from the IBKR Flex sync instead of a file. */
   const [syncOrigin, setSyncOrigin] = useState<SyncOrigin>();
+  const [inboxIds, setInboxIds] = useState<string[]>([]);
   const profile = profiles.find((p) => p.id === profileId);
 
   const resolvePortfolio = async (): Promise<string> => {
@@ -96,8 +97,9 @@ export default function ImportPage() {
     }
   };
 
-  const onSyncResult = (r: ImportResult, origin: SyncOrigin, pid: string) => {
+  const onSyncResult = (r: ImportResult, origin: SyncOrigin, pid: string, ackIds: string[] = []) => {
     setFile(undefined);
+    setInboxIds(ackIds);
     setPortfolioId(pid);
     setSyncOrigin(origin);
     setResult(r);
@@ -121,8 +123,7 @@ export default function ImportPage() {
       // Daily-sync inbox: tell the server these transactions were picked up.
       if (syncOrigin === 'ibkr-inbox') {
         try {
-          const ids = result.rows.flatMap((x) => (x.transaction ? [x.transaction.id] : []));
-          await clearIbkrInbox(pid, ids);
+          await clearIbkrInbox(pid, inboxIds);
         } catch (e) {
           setError(syncErrorText(e, t));
         }
@@ -130,8 +131,10 @@ export default function ImportPage() {
       // Corporate events and instrument updates the user confirmed in the review.
       const known = await db.instruments.toArray();
       const resolve = (sym?: string) => (sym ? [...known, ...result.instruments].find((i) => i.symbol.toUpperCase() === sym.toUpperCase()) : undefined);
+      // Proposals (importers R4) are applied by the importer itself when accepted; only legacy
+      // suggestions without a proposal are converted here.
       const caTxs = (result.corporateActions ?? [])
-        .filter((c) => caChoices[c.line]?.include ?? true)
+        .filter((c) => !c.proposal && (caChoices[c.line]?.include ?? true))
         .map((c) => corporateActionToTransaction(c, resolve, pid, (parseDecimal(caChoices[c.line]?.costFraction ?? '', f.locale) ?? 0) / 100))
         .filter((x): x is NonNullable<typeof x> => !!x);
       if (caTxs.length) await bulkAddTransactions(caTxs);
@@ -401,7 +404,23 @@ export default function ImportPage() {
           <ConfirmFormats key={`cf-${result.needsConfirmation?.length ?? 0}`} result={result} busy={busy} onApply={(a) => rerun(a)} />
           <SecurityMapPrompt result={result} current={answers.securityMap ?? {}} busy={busy} onApply={(m) => rerun({ securityMap: { ...(answers.securityMap ?? {}), ...m } })} />
           <PossibleDuplicates result={result} accepted={answers.acceptDuplicates ?? []} busy={busy} onApply={(lines) => rerun({ acceptDuplicates: lines })} />
-          <CorporateEvents result={result} choices={caChoices} onChange={setCaChoices} updates={updates} onUpdates={setUpdates} />
+          <CorporateEvents
+            result={result}
+            choices={caChoices}
+            onChange={setCaChoices}
+            updates={updates}
+            onUpdates={setUpdates}
+            busy={busy}
+            onAccept={
+              file
+                ? (line, answer) =>
+                    rerun({
+                      acceptCorporateActions: [...new Set([...(answers.acceptCorporateActions ?? []), line])],
+                      corporateActionAnswers: { ...(answers.corporateActionAnswers ?? {}), [line]: answer },
+                    })
+                : undefined
+            }
+          />
           <Card
             title={t('imp.previewTitle', { file: file?.name })}
             subtitle={
