@@ -80,6 +80,13 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
     case 'INTEREST_NET_ASSUMED':
       r = m.match(new RegExp(`gross ${NUM} with an estimated ${NUM} withheld`));
       return r && c.tx ? { ...base, gross: money(r[1]!, c.tx.currency), withheld: money(r[2]!, c.tx.currency) } : undefined;
+    case 'TRADE_PRICE_CONFIRMED_BY_RUN':
+      return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—' };
+    case 'INTEREST_POSSIBLY_NET':
+      return c.tx?.amount !== undefined ? { ...base, amount: money(c.tx.amount, c.tx.currency) } : undefined;
+    case 'INTEREST_BELOW_ACCRUED':
+      r = m.match(new RegExp(`is ${NUM} % of the ${NUM} accrued`));
+      return r && c.tx ? { ...base, pct: `${new Intl.NumberFormat(c.locale, { maximumFractionDigits: 1 }).format(Number(r[1]))} %`, accrued: money(r[2]!, c.tx.currency) } : undefined;
     case 'COUPON_RECORD_DATE_UNITS':
       r = m.match(new RegExp(`over the ${NUM} units held at the record date \\(${NUM} held`));
       return r ? { ...base, units: qty(r[1]!, c.locale), held: qty(r[2]!, c.locale) } : undefined;

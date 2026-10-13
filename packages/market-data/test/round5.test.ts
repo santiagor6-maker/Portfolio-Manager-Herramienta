@@ -1,12 +1,66 @@
-/** Regression tests for review R4 (M32-M34). Fixtures only, no network. */
+/** Regression tests for reviews R4 (M32-M34, M2, M8, M29) and R5 (M36, M37). Fixtures only, no network. */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MarketDataError, MemoryStore, TieredCache, type YahooChartResult } from '../src/index';
 import { createTestService, FIXTURES, json, NOW } from './helpers';
 
-describe('M33 bare symbols from Colombian broker statements resolve through the catalog first', () => {
-  it.each(['ECOPETROL', 'PFAVAL', 'GEB', 'ISA', 'NUTRESA', 'ICOLCAP', 'CEMARGOS', 'PFCIBEST', 'ecopetrol'])('%s -> XBOG', (sym) => {
+/** Yahoo's answer for a bare US listing (range=1d chart), e.g. DTE = DTE Energy on the NYSE. */
+function usQuote(symbol: string): unknown {
+  const t = Math.floor(NOW.getTime() / 1000) - 3600;
+  return {
+    chart: {
+      result: [{ meta: { symbol, currency: 'USD', exchangeName: 'NYQ', fullExchangeName: 'NYSE', instrumentType: 'EQUITY', regularMarketPrice: 100, regularMarketTime: t, chartPreviousClose: 99, exchangeTimezoneName: 'America/New_York', gmtoffset: -14400, priceHint: 2 }, timestamp: [t], indicators: { quote: [{ close: [100], volume: [1000] }] } }],
+      error: null,
+    },
+  };
+}
+
+// Bare symbols that are BOTH a US listing and a European / Colombian one (review R5, M36).
+const US_AND_LOCAL = ['DTE', 'ALV', 'AIR', 'MC', 'OR', 'ETB', 'BP', 'VOD', 'SHEL', 'AZN', 'SAP', 'SAN', 'BBVA', 'TEF', 'TTE'];
+const usRoutes = (u: URL) => {
+  const sym = decodeURIComponent(u.pathname.split('/').pop() ?? '');
+  return US_AND_LOCAL.includes(sym) && u.searchParams.get('range') === '1d' ? json(usQuote(sym)) : undefined;
+};
+
+describe('M36 a bare symbol that is a US listing stays US (Yahoo semantics, importers, web)', () => {
+  it.each(US_AND_LOCAL)('%s -> the US listing, never the European / BVC one', async (sym) => {
+    const { service } = createTestService({ routes: usRoutes });
+    const sync = service.resolve(sym);
+    expect(sync.target.yahoo).toBe(sym);
+    const r = await service.resolveListed(sym);
+    expect(r.target.yahoo).toBe(sym);
+    expect(['XETR', 'XPAR', 'XLON', 'XMAD', 'XBOG', 'XAMS', 'BVMF']).not.toContain(r.target.exchange);
+    const q = await service.quote(sym);
+    expect(q).toMatchObject({ providerSymbol: sym, currency: 'USD' });
+  });
+
+  it('the catalog really lists these symbols outside the US (so the test guards the regression)', () => {
+    const { service } = createTestService();
+    const local = US_AND_LOCAL.filter((s) => service.catalog.bySymbol(s).some((i) => i.providerSymbols?.yahoo !== s));
+    expect(local.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('a short catalog symbol with NO US listing on Yahoo goes to its catalog listing (GEB, ISA -> BVC; IWDA -> Europe); checked once', async () => {
+    const { service, fetch } = createTestService();
+    for (const s of ['GEB', 'ISA', 'geb']) {
+      const r = await service.resolveListed(s);
+      expect(r.target).toMatchObject({ instrumentId: `XBOG:${s.toUpperCase()}`, yahoo: `${s.toUpperCase()}.CL`, currency: 'COP' });
+    }
+    expect((await service.resolveListed('IWDA')).target.yahoo).toMatch(/^IWDA\.(AS|L)$/);
+    const checks = fetch.calls.filter((u) => /chart\/GEB\?/.test(u)).length;
+    await service.resolveListed('GEB');
+    expect(fetch.calls.filter((u) => /chart\/GEB\?/.test(u)).length).toBe(checks); // cached
+  });
+
+  it('when Yahoo cannot be asked, a short bare symbol keeps the US default (no silent switch)', async () => {
+    const { service } = createTestService({ failingHosts: ['query2.finance.yahoo.com', 'query1.finance.yahoo.com'] });
+    expect((await service.resolveListed('GEB')).target.yahoo).toBe('GEB');
+  });
+});
+
+describe('M33 bare BVC nemotécnicos (6+ letters can never be US tickers) resolve to the BVC without asking Yahoo', () => {
+  it.each(['ECOPETROL', 'PFAVAL', 'NUTRESA', 'ICOLCAP', 'CEMARGOS', 'PFCIBEST', 'ecopetrol'])('%s -> XBOG', (sym) => {
     const { service } = createTestService();
     const r = service.resolve(sym);
     expect(r.target.instrumentId).toBe(`XBOG:${sym.toUpperCase()}`);
@@ -24,6 +78,7 @@ describe('M33 bare symbols from Colombian broker statements resolve through the 
     expect(service.resolve('AAPL').target.instrumentId).toBe('XNAS:AAPL');
     expect(service.resolve('ASML').target.instrumentId).toBe('XNAS:ASML'); // also XAMS:ASML in the catalog
     expect(service.resolve('BRK-B').target.yahoo).toBe('BRK-B');
+    expect(service.resolve('EC').target.yahoo).toBe('EC'); // Ecopetrol ADR
     expect(service.resolve('PETR4').target.instrumentId).toBe('BVMF:PETR4');
   });
 
@@ -77,36 +132,42 @@ function thinChart(firstTradeDate?: string): YahooChartResult {
 const thinRoutes = (first?: string) => (u: URL) =>
   u.pathname.endsWith('/THIN.CL') && u.searchParams.get('interval') === '1d' ? json({ chart: { result: [thinChart(first)], error: null } }) : undefined;
 
-describe('M32 a window without trades is seeded with the last real trade before `from`', () => {
-  it('daily: April-May 2023 had no trades -> one carried point (2023-03-30, 1020)', async () => {
+describe('M32/M37 the last real trade before `from` comes in `series.seed`, never in `points`', () => {
+  it('daily: April-May 2023 had no trades -> no points, seed 2023-03-30 at 1020', async () => {
     const { service } = createTestService({ routes: thinRoutes() });
     const h = await service.history({ symbol: 'THIN.CL', from: '2023-04-01', to: '2023-05-31' });
-    expect(h.series.points).toEqual([{ date: '2023-03-30', close: 1020, carried: true }]);
-    expect(h.notes?.join(' ')).toMatch(/last trade before 2023-04-01/);
+    expect(h.series.points).toEqual([]);
+    expect(h.series.seed).toEqual({ date: '2023-03-30', close: 1020 });
   });
 
-  it('monthly: the window starts with the carried March close, then June', async () => {
+  it('monthly: points stay inside [from, to] (June only), the March close is the seed', async () => {
     const { service } = createTestService({ routes: thinRoutes() });
     const h = await service.history({ symbol: 'THIN.CL', from: '2023-04-01', to: '2023-06-30', interval: '1mo' });
-    expect(h.series.points).toEqual([
-      { date: '2023-03-30', close: 1020, carried: true },
-      { date: '2023-06-15', close: 1060 },
-    ]);
+    expect(h.series.points).toEqual([{ date: '2023-06-15', close: 1060 }]);
+    expect(h.series.seed).toEqual({ date: '2023-03-30', close: 1020 });
+    expect(h.series.points.every((p) => p.date >= '2023-04-01' && p.date <= '2023-06-30')).toBe(true);
   });
 
   it('no seed when the window starts with a trade, or before the first trade ever', async () => {
     const a = createTestService({ routes: thinRoutes() }).service;
     const h = await a.history({ symbol: 'THIN.CL', from: '2023-03-29', to: '2023-06-30' });
-    expect(h.series.points.some((p) => p.carried)).toBe(false);
+    expect(h.series.seed).toBeUndefined();
     const b = createTestService({ routes: thinRoutes('2023-03-29') }).service;
     const h2 = await b.history({ symbol: 'THIN.CL', from: '2023-01-01', to: '2023-03-31' });
+    expect(h2.series.seed).toBeUndefined();
     expect(h2.series.points[0]).toEqual({ date: '2023-03-29', close: 1000 });
   });
 
-  it('split-adjusted output keeps the carried flag', async () => {
+  it('a liquid series whose `from` is a weekend keeps exactly the months asked for (live.test.ts:222 case)', async () => {
+    const { service } = createTestService();
+    const h = await service.history({ symbol: 'ECOPETROL.CL', from: '2025-01-01', to: '2025-03-31', interval: '1mo' });
+    expect(h.series.points.map((p) => p.date.slice(0, 7))).toEqual(['2025-01', '2025-02', '2025-03']);
+  });
+
+  it('split-adjusted output adjusts the seed too', async () => {
     const { service } = createTestService({ routes: thinRoutes() });
     const h = await service.history({ symbol: 'THIN.CL', from: '2023-04-01', to: '2023-05-31', adjust: 'splits' });
-    expect(h.series.points).toEqual([{ date: '2023-03-30', close: 1020, carried: true }]);
+    expect(h.series.seed).toEqual({ date: '2023-03-30', close: 1020 });
   });
 });
 

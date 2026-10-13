@@ -41,12 +41,6 @@ export type PriceAdjustment = 'none' | 'splits' | 'total';
 /** A price point with market-data extras. `provisional` = intraday / incomplete period. */
 export interface MarketPricePoint extends PricePoint {
   provisional?: boolean;
-  /**
-   * The last real trade BEFORE the requested `from`, prepended when the window starts without a
-   * trade (illiquid stocks, holidays), so a valuation at `from` has a price (review R4, M32).
-   * Its date is outside the requested range.
-   */
-  carried?: boolean;
 }
 
 /** PriceSeries (core contract) plus freshness information. */
@@ -56,6 +50,13 @@ export interface MarketPriceSeries extends PriceSeries {
   lastTradeDate?: ISODate;
   /** True when the last trade is older than 7 days (suspended, delisted or very illiquid). */
   stale?: boolean;
+  /**
+   * The last real trade BEFORE `from` (up to a year back), set when the window does not start with a
+   * trade (illiquid stock, weekend, holiday), so a valuation at `from` has a price (review R4, M32).
+   * Kept OUT of `points` (review R5, M37): `points` always stay inside [from, to]. Its date is the
+   * real trade date; same adjustment as `points`.
+   */
+  seed?: PricePoint;
   /**
    * Set when the source covers only part of the requested range (review R4, M34): the local
    * snapshot has only the years this server recorded. `coverageFrom`/`coverageTo` are the first

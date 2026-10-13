@@ -131,14 +131,21 @@ export async function commitImport(
   return { transactions: rows.length, instruments: newInstruments.length };
 }
 
-/** Security names/tickers the importer could not resolve (answered with `securityMap`). */
-export function unresolvedSecurities(r: ImportResult): { key: string; code: string }[] {
-  const out = new Map<string, string>();
-  for (const issue of [...r.errors, ...r.rows.flatMap((x) => x.issues)]) {
-    if (issue.code === 'UNKNOWN_SECURITY' && issue.params?.spec) out.set(String(issue.params.spec), issue.code);
-    if (issue.code === 'EXCHANGE_REQUIRED' && issue.params?.symbol) out.set(String(issue.params.symbol), issue.code);
+/**
+ * Security names/tickers the importer could not resolve (answered with `securityMap`), with its
+ * ranked suggestions (importers R4: broker-note names, BDR class letters such as GOGL34 vs GOGL35).
+ */
+export function unresolvedSecurities(r: ImportResult): { key: string; code: string; suggestions: string[] }[] {
+  const out = new Map<string, { code: string; suggestions: string[] }>();
+  for (const issue of [...r.errors, ...r.warnings, ...r.rows.flatMap((x) => x.issues)]) {
+    const key = issue.params?.spec ?? issue.params?.symbol;
+    if (['UNKNOWN_SECURITY', 'EXCHANGE_REQUIRED', 'BDR_CLASS_UNCERTAIN'].includes(issue.code) && key) out.set(String(key), { code: issue.code, suggestions: [] });
   }
-  return [...out.entries()].map(([key, code]) => ({ key, code }));
+  for (const u of r.unknownSecurities ?? []) {
+    const prev = out.get(u.key);
+    out.set(u.key, { code: prev?.code ?? 'UNKNOWN_SECURITY', suggestions: u.suggestions ?? [] });
+  }
+  return [...out.entries()].map(([key, v]) => ({ key, ...v }));
 }
 
 /**

@@ -76,6 +76,8 @@ export function TransactionForm({
   const [priceAuto, setPriceAuto] = useState(false);
   const [account, setAccount] = useState('');
   const [note, setNote] = useState('');
+  /** Core R6: interest/coupon amount already net of withholding (the engine grosses it up). */
+  const [amountIsNet, setAmountIsNet] = useState(false);
   const [manual, setManual] = useState<ManualDraft>();
   const [conflict, setConflict] = useState<Instrument>();
   const [submitted, setSubmitted] = useState(false);
@@ -108,6 +110,7 @@ export function TransactionForm({
       setPriceAuto(false);
       setAccount(src.account ?? '');
       setNote(src.note ?? '');
+      setAmountIsNet(!!src.amountIsNet);
     } else {
       setType('BUY');
       setPortfolioId(undefined);
@@ -119,6 +122,7 @@ export function TransactionForm({
       setPriceAuto(false);
       setAccount('');
       setNote('');
+      setAmountIsNet(false);
     }
   }, [open, editing, duplicateOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -209,9 +213,10 @@ export function TransactionForm({
       const g = (draft.quantity ?? 0) * (draft.price ?? 0);
       return type === 'SELL' ? g - (draft.fees ?? 0) - (draft.taxes ?? 0) : g + (draft.fees ?? 0) + (draft.taxes ?? 0);
     }
+    if (type === 'INTEREST' && amountIsNet) return draft.amount ?? 0;
     if (type === 'DIVIDEND' || type === 'INTEREST') return (draft.amount ?? 0) - (draft.taxes ?? 0);
     return draft.amount;
-  }, [type, draft.quantity, draft.price, draft.fees, draft.taxes, draft.amount]);
+  }, [type, draft.quantity, draft.price, draft.fees, draft.taxes, draft.amount, amountIsNet]);
 
   const submit = async (again = false) => {
     setSubmitted(true);
@@ -259,6 +264,7 @@ export function TransactionForm({
         fxRateToBase: draft.fxRateToBase,
         account: draft.account,
         note: draft.note,
+        amountIsNet: type === 'INTEREST' && amountIsNet ? true : undefined,
         source: editing?.source ?? 'manual',
         createdAt: editing?.createdAt,
         // Keep import identity (de-duplication) and a confirmed price unless the price changed.
@@ -463,6 +469,12 @@ export function TransactionForm({
             {numInput('amount', t('tx.grossAmount'), { suffix: currency })}
             {numInput('taxes', t('tx.withholding'), { suffix: currency, hint: t('tx.withholdingHint') })}
             {currencySelect('f-ccy', currency, setCurrency, t('dim.currency'), showErr('currency'))}
+            {type === 'INTEREST' && (
+              <label className="col-span-full flex items-center gap-2 text-[13px]" title={t('tx.amountIsNetHint')}>
+                <input type="checkbox" checked={amountIsNet} onChange={(e) => setAmountIsNet(e.target.checked)} data-testid="amount-is-net" />
+                {t('tx.amountIsNet')}
+              </label>
+            )}
           </div>
         )}
 

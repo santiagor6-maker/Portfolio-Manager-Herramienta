@@ -74,6 +74,11 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                 {describeDiagnostic(d, { tx: d.transactionId ? txs?.get(d.transactionId) : undefined, instruments, locale: f.locale, t })}
               </span>
             </span>
+            {d.code === 'INTEREST_POSSIBLY_NET' && d.transactionId && !txs?.get(d.transactionId)?.amountIsNet && (
+              <button className="btn btn-sm" data-testid="mark-net" onClick={() => void db.transactions.update(d.transactionId!, { amountIsNet: true })}>
+                {t('diag.markNet')}
+              </button>
+            )}
             {d.transactionId && (
               <button className="btn btn-sm btn-ghost" onClick={() => onOpen(d.transactionId!)}>
                 {t('diag.open')}

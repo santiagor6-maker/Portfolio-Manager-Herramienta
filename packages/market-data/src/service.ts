@@ -832,15 +832,12 @@ export class MarketDataService {
       ...stitched.actions,
     ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-    // Seed (review R4, M32): a window that starts without a trade gets the last real trade before
-    // `from`, flagged `carried`, so the engine can value positions at `from`.
+    // Seed (review R4, M32; R5, M37): a window that does not start with a trade gets the last real
+    // trade before `from` in `series.seed`, never in `points`.
     let points: MarketPricePoint[] = h.points;
+    let seed: PricePoint | undefined;
     if (r.kind === 'market' && adjust !== 'total' && (!points.length || points[0]!.date > from) && !(h.firstTradeDate && h.firstTradeDate >= from)) {
-      const seed = await this.lastTradeBefore(r.target.yahoo, from, h.source);
-      if (seed) {
-        points = [{ ...seed, carried: true }, ...points];
-        notes.push(`first point is the last trade before ${from} (${seed.date}), marked carried`);
-      }
+      seed = await this.lastTradeBefore(r.target.yahoo, from, h.source);
     }
 
     // Adjustment ------------------------------------------------------------------------
@@ -848,6 +845,7 @@ export class MarketDataService {
       if (h.basis === 'as-traded') {
         const all = h.source === 'yahoo' ? await this.yahoo.splits(r.target.yahoo) : h.splits;
         points = points.map((p) => ({ ...p, close: roundTo(p.close / splitFactorAfter(all, p.date), 8) }));
+        if (seed) seed = { date: seed.date, close: roundTo(seed.close / splitFactorAfter(all, seed.date), 8) };
       }
     } else if (adjust === 'total') {
       points = totalReturn(points, actions);
@@ -886,6 +884,7 @@ export class MarketDataService {
         source: h.source,
         ...(lastTradeDate ? { lastTradeDate } : {}),
         ...(stale ? { stale } : {}),
+        ...(seed ? { seed } : {}),
         ...(h.coverage?.partial ? { partial: true, coverageFrom: h.coverage.from, coverageTo: h.coverage.to } : {}),
       },
       actions,

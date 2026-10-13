@@ -257,7 +257,14 @@ export default function DividendsPage() {
                     {e.type === 'INTEREST' && e.instrumentId && <span className="chip ml-2">{t('tx.type.INTEREST')}</span>}
                   </td>
                   <td className="r num">{formatMoney(e.gross, e.currency, f.locale, { privacy: f.privacy })}</td>
-                  <td className="r num text-muted">{formatMoney(e.taxes, e.currency, f.locale, { privacy: f.privacy })}</td>
+                  <td className="r num text-muted">
+                    {formatMoney(e.taxes, e.currency, f.locale, { privacy: f.privacy })}
+                    {e.taxesEstimated && (
+                      <span className="chip !h-4 !text-[10px] ml-1" title={t('div.taxEstimatedHint')} data-testid="tax-estimated">
+                        {t('div.taxEstimated')}
+                      </span>
+                    )}
+                  </td>
                   <td className="r num">{formatMoney(e.net, e.currency, f.locale, { privacy: f.privacy })}</td>
                   <td className="r font-semibold">
                     <Money value={e.netBase} />

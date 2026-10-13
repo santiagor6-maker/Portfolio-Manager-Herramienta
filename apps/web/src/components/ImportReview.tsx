@@ -160,6 +160,22 @@ export function SecurityMapPrompt({ result, current, onApply, busy }: { result: 
               <span className="font-mono font-semibold">{it.key}</span>
               <div className="text-xs text-muted">{t(`impr.sec.${it.code}`)}</div>
             </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+            {it.suggestions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('impr.suggestionsFor', { key: it.key })} data-testid="security-suggestions">
+                {it.suggestions.map((sug) => (
+                  <button
+                    key={sug}
+                    type="button"
+                    className={clsx('chip cursor-pointer', map[it.key] === sug && '!bg-accent !text-white !border-accent')}
+                    aria-pressed={map[it.key] === sug}
+                    onClick={() => setMap((m) => ({ ...m, [it.key]: sug }))}
+                  >
+                    {/^X[A-Z]{3}$|^BVMF$/.test(sug) ? exchangeLabel(sug) : sug}
+                  </button>
+                ))}
+              </div>
+            )}
             {it.code === 'EXCHANGE_REQUIRED' ? (
               <select className="select" aria-label={t('impr.exchangeFor', { key: it.key })} value={map[it.key] ?? ''} onChange={(e) => setMap((m) => ({ ...m, [it.key]: e.target.value }))}>
                 <option value="">—</option>
@@ -180,6 +196,7 @@ export function SecurityMapPrompt({ result, current, onApply, busy }: { result: 
                 onCreateManual={() => undefined}
               />
             )}
+            </div>
           </li>
         ))}
       </ul>

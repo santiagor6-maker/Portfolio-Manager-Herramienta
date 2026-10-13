@@ -411,8 +411,15 @@ describe.skipIf(!LIVE)('LIVE round 5', () => {
       }
       const h = await service.history({ symbol: 'ELCONDOR.CL', from: '2023-04-01', to: '2023-05-31', interval: '1mo' });
       console.log('[live] ELCONDOR 2023-04..05:', JSON.stringify(h.series.points));
-      expect(h.series.points[0]).toMatchObject({ carried: true });
-      expect(h.series.points[0]!.date < '2023-04-01').toBe(true);
+      console.log('[live] ELCONDOR seed:', JSON.stringify(h.series.seed));
+      expect(h.series.points.every((p) => p.date >= '2023-04-01' && p.date <= '2023-05-31')).toBe(true);
+      expect(h.series.seed!.date < '2023-04-01').toBe(true);
+      // M36: bare symbols that are US listings stay US (not Xetra / Paris / London / BVC).
+      for (const sym of ['DTE', 'ALV', 'AIR', 'MC', 'OR', 'ETB', 'BP', 'VOD', 'SHEL', 'AZN', 'SAP', 'SAN', 'BBVA', 'TEF', 'TTE']) {
+        const q = await service.quote(sym);
+        expect([sym, q.providerSymbol, q.currency]).toEqual([sym, sym, 'USD']);
+      }
+      for (const sym of ['GEB', 'ISA']) expect((await service.quote(sym)).instrumentId).toBe(`XBOG:${sym}`);
       const err: unknown = await service.history({ symbol: 'QQXZ', from: '2025-01-01', to: '2025-02-01' }).catch((e: unknown) => e);
       expect((err as { code?: string }).code).toBe('NOT_FOUND');
     },
