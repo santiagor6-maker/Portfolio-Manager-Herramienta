@@ -30,8 +30,9 @@ export interface Restructure {
 
 export function restructureOf(t: Transaction): Restructure | undefined {
   if (t.type !== 'SPLIT') return undefined;
-  const k = t.subtype;
-  if (k !== 'SPINOFF' && k !== 'MERGER' && k !== 'TICKER_CHANGE') return undefined;
+  const sub = t.subtype;
+  if (sub !== 'SPINOFF' && sub !== 'MERGER' && sub !== 'TICKER_CHANGE') return undefined;
+  const k = sub as RestructureKind;
   const ratio = t.ratio !== undefined && t.ratio > 0 ? t.ratio : 1;
   const cf = k === 'SPINOFF' ? Math.min(1, Math.max(0, t.costFraction ?? 0)) : 1;
   return { kind: k, target: t.targetInstrumentId ?? '', ratio, costFraction: cf, cash: k === 'SPINOFF' ? 0 : Math.max(0, t.amount ?? 0) };

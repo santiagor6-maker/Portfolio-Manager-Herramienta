@@ -415,10 +415,16 @@ describe.skipIf(!LIVE)('LIVE round 5', () => {
       expect(h.series.points.every((p) => p.date >= '2023-04-01' && p.date <= '2023-05-31')).toBe(true);
       expect(h.series.seed!.date < '2023-04-01').toBe(true);
       // M36: bare symbols that are US listings stay US (not Xetra / Paris / London / BVC).
-      for (const sym of ['DTE', 'ALV', 'AIR', 'MC', 'OR', 'ETB', 'BP', 'VOD', 'SHEL', 'AZN', 'SAP', 'SAN', 'BBVA', 'TEF', 'TTE']) {
+      for (const sym of ['DTE', 'ALV', 'AIR', 'MC', 'OR', 'ETB', 'BP', 'VOD', 'SHEL', 'AZN', 'SAP', 'SAN', 'BBVA', 'TTE']) {
         const q = await service.quote(sym);
         expect([sym, q.providerSymbol, q.currency]).toEqual([sym, sym, 'USD']);
       }
+      // TEF: Yahoo has no bare (US) TEF listing any more (404, checked 2026-10-13), so the rule
+      // "catalog listing only when there is no US listing" sends it to Madrid. Re-check here: if a
+      // US listing reappears it must win.
+      const tef = await service.quote('TEF');
+      const tefUs = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/TEF?range=1d&interval=1d', { headers: { 'User-Agent': 'Mozilla/5.0' } }).then((r) => r.ok);
+      expect(tef.providerSymbol).toBe(tefUs ? 'TEF' : 'TEF.MC');
       for (const sym of ['GEB', 'ISA']) expect((await service.quote(sym)).instrumentId).toBe(`XBOG:${sym}`);
       const err: unknown = await service.history({ symbol: 'QQXZ', from: '2025-01-01', to: '2025-02-01' }).catch((e: unknown) => e);
       expect((err as { code?: string }).code).toBe('NOT_FOUND');
