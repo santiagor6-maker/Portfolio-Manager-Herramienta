@@ -298,7 +298,7 @@ export default function ImportPage() {
               {busy ? <Loader2 className="mx-auto animate-spin text-accent" size={28} /> : <FileUp className="mx-auto text-muted" size={28} />}
               <div className="font-semibold mt-3">{busy ? t('imp.reading') : t('imp.drop')}</div>
               <p className="text-xs text-muted mt-1">{t('imp.formats')}</p>
-              <input ref={fileRef} type="file" className="hidden" accept=".csv,.txt,.xlsx,.xls,.html,.htm,.pdf" onChange={(e) => onFile(e.target.files?.[0])} data-testid="import-file" />
+              <input ref={fileRef} type="file" className="hidden" accept=".csv,.txt,.xlsx,.xls,.html,.htm,.pdf,.eml" onChange={(e) => onFile(e.target.files?.[0])} data-testid="import-file" />
             </div>
             <div className="mt-4">
               <div className="text-xs font-medium text-muted mb-2">{t('imp.supported')}</div>

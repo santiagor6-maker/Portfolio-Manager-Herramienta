@@ -6,8 +6,10 @@ import {
   listBrokerProfiles,
   canonicalTemplateCsv,
   exportTransactionsCsv,
+  importEmail,
   importFile,
   inspectFile,
+  type EmailImportResult,
   listPresets,
   type ColumnMapping,
   type CorporateActionSuggestion,
@@ -63,9 +65,7 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
     db.transactions.where('portfolioId').equals(req.portfolioId).toArray(),
     db.instruments.toArray(),
   ]);
-  return importFile(
-    { data: req.file, fileName: req.file.name },
-    {
+  const options = {
       portfolioId: req.portfolioId,
       account: req.account || undefined,
       presetId: req.presetId || undefined,
@@ -83,8 +83,59 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
       securityMap: req.answers?.securityMap && Object.keys(req.answers.securityMap).length ? req.answers.securityMap : undefined,
       catalog: (await import('../lib/catalog')).CATALOG,
       idFactory: () => newId('tx'),
+  };
+  // Importers R4: a forwarded broker e-mail (.eml) imports every attachment (notas, extratos).
+  if (/\.eml$/i.test(req.file.name) || req.file.type === 'message/rfc822') {
+    const raw = new Uint8Array(await req.file.arrayBuffer());
+    return emailToResult(await importEmail(raw, options), req.file.name);
+  }
+  return importFile({ data: req.file, fileName: req.file.name }, options);
+}
+
+/** Merges the per-attachment results of an e-mail into one preview (rows keep their lines). */
+export function emailToResult(e: EmailImportResult, fileName: string): ImportResult {
+  const parts = e.attachments.map((a) => a.result);
+  const first = parts[0];
+  const sum = (k: keyof ImportResult['stats']) => parts.reduce((n, p) => n + (Number(p.stats[k]) || 0), 0);
+  const seen = new Set<string>();
+  const instruments = parts.flatMap((p) => p.instruments).filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
+  const issue = (code: string, params: Record<string, string | number>) => ({ code, severity: 'warning' as const, message: code, params });
+  const warnings = [
+    ...parts.flatMap((p) => p.warnings),
+    ...e.needsPassword.map((f) => issue('EMAIL_PDF_PASSWORD', { file: f })),
+    ...(parts.length ? [] : [issue('EMAIL_NO_ATTACHMENT', { file: fileName })]),
+  ];
+  return {
+    detection: {
+      fileKind: first?.detection.fileKind ?? 'unknown',
+      presetId: first?.detection.presetId ?? 'email',
+      presetLabel: [e.subject, ...e.attachments.map((a) => `${a.fileName} · ${a.result.detection.presetLabel}`)].filter(Boolean).join(' — ') || fileName,
+      presetConfidence: first?.detection.presetConfidence ?? 'low',
+      score: first?.detection.score ?? 0,
     },
-  );
+    transactions: e.transactions,
+    instruments,
+    rows: parts.flatMap((p) => p.rows),
+    warnings,
+    errors: parts.flatMap((p) => p.errors),
+    stats: {
+      ...(first?.stats ?? { byType: {}, currencies: [] }),
+      totalRows: sum('totalRows'),
+      imported: e.transactions.length,
+      duplicates: sum('duplicates'),
+      skipped: sum('skipped'),
+      errors: sum('errors'),
+      warnings: warnings.length,
+      newInstruments: instruments.length,
+      matchedInstruments: sum('matchedInstruments'),
+      possibleDuplicates: sum('possibleDuplicates'),
+      pending: sum('pending'),
+    } as ImportResult['stats'],
+    corporateActions: parts.flatMap((p) => p.corporateActions ?? []),
+    unknownSecurities: parts.flatMap((p) => p.unknownSecurities ?? []),
+    instrumentUpdates: parts.flatMap((p) => p.instrumentUpdates ?? []),
+    needsConfirmation: parts.flatMap((p) => p.needsConfirmation ?? []),
+  };
 }
 
 /**

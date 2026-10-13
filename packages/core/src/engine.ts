@@ -470,11 +470,6 @@ export function snapshotInput(input: EngineInput): EngineInput {
 const marketIds = new WeakMap<object, number>();
 let nextMarketId = 1;
 
-const TX_FIELDS = [
-  'id', 'date', 'type', 'instrumentId', 'quantity', 'price', 'currency', 'amount', 'fees', 'taxes', 'ratio', 'toCurrency',
-  'toAmount', 'fxRateToBase', 'account', 'subtype', 'targetInstrumentId', 'costFraction', 'portfolioId',
-] as const;
-
 const f64 = new Float64Array(1);
 const u32 = new Uint32Array(f64.buffer);
 
