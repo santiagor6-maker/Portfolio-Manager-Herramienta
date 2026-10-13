@@ -10,6 +10,7 @@ import {
   importFile,
   inspectFile,
   type EmailImportResult,
+  type ImportOptions,
   listPresets,
   type ColumnMapping,
   type CorporateActionSuggestion,
@@ -65,7 +66,7 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
     db.transactions.where('portfolioId').equals(req.portfolioId).toArray(),
     db.instruments.toArray(),
   ]);
-  const options = {
+  const options: ImportOptions = {
       portfolioId: req.portfolioId,
       account: req.account || undefined,
       presetId: req.presetId || undefined,
@@ -99,11 +100,12 @@ export function emailToResult(e: EmailImportResult, fileName: string): ImportRes
   const sum = (k: keyof ImportResult['stats']) => parts.reduce((n, p) => n + (Number(p.stats[k]) || 0), 0);
   const seen = new Set<string>();
   const instruments = parts.flatMap((p) => p.instruments).filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
-  const issue = (code: string, params: Record<string, string | number>) => ({ code, severity: 'warning' as const, message: code, params });
-  const warnings = [
-    ...parts.flatMap((p) => p.warnings),
-    ...e.needsPassword.map((f) => issue('EMAIL_PDF_PASSWORD', { file: f })),
-    ...(parts.length ? [] : [issue('EMAIL_NO_ATTACHMENT', { file: fileName })]),
+  // Importer messages are in Spanish (like the rest of @pm/importers issues).
+  const issue = (code: string, message: string, params: Record<string, string | number>) => ({ code, severity: 'error' as const, message, params });
+  const warnings = parts.flatMap((p) => p.warnings);
+  const emailErrors = [
+    ...e.needsPassword.map((f) => issue('EMAIL_PDF_PASSWORD', `El adjunto ${f} está protegido con contraseña: impórtalo por separado para escribirla.`, { file: f })),
+    ...(parts.length ? [] : [issue('EMAIL_NO_ATTACHMENT', `El correo ${fileName} no tiene adjuntos importables (PDF, CSV, XLSX).`, { file: fileName })]),
   ];
   return {
     detection: {
@@ -117,7 +119,7 @@ export function emailToResult(e: EmailImportResult, fileName: string): ImportRes
     instruments,
     rows: parts.flatMap((p) => p.rows),
     warnings,
-    errors: parts.flatMap((p) => p.errors),
+    errors: [...emailErrors, ...parts.flatMap((p) => p.errors)],
     stats: {
       ...(first?.stats ?? { byType: {}, currencies: [] }),
       totalRows: sum('totalRows'),

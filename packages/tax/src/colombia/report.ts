@@ -1,6 +1,7 @@
 import type { CountryCode, CurrencyCode, Instrument, ISODate, Transaction } from '@pm/core';
 import { basisTotalCost, issuerKey, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool } from '../common/cashPool';
+import { mergerCashCostFraction, restructureIssues, restructureOf } from '../common/corporate';
 import { addBusinessDays, addWeekdays, addYears, colombiaHolidays, daysBetween, usMarketHolidays } from '../common/dates';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
@@ -582,6 +583,57 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
         break;
       }
       case 'SPLIT': {
+        const rs = restructureOf(tx);
+        if (rs) {
+          // T64/T65: ticker change, merger, spin-off — lots (dates and cost) move to the target.
+          issues.push(...restructureIssues(tx, rs, displaySymbol(id, inst), 'es'));
+          if (!rs.target) break;
+          const list = lots.get(id) ?? [];
+          const target = lots.get(rs.target) ?? [];
+          const qty = sum(list.map((l) => l.quantity));
+          const costLocal = sum(list.map((l) => l.costLocal));
+          if (rs.cash > 0 && qty > 0) {
+            // Cash received in the merger: partial disposal of the parent, cost carved by value.
+            const rate = trm(ccy, tx.date);
+            const f = mergerCashCostFraction(rs, qty, costLocal, input.market, tx.date, rs.cash);
+            const realDate = realizationOf(tx, inst);
+            for (const l of list) {
+              const carved: CoLot = { openDate: l.openDate, quantity: l.quantity, costLocal: l.costLocal * f, costCop: l.costCop * f };
+              l.costLocal -= carved.costLocal;
+              l.costCop -= carved.costCop;
+              if (realizedInYear(realDate)) {
+                const row = saleRow(tx, inst, id, carved, l.quantity, qty, rs.cash, rate, realDate);
+                row.quantity = 0;
+                row.legalBasis = `Efectivo recibido en la fusión (${row.legalBasis})`;
+                sales.push(row);
+              }
+            }
+            cashIn(tx, ccy, rs.cash);
+          }
+          const moved: CoLot[] = [];
+          for (const l of list) {
+            const cf = rs.costFraction;
+            moved.push({ openDate: l.openDate, quantity: l.quantity * rs.ratio, costLocal: l.costLocal * cf, costCop: l.costCop * cf });
+            l.costLocal -= l.costLocal * cf;
+            l.costCop -= l.costCop * cf;
+          }
+          for (const m of moved) if (Math.abs(m.quantity - Math.round(m.quantity)) < 0.01) m.quantity = Math.round(m.quantity);
+          target.push(...moved.filter((m) => m.quantity > 1e-12));
+          target.sort((a, b) => a.openDate.localeCompare(b.openDate));
+          lots.set(rs.target, target);
+          lots.set(id, rs.kind === 'SPINOFF' ? list : []);
+          issues.push({
+            level: 'info',
+            code: 'CORPORATE_ACTION_APPLIED',
+            transactionId: tx.id,
+            instrumentId: id,
+            message:
+              `${rs.kind === 'SPINOFF' ? 'Escisión' : rs.kind === 'MERGER' ? 'Fusión' : 'Cambio de ticker'} ${displaySymbol(id, inst)} → ` +
+              `${displaySymbol(rs.target, instruments.get(rs.target))}: ${qty * rs.ratio} acciones con fecha y costo de compra originales` +
+              (rs.kind === 'SPINOFF' ? ` (${(rs.costFraction * 100).toFixed(2)}% del costo).` : '.'),
+          });
+          break;
+        }
         const ratio = snapRatio(tx.ratio ?? 1);
         const list = lots.get(id) ?? [];
         for (const lot of list) {

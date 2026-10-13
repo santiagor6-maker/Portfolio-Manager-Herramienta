@@ -179,7 +179,7 @@ export interface EngineContext {
    */
   outliers: { tx: Transaction; code: string; severity: Diagnostic['severity']; message: string }[];
   /** C44: questionable trade prints (TRADE_PRICE_OUTLIER rejected, TRADE_PRICE_UNCONFIRMED used). */
-  priceFlags: { day: number; instrumentId: string; code: 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED' }[];
+  priceFlags: { day: number; instrumentId: string; code: PriceFlagCode }[];
   /** Tax residence (explicit or inferred from the portfolio base currency). */
   taxResidence: string | undefined;
   /**
@@ -275,11 +275,21 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     const ratio = p / ref.price;
     return ratio > h || ratio < 1 / h;
   };
+  // C48: a factor close to a power of ten (>= ~x8 or <= ~/8, or within 10 % of x10^k) looks like a
+  // unit or format error; returns that factor.
+  const unitSuspect = (ratio: number): number | undefined => {
+    if (!(ratio > 0)) return undefined;
+    const l = Math.log10(ratio);
+    const k = Math.round(l);
+    if (k === 0) return undefined;
+    if (Math.abs(l) >= 0.9 || Math.abs(l - k) <= Math.log10(1.1)) return Math.pow(10, k);
+    return undefined;
+  };
   // C46: rejected prints waiting for a consistent successor, and the last unconfirmed print.
   type Outlier = EngineContext['outliers'][number];
   type Flag = EngineContext['priceFlags'][number];
   const pending = new Map<string, { day: number; price: number; tx: Transaction; outlier: Outlier; flag: Flag }[]>();
-  const unconfirmed = new Map<string, { outlier: Outlier; flag: Flag }>();
+  const unconfirmed = new Map<string, { day: number; outlier: Outlier; flag: Flag }>();
   const dropped = new Set<object>();
   const accept = (id: string, day: number, p: number) => {
     let o = observations.get(id);
@@ -337,7 +347,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       const d1 = deviates(p, prevRef, day, inst);
       const d2 = deviates(p, nextRef, day, inst);
       const pct = Math.round(tol * 100);
-      let reject: { message: string } | undefined;
+      let reject: { message: string; unit?: number } | undefined;
       let flagUnconfirmed = false;
       if (d2 !== false) {
         if (d1 === true && d2 === true) {
@@ -345,31 +355,44 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         } else {
           const hardRef = prevRef ?? nextRef;
           if (beyondHard(p, hardRef, day, inst)) {
-            reject = { message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toFixed(2)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}) and no close confirms it; not used as a price observation until confirmed (priceConfirmed, or a later consistent trade price)` };
+            const unit = unitSuspect(p / hardRef!.price);
+            if (unit) {
+              reject = {
+                unit,
+                message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toPrecision(3)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}), close to a factor of ${unit >= 1 ? unit : `1/${Math.round(1 / unit)}`}: likely a unit or format error (thousands/decimal separator, pence vs pounds, price per lot). Not used as a price until confirmed with priceConfirmed`,
+              };
+            } else reject = { message: `Trade price ${p} of ${id} is ${(p / hardRef!.price).toFixed(2)}x the ${hardRef === prevRef ? 'previous reference' : 'next close'} ${hardRef!.price.toFixed(4)} (${dayToIso(hardRef!.day)}) and no close confirms it; not used as a price observation until confirmed (priceConfirmed, or a later consistent trade price)` };
           } else if (d1 === true && d2 === undefined) flagUnconfirmed = true;
         }
       }
       if (reject) {
-        // C46: two or more consecutive prints that agree with each other (and no close contradicts
-        // them) confirm the new level: the earlier ones are re-accepted with this one.
+        // C46/C48: two or more consecutive prints from DIFFERENT days that agree with each other
+        // (and no close contradicts them) confirm the new level: the earlier ones are re-accepted
+        // with this one (TRADE_PRICE_CONFIRMED_BY_RUN, a warning that reaches rows and summaries).
+        // Same-day fills are one piece of evidence; unit-like factors (x10, x100, /1000...) are
+        // never confirmed automatically (TRADE_PRICE_UNIT_SUSPECT, needs priceConfirmed).
         const run = pending.get(id) ?? [];
         const lastP = run[run.length - 1];
-        if (d2 !== true && lastP && deviates(p, lastP, day, inst) === false) {
+        if (!reject.unit && d2 !== true && lastP && run.some((r) => r.day !== day) && deviates(p, lastP, day, inst) === false) {
           for (const r of run) {
             dropped.add(r.outlier);
             dropped.add(r.flag);
-            outliers.push({ tx: r.tx, code: 'TRADE_PRICE_CONFIRMED_BY_RUN', severity: 'info', message: `Trade price ${r.price} of ${id} was confirmed by later consistent trade prices (${dayToIso(day)}: ${p}); used as the price` });
+            outliers.push({ tx: r.tx, code: 'TRADE_PRICE_CONFIRMED_BY_RUN', severity: 'warning', message: `Trade price ${r.price} of ${id} was rejected and then confirmed by later consistent trade prices (${dayToIso(day)}: ${p}); used as the price — check that it is not a systematic import error` });
+            priceFlags.push({ day: r.day, instrumentId: id, code: 'TRADE_PRICE_CONFIRMED_BY_RUN' });
             accept(id, r.day, r.price);
           }
+          priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_CONFIRMED_BY_RUN' });
           pending.delete(id);
           unconfirmed.delete(id);
           accept(id, day, p);
           continue;
         }
-        const outlier = { tx, code: 'TRADE_PRICE_OUTLIER', severity: 'warning' as const, message: reject.message };
-        const flag = { day, instrumentId: id, code: 'TRADE_PRICE_OUTLIER' as const };
+        const code = reject.unit ? ('TRADE_PRICE_UNIT_SUSPECT' as const) : ('TRADE_PRICE_OUTLIER' as const);
+        const outlier = { tx, code, severity: 'warning' as const, message: reject.message };
+        const flag = { day, instrumentId: id, code };
         outliers.push(outlier);
         priceFlags.push(flag);
+        if (reject.unit) continue;
         if (d2 !== true) {
           // keep only the latest run of mutually consistent rejected prints
           const keep = lastP && deviates(p, lastP, day, inst) === false ? run : [];
@@ -381,7 +404,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       pending.delete(id);
       // C46: a print that agrees with a previous unconfirmed print (no close against it) confirms it
       const prevUnc = unconfirmed.get(id);
-      if (prevUnc && d1 === false && d2 !== true) {
+      if (prevUnc && prevUnc.day !== day && d1 === false && d2 !== true) {
         dropped.add(prevUnc.outlier);
         dropped.add(prevUnc.flag);
         unconfirmed.delete(id);
@@ -391,10 +414,94 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         const flag = { day, instrumentId: id, code: 'TRADE_PRICE_UNCONFIRMED' as const };
         outliers.push(outlier);
         priceFlags.push(flag);
-        unconfirmed.set(id, { outlier, flag });
+        unconfirmed.set(id, { day, outlier, flag });
       }
       if (before > 0 && q < 0.005 * before && sameDay && day - sameDay.day <= 7) continue;
       accept(id, day, p);
+    }
+  }
+
+  // C50: a jump between two consecutive prices (market closes, or accepted trade prints) close to a
+  // common split ratio while the position is held, with no SPLIT/STOCK_DIVIDEND recorded around it,
+  // is reported as POSSIBLE_UNRECORDED_SPLIT (warning, also in rows and summaries).
+  {
+    const RATIOS = [2, 3, 4, 5, 8, 10, 20, 25, 50, 100];
+    const qty = new Map<string, number>();
+    const intervals = new Map<string, [number, number][]>();
+    const splits = new Map<string, number[]>();
+    const txsOf = new Map<string, SortedTx[]>();
+    for (const st of sorted) {
+      const { tx, day } = st;
+      const id = tx.instrumentId;
+      if (!id) continue;
+      let list = txsOf.get(id);
+      if (!list) txsOf.set(id, (list = []));
+      list.push(st);
+      const q0 = qty.get(id) ?? 0;
+      let q1 = q0;
+      const n = num(tx.quantity);
+      if (tx.type === 'BUY' || tx.type === 'TRANSFER_IN') q1 = q0 + n;
+      else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') q1 = q0 - n;
+      else if (tx.type === 'SPLIT' || tx.type === 'STOCK_DIVIDEND') {
+        let sp = splits.get(id);
+        if (!sp) splits.set(id, (sp = []));
+        sp.push(day);
+        if (tx.type === 'SPLIT' && !tx.subtype) q1 = q0 * (num(tx.ratio) || 1);
+      }
+      if (q1 === q0) continue;
+      qty.set(id, q1);
+      let iv = intervals.get(id);
+      if (!iv) intervals.set(id, (iv = []));
+      if (q0 <= QTY_EPS && q1 > QTY_EPS) iv.push([day, Infinity]);
+      else if (q0 > QTY_EPS && q1 <= QTY_EPS && iv.length) (iv[iv.length - 1] as [number, number])[1] = day;
+    }
+    const near = (a: { day: number; close: number }, b: { day: number; close: number }): number | undefined => {
+      if (!(a.close > 0) || !(b.close > 0)) return undefined;
+      const r = b.close / a.close;
+      const gap = b.day - a.day;
+      const t = Math.min(0.15, 0.05 * Math.max(1, Math.sqrt(gap / 7)));
+      for (const k of RATIOS) {
+        if (k <= 3 && gap > 10) continue;
+        if (Math.abs(r * k - 1) <= t) return k;
+        if (Math.abs(r / k - 1) <= t) return 1 / k;
+      }
+      return undefined;
+    };
+    for (const [id, ivs] of intervals) {
+      const sp = splits.get(id) ?? [];
+      const obs = observations.get(id);
+      const flagged = new Set<number>();
+      const report = (a: { day: number; close: number }, b: { day: number; close: number }) => {
+        const k = near(a, b);
+        if (k === undefined || flagged.has(b.day)) return;
+        if (sp.some((d) => d >= a.day - 3 && d <= b.day + 3)) return;
+        flagged.add(b.day);
+        const list = txsOf.get(id) ?? [];
+        const ref = list.find((x) => x.day >= b.day) ?? list[list.length - 1];
+        if (!ref) return;
+        const label = k < 1 ? `${Math.round(1 / k)}:1 split` : `1:${Math.round(k)} reverse split`;
+        outliers.push({ tx: ref.tx, code: 'POSSIBLE_UNRECORDED_SPLIT', severity: 'warning', message: `The price of ${id} went from ${a.close} (${dayToIso(a.day)}) to ${b.close} (${dayToIso(b.day)}), close to a ${label}, and no split is recorded; if there was one, record it (applyCorporateActions can suggest it)` });
+        priceFlags.push({ day: b.day, instrumentId: id, code: 'POSSIBLE_UNRECORDED_SPLIT' });
+      };
+      for (const [s0, e0] of ivs) {
+        let prev = market.pricePointAt(id, s0);
+        let guard = 0;
+        for (let nx = market.pricePointAfter(id, prev ? prev.day : s0 - 1); nx && nx.day <= e0 && guard < 1_000_000; nx = market.pricePointAfter(id, nx.day), guard++) {
+          if (prev) report(prev, nx);
+          prev = nx;
+        }
+        if (obs) {
+          for (let i = 1; i < obs.days.length; i++) {
+            const d = obs.days[i] as number;
+            const d0 = obs.days[i - 1] as number;
+            if (d0 < s0 || d > e0) continue;
+            // only when no market close lies between them (closes are checked above)
+            const pm = market.pricePointAt(id, d);
+            if (pm && pm.day >= d0) continue;
+            report({ day: d0, close: obs.prices[i - 1] as number }, { day: d, close: obs.prices[i] as number });
+          }
+        }
+      }
     }
   }
 
@@ -467,6 +574,9 @@ export function priceFlagWarnings(ctx: EngineContext, startDay: number, endDay: 
 }
 
 const CASH_EPS = 1e-7;
+
+/** Codes of questionable prices that reach MonthlyRow/PerformanceSummary warnings. */
+export type PriceFlagCode = 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED' | 'TRADE_PRICE_UNIT_SUSPECT' | 'TRADE_PRICE_CONFIRMED_BY_RUN' | 'POSSIBLE_UNRECORDED_SPLIT';
 
 /** Who a coupon belongs to and how much interest accrued over its period (see Ledger.couponPlan). */
 interface CouponPlan {
