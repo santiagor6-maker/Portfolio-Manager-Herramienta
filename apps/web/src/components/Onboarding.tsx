@@ -31,6 +31,8 @@ export function OnboardingWizard() {
   const [method, setMethod] = useState<CostMethod>(ccy === 'BRL' ? 'AVERAGE' : 'FIFO');
   const [broker, setBroker] = useState('');
   const [deposit, setDeposit] = useState('');
+  // W22: the initial deposit is dated "since when do you invest", not always today.
+  const [depositDate, setDepositDate] = useState(todayIso());
   const [keepDemo, setKeepDemo] = useState(false);
   const [pid, setPid] = useState<string>();
 
@@ -53,7 +55,7 @@ export function OnboardingWizard() {
   const saveDeposit = async () => {
     const amount = parseDecimal(deposit, locale === 'en' ? 'en-US' : 'es-CO');
     if (pid && amount && amount > 0) {
-      await saveTransaction({ portfolioId: pid, date: todayIso(), type: 'DEPOSIT', currency: ccy, amount, account: broker || undefined, note: t('onboarding.initialDeposit') });
+      await saveTransaction({ portfolioId: pid, date: depositDate && depositDate <= todayIso() ? depositDate : todayIso(), type: 'DEPOSIT', currency: ccy, amount, account: broker || undefined, note: t('onboarding.initialDeposit') });
     }
     setStep(2);
   };
@@ -150,6 +152,9 @@ export function OnboardingWizard() {
           <p className="text-[13px] text-ink-2">{t('onboarding.depositIntro')}</p>
           <Field label={t('onboarding.depositLabel', { currency: ccy })} htmlFor="ob-dep" hint={t('onboarding.depositHint')}>
             <input id="ob-dep" className="input num" inputMode="decimal" value={deposit} onChange={(e) => setDeposit(e.target.value)} data-autofocus />
+          </Field>
+          <Field label={t('onboarding.depositDate')} htmlFor="ob-dep-date" hint={t('onboarding.depositDateHint')}>
+            <input id="ob-dep-date" className="input num" type="date" max={todayIso()} value={depositDate} onChange={(e) => setDepositDate(e.target.value)} />
           </Field>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn" onClick={() => setStep(2)}>

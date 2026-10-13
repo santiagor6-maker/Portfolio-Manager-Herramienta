@@ -31,25 +31,25 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
       ['2023-01-02', 'SELL', 'BVMF:VALE3', 20, 88.1, 1762],
       ['2023-03-15', 'SELL', 'BVMF:PETR4', 50, 25.1, 1255],
       ['2023-03-15', 'BUY', 'BVMF:HGLG11', 10, 160.5, 1605],
+      ['2023-03-20', 'BUY', 'BVMF:BEEF3', 200, 10, 2000], // MINERVA ON NM is in the round-4 nome de pregão table
     ]);
   });
   it('allocates the Resumo Financeiro costs pro-rata and IRRF to sales', () => {
-    const n1 = r.transactions.filter((t) => t.note === 'Nota 12345678');
+    const n1 = r.transactions.filter((t) => t.note?.startsWith('Nota 12345678 ·'));
     // 1,22 + 0,22 + 4,90 + 0,24 = 6,58 spread over ALL trades incl. the skipped option (value 50): its
     // share is dropped instead of being loaded onto the spot trades (I25).
     expect(n1.reduce((s, t) => s + (t.fees ?? 0), 0)).toBeCloseTo((6.58 * 4437.04) / 4487.04, 6);
     expect(n1[0]!.fees).toBeCloseTo((6.58 * 2345) / 4487.04, 6);
     expect(n1.find((t) => t.type === 'SELL')!.taxes).toBe(0.09);
-    expect(r.transactions.find((t) => t.note === 'Nota 87654321' && t.type === 'SELL')).toMatchObject({ taxes: 0.06, account: 'CLEAR CORRETORA - GRUPO XP' });
+    expect(r.transactions.find((t) => t.note?.startsWith('Nota 87654321 ·') && t.type === 'SELL')).toMatchObject({ taxes: 0.06, account: 'CLEAR CORRETORA - GRUPO XP' });
     expect(n1[0]!.account).toBe('XP INVESTIMENTOS CCTVM S/A');
   });
-  it('skips options and asks for unknown securities (then accepts a securityMap answer)', async () => {
+  it('skips options; an explicit securityMap answer still wins over the table', async () => {
     const opt = r.rows.find((x) => x.issues.some((i) => i.code === 'UNSUPPORTED_ASSET'))!;
     expect(opt).toMatchObject({ status: 'skipped', sheet: 'pág. 1' });
-    const unknown = r.rows.find((x) => x.issues.some((i) => i.code === 'UNKNOWN_SECURITY'))!;
-    expect(unknown).toMatchObject({ status: 'error', sheet: 'pág. 3' });
-    expect(unknown.issues[0]!.params).toEqual({ spec: 'MINERVA ON NM' });
-    const mapped = await importFixture('nota-sinacor.pdf', { securityMap: { 'MINERVA ON NM': 'BEEF3' } });
+    const other = await importFixture('nota-sinacor.pdf', { securityMap: { 'MINERVA ON NM': 'BVMF:BEEF11' } });
+    expect(other.transactions.some((t) => t.instrumentId === 'BVMF:BEEF11')).toBe(true);
+    const mapped = r;
     const beef = mapped.transactions.find((t) => t.instrumentId === 'BVMF:BEEF3')!;
     expect(beef).toMatchObject({ quantity: 200, fees: 0.6, account: 'RICO INVESTIMENTOS - GRUPO XP' });
     // The note's "Líquido para" was printed inconsistent on purpose → warning.
@@ -68,7 +68,7 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
   });
   it('re-importing the same PDF is fully de-duplicated', async () => {
     const again = await importFixture('nota-sinacor.pdf', { existingTransactions: r.transactions });
-    expect(again.stats).toMatchObject({ imported: 0, duplicates: 5 });
+    expect(again.stats).toMatchObject({ imported: 0, duplicates: 6 });
   });
 });
 
@@ -153,7 +153,7 @@ describe('I2 — IBKR Flex Web Service sync (recorded responses)', () => {
       ['2024-02-01', 'TRANSFER_IN', 'XNAS:MSFT', 20],
     ]);
     expect(r.transactions.find((x) => x.type === 'DIVIDEND')!.taxes).toBe(0.72);
-    expect(r.transactions.every((x) => x.account === 'Interactive Brokers' && x.source === 'import:ibkr-flex')).toBe(true);
+    expect(r.transactions.every((x) => x.account === 'U1234567' && x.source === 'import:ibkr-flex')).toBe(true);
     expect(r.reconciliation).toMatchObject({ asOf: '2024-06-28', positionDifferences: [] });
   });
   it('the next sync only brings new transactions (exact de-duplication by TransactionID)', async () => {

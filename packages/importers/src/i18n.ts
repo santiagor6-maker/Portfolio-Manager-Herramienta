@@ -401,6 +401,41 @@ const R3: Catalog = {
     pt: 'O arquivo não traz sinais: "{value}" foi tomado como {type} (entrada). Se for uma saída, associe a palavra ao tipo correto no mapeamento.',
     en: 'The file has no signs: "{value}" was taken as {type} (inflow). If it is an outflow, map that word to the right type.',
   },
+  BDR_CLASS_UNCERTAIN: {
+    es: 'El BDR "{spec}" tiene varias clases (o una letra de clase después de DRN): elige el código correcto.',
+    pt: 'O BDR "{spec}" tem várias classes (ou uma letra de classe após DRN): escolha o código correto.',
+    en: 'BDR "{spec}" has several classes (or a class letter after DRN): choose the right code.',
+  },
+  SECURITY_LEARNED: {
+    es: '"{spec}" se asoció a {id} como en tus notas anteriores.',
+    pt: '"{spec}" foi associado a {id} como nas suas notas anteriores.',
+    en: '"{spec}" was mapped to {id} as in your earlier notes.',
+  },
+  CORPORATE_ACTION_APPLIED: {
+    es: 'Evento corporativo aplicado ({type}) con la propuesta confirmada.',
+    pt: 'Evento corporativo aplicado ({type}) com a proposta confirmada.',
+    en: 'Corporate action applied ({type}) from the confirmed proposal.',
+  },
+  CASH_MERGER: {
+    es: 'Adquisición en efectivo: la posición se registra como venta ({value}).',
+    pt: 'Aquisição em dinheiro: a posição é registrada como venda ({value}).',
+    en: 'Cash acquisition: the position is recorded as a sale ({value}).',
+  },
+  XLS_ENCRYPTED: {
+    es: 'El Excel está protegido con contraseña de apertura. Ábrelo en Excel, quita la contraseña (o guárdalo como .xlsx/.csv) y vuelve a subirlo.',
+    pt: 'O Excel está protegido por senha de abertura. Abra no Excel, remova a senha (ou salve como .xlsx/.csv) e envie de novo.',
+    en: 'The Excel file has an open password. Open it in Excel, remove the password (or save as .xlsx/.csv) and upload it again.',
+  },
+  NOT_A_MOVEMENT: {
+    es: 'Línea del extracto sin fecha de movimiento (encabezado, pie o texto): se omite. "{value}"',
+    pt: 'Linha do extrato sem data de movimento (cabeçalho, rodapé ou texto): ignorada. "{value}"',
+    en: 'Statement line without a movement date (header, footer or text): skipped. "{value}"',
+  },
+  BALANCE_ROW: {
+    es: 'Línea de saldo ("{value}"): no es un movimiento, se omite.',
+    pt: 'Linha de saldo ("{value}"): não é uma movimentação, ignorada.',
+    en: 'Balance line ("{value}"): not a movement, skipped.',
+  },
   TICKER_RENAMED: {
     es: '{from} cambió de código: se usa {to} (misma acción).',
     pt: '{from} mudou de código: usa-se {to} (mesma ação).',

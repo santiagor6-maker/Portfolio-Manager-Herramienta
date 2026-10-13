@@ -7,6 +7,8 @@ import type { Instrument, Transaction, TransactionType } from '@pm/core';
 import { businessDaysBetween, calendarFor, dayNumber, type CalendarId } from './calendars';
 import { makeIssue } from './i18n';
 import { InstrumentResolver } from './instruments';
+import { proposeCorporateActions } from './corporate';
+import { importTransactionBatch, isTransactionBatch } from './sync/inbox';
 import { getBrokerProfile } from './profiles';
 import { suggestMapping } from './mapping';
 import { exchangeCurrency } from './markets';
@@ -172,6 +174,14 @@ export async function importFile(input: ImportInput, options: ImportOptions): Pr
   }
   if (read.kind === 'pdf') return importPdf(read, options, detection, locale);
   if (read.kind === 'json') {
+    // Server sync inbox / transaction batch (I2): same pipeline, dedup included.
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(read.text ?? '');
+    } catch {
+      parsedJson = undefined;
+    }
+    if (isTransactionBatch(parsedJson)) return importTransactionBatch(parsedJson, options);
     const isBackup = /"format"\s*:\s*"portafolio-pro-backup"/.test(read.text ?? '');
     return failure(detection, makeIssue(locale, isBackup ? 'FILE_IS_BACKUP' : 'FILE_UNSUPPORTED', 'error'));
   }
@@ -596,9 +606,9 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
         ].join('|');
     const occ = (occurrences.get(keyBase) ?? 0) + 1;
     occurrences.set(keyBase, occ);
-    const importHash = hashString(`${keyBase}#${occ}`);
+    const importHash = d.keep?.importHash ?? hashString(`${keyBase}#${occ}`);
     const tx: Transaction = {
-      id: opts.idFactory ? opts.idFactory(importHash, txIndex++) : `imp-${importHash}`,
+      id: d.keep?.id ?? (opts.idFactory ? opts.idFactory(importHash, txIndex++) : `imp-${importHash}`),
       portfolioId: opts.portfolioId,
       date: d.date,
       type: d.type,
@@ -617,7 +627,8 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     if (d.toAmount !== undefined) tx.toAmount = d.toAmount;
     if (d.fxRateToBase !== undefined) tx.fxRateToBase = d.fxRateToBase;
     if (d.note) tx.note = d.note;
-    tx.source = source;
+    if (d.keep?.fields) Object.assign(tx, d.keep.fields);
+    tx.source = d.keep?.source ?? source;
     tx.importHash = importHash;
     w.tx = tx;
     if (existingHashes.has(importHash)) {
@@ -730,6 +741,39 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
     else if (status === 'skipped') stats.skipped++;
     else stats.errors++;
   }
+  // Corporate actions (I33): ready-to-confirm transactions; accepted + complete ones are applied now.
+  const appliedInstruments: Instrument[] = [];
+  if (ctx.corporateActions.length) {
+    const base = [...existingTx, ...transactions];
+    const applied = proposeCorporateActions(ctx.corporateActions, {
+      options: opts,
+      resolver,
+      source,
+      existingHashes,
+      positionBefore: (id, date) => {
+        const before = new Date(Date.parse(`${date}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+        return computeBalances(base.filter((t) => t.instrumentId === id), before).positions.get(id) ?? 0;
+      },
+    });
+    for (const a of applied) {
+      const out = outRows.find((r) => r.line === a.line);
+      if (out && !pending) {
+        if (out.status === 'skipped') stats.skipped--;
+        out.status = 'ok';
+        out.transaction = a.tx;
+        const k = out.issues.findIndex((i) => i.code === 'CORPORATE_ACTION_PENDING');
+        if (k >= 0) out.issues.splice(k, 1);
+        out.issues.push(ctx.issue('CORPORATE_ACTION_APPLIED', 'info', { type: a.tx.subtype ?? 'SPLIT' }, a.line));
+        transactions.push(a.tx);
+        stats.imported++;
+        stats.byType[a.tx.type] = (stats.byType[a.tx.type] ?? 0) + 1;
+        currencies.add(a.tx.currency);
+        if (!stats.firstDate || a.tx.date < stats.firstDate) stats.firstDate = a.tx.date;
+        if (!stats.lastDate || a.tx.date > stats.lastDate) stats.lastDate = a.tx.date;
+        appliedInstruments.push(...a.instruments);
+      }
+    }
+  }
   stats.currencies = [...currencies].sort();
 
   const reconciliation = ctx.reported ? reconcileBestFit(ctx, resolver, existingTx, source, transactions) : undefined;
@@ -741,6 +785,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   const used = new Set(
     work.filter((w) => w.tx && (w.status === 'ok' || (pending && !w.invalid))).map((w) => w.tx!.instrumentId).filter(Boolean),
   );
+  for (const i of appliedInstruments) used.add(i.id);
   const instruments = resolver.newInstruments().filter((i) => used.has(i.id));
   stats.newInstruments = instruments.length;
   stats.matchedInstruments = resolver.matchedCount();

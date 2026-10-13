@@ -19,6 +19,8 @@ export const enR2: typeof esR2 = {
   },
   dashboard: {
     upcomingEstimated: 'Upcoming (announced and estimated)',
+    moversSubMixed: "Each asset's last close vs. its previous close",
+    indexFailedImpact: "Without this series real returns and «% of index» are not computed; it retries on the next refresh.",
     sinceClose: 'since the {{date}} close',
     real: 'Real',
     realHint: 'Return after inflation ({{index}})',
@@ -49,6 +51,8 @@ export const enR2: typeof esR2 = {
     pctOfIndexShort: '% of rate index',
     pctOfIndexHint: 'Portfolio return divided by the rate index return (100 % = same as CDI/IBR).',
     indexWas: '{{index}} over the period: {{value}}',
+    riskFreeUsed: "Risk-free: {{source}} {{rate}}",
+    riskFreeSetting: "Settings rate",
     indexUntil: 'data until {{month}}',
     inflationEstimated: 'inflation published until {{month}}, rest estimated',
     noIndex: 'No CDI/IBR loaded',
@@ -112,7 +116,8 @@ export const enR2: typeof esR2 = {
     rate: 'Invalid rate.',
     maturity: 'Maturity must be after issue.',
   },
-  picker: { searching: 'Searching…', template: 'Template' },
+  picker: {
+    exchange: 'Exchange / market', searching: 'Searching…', template: 'Template' },
   manual: {
     title: 'New manual asset',
     namePlaceholder: 'CD Bank X 12 % p.a., Bond fund…',
@@ -299,6 +304,8 @@ export const enR2: typeof esR2 = {
     keepDemo: 'Keep the sample data',
     create: 'Create portfolio',
     depositIntro: 'How much are you starting with? Recording the deposit lets returns be measured correctly.',
+    depositDate: "Since when do you invest?",
+    depositDateHint: "Deposit date. If you will record earlier purchases, use the date of the first deposit so contributions are not inflated.",
     depositLabel: 'Initial deposit ({{currency}})',
     depositHint: 'Optional; you can record deposits later.',
     initialDeposit: 'Initial deposit',
@@ -315,6 +322,7 @@ export const enR2: typeof esR2 = {
     task: { deposit: 'Record a deposit', buy: 'Record a buy', close: 'Do a month-end close', alerts: 'Create an alert', backup: 'Download a backup' },
   },
   settings: {
+    riskFreeAuto: "Use the currency's reference rate (IBR for COP, CDI for BRL) when loaded",
     passphrase: 'Backup passphrase (optional)',
     passphraseHint: 'If set, the backup is encrypted (AES-256) so you can move it to another device through any cloud folder.',
     backupError: { needs_passphrase: 'This backup is encrypted: enter its passphrase.', wrong_passphrase: 'Wrong passphrase.' },
@@ -335,7 +343,14 @@ export const enR2: typeof esR2 = {
     review: 'Review transactions',
     dashboard_one: 'The engine found {{count}} error in your transactions.',
     dashboard_other: 'The engine found {{count}} errors in your transactions.',
+    implicitText: "No cash was recorded: the engine assumed an implicit deposit of {{amount}} on this date. This inflates contributions; record the real deposit with its date.",
+    implicitNote: "Deposit covering earlier purchases",
+    createDeposit: "Create deposit on that date",
+    details: "Technical detail",
+    implicitMonth: "Implicit deposit",
+    text: {"netOfTax": ", net of an estimated {{amount}} withholding", "MATURITY_REDEEMED": "{{symbol}} was redeemed automatically (estimated) for {{amount}}{{tax}}. Record the real payment to replace it.", "IMPLICIT_FX_CONVERSION": "{{from}} converted to {{to}} at the market rate to pay for the {{type}}.", "IMPLICIT_FX_OTHER_ACCOUNT": "{{currency}} cash is only in other accounts; an implicit deposit was assumed for «{{account}}».", "WITHDRAWAL_EXCEEDS_CASH": "{{type}} of {{amount}} exceeds cash; the {{shortfall}} shortfall was booked as an implicit deposit (missing deposit?).", "NEGATIVE_CASH": "Cash goes negative ({{amount}}) after this {{type}}.", "OVERSELL": "Sold {{quantity}} {{symbol}} but only {{held}} were held; only the held part was booked.", "MISSING_FX": "No {{pair}} rate for {{date}}.", "NEGATIVE_ACCOUNT_QTY": "Account «{{account}}» holds {{quantity}} {{symbol}} (sold from an account that did not buy it).", "INCOME_WITHOUT_POSITION": "{{type}} of {{symbol}} with no units held on that date.", "INTEREST_ALREADY_RECORDED": "Interest of {{symbol}} was recorded at maturity; the automatic redemption pays the principal only.", "MISSING_PRICE": "Transfer of {{symbol}} without a price.", "UNKNOWN_INSTRUMENT": "The asset of this transaction does not exist; it is valued in the transaction currency.", "MISSING_INSTRUMENT": "{{type}} without an asset.", "INVALID_QUANTITY": "Quantity must be greater than zero.", "INVALID_RATIO": "Ratio must be greater than zero.", "MISSING_TARGET": "The target asset is missing.", "MISSING_CURRENCY": "The target currency is missing.", "LATE_REDEMPTION": "Redemption of {{symbol}} recorded after maturity.", "TRADE_PRICE_OUTLIER": "The {{price}} price of {{symbol}} is far from the market and is not used as a price. Review or confirm it.", "TRADE_PRICE_UNCONFIRMED": "The {{price}} price of {{symbol}} is a large move no close confirms. Confirm it if correct.", "COUPON_EXCEEDS_ACCRUED_INTEREST": "The {{symbol}} coupon exceeds the accrued interest by {{excess}}; check the amount.", "INTEREST_NET_ASSUMED": "{{symbol}} interest treated as net: gross {{gross}}, estimated withholding {{withheld}}.", "COUPON_RECORD_DATE_UNITS": "The {{symbol}} coupon was split over {{units}} units held at the record date ({{held}} at payment)."},
     code: {
+      IMPLICIT_DEPOSIT: "Purchase without a prior deposit",
       NEGATIVE_CASH: 'Negative cash',
       OVERSELL: 'Sale larger than position',
       MISSING_INSTRUMENT: 'Unknown asset',
@@ -441,4 +456,6 @@ export const enR2: typeof esR2 = {
     "apiTokenHint": "The server API_TOKEN value. Used by broker sync and protected routes."
   },
   pw: {"outlier": "Unusual price", "unconfirmed": "Price to confirm", "hint": "This period uses a questionable trade price ({{symbols}}). Review the trade or confirm the price is correct.", "open": "Open", "confirm": "Confirm price", "none": "No trades to confirm."},
+  md: {"partial": "Partial data", "partialHint": "The server only has prices for this asset from {{from}} to {{to}}; outside that range the last known price is used.", "partialList": "Partial data (the server does not cover the whole period): {{symbols}}"},
+  market: { err: {"originTitle": "The market-data server rejected this origin.", "originBody": "Add {{origin}} to CORS_ORIGIN on the server (see apps/server/README.md).", "rateLimitedTitle": "The market-data server asked to wait.", "rateLimitedBody": "The request limit was reached; automatic refresh retries in a few minutes.", "unauthorizedTitle": "The market-data server requires an API token.", "unauthorizedBody": "Enter it in Settings → Data source («Server API token»).", "httpTitle": "The market-data server returned an error.", "httpBody": "HTTP status {{status}}; prices saved in this browser are used."} },
 };

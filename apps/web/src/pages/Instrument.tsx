@@ -84,6 +84,15 @@ export default function InstrumentPage() {
             {inst?.sector && <span className="chip">{inst.sector}</span>}
             <span className="chip">{ccy}</span>
             {inst?.pricing === 'manual' && <span className="chip">{t('pos.manual')}</span>}
+            {series?.partial && (
+              <span
+                className="chip !text-warn !border-warn/30"
+                data-testid="partial-data"
+                title={t('md.partialHint', { from: series.coverageFrom ? formatDate(series.coverageFrom, f.locale) : '—', to: series.coverageTo ? formatDate(series.coverageTo, f.locale) : '—' })}
+              >
+                {t('md.partial')}
+              </span>
+            )}
           </span>
         }
         actions={

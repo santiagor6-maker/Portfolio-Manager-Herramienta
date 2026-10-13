@@ -1153,10 +1153,12 @@ export class Ledger {
 
   /**
    * Who a coupon belongs to (C42): the units held at the record date — `quantity` on the
-   * transaction when given, else the holding before a sale/purchase in the 15 days before payment
-   * when that explains the amount better (sold ex-coupon). Units bought after the record date
-   * (newest lots) are not entitled. `p` is the interest accrued per unit over the coupon period,
-   * taken from the entitled lot that accrued the longest since its anchor.
+   * transaction when given (the newest units are the ones bought after the record date). Else:
+   * a lot bought in the 15 days before payment is entitled when its price was dirty (closer to the
+   * older lots' value with accrued interest than to their value at the anchor), and units sold in
+   * that window are added when that explains the amount better (sold ex-coupon). `p` is the
+   * interest accrued per unit over the coupon period, from the entitled lot that accrued the
+   * longest since its anchor.
    */
   private couponPlan(tx: Transaction, inst: Instrument, day: number, amountTx: number): CouponPlan | undefined {
     const b = this.books.get(inst.id);
@@ -1167,47 +1169,74 @@ export class Ledger {
     const coupon = amountTx * conv;
     const { values, principal, anchors } = accruedLotValues(this.ctx, inst, b.lots, day);
     const since = values.map((v, i) => Math.max(0, v - (principal[i] ?? v)));
-    let units = totalQ;
-    if (num(tx.quantity) > 0) units = num(tx.quantity);
-    else {
-      const accrued = since.reduce((s, x) => s + x, 0);
-      const cands = this.unitsBeforePayment(tx, inst.id, day, totalQ);
-      if (cands.length > 1 && accrued > 0) {
-        const per = accrued / totalQ;
-        let err = Math.abs(Math.log(coupon / (totalQ * per)));
-        for (const c of cands) {
-          if (!(c > 0)) continue;
-          const e = Math.abs(Math.log(coupon / (c * per)));
+    const lots = b.lots;
+    const ent = lots.map((l) => l.quantity);
+    // per-unit interest of the lot that accrued the longest since its anchor
+    const periodPerUnit = (): { p: number; pStart: number; ref: number } => {
+      let p = 0;
+      let pStart = day;
+      let ref = -1;
+      lots.forEach((l, i) => {
+        if (!((ent[i] as number) > 0) || !(l.quantity > 0)) return;
+        const per = (since[i] as number) / l.quantity;
+        if (per > p) {
+          p = per;
+          pStart = anchors[i] as number;
+          ref = i;
+        }
+      });
+      return { p, pStart, ref };
+    };
+    let units: number;
+    if (num(tx.quantity) > 0) {
+      units = num(tx.quantity);
+      if (units < totalQ - QTY_EPS) {
+        // the newest units were bought after the record date
+        let notEntitled = totalQ - units;
+        const order = lots.map((_, i) => i).sort((x, y) => (lots[y] as LotState).openDay - (lots[x] as LotState).openDay);
+        for (const i of order) {
+          if (notEntitled <= 0) break;
+          const take = Math.min(notEntitled, ent[i] as number);
+          ent[i] = (ent[i] as number) - take;
+          notEntitled -= take;
+        }
+      }
+    } else {
+      // Lots bought in the 15 days before payment: entitled when bought at a dirty price (closer
+      // to the older lots' value with accrued interest than to their value at the anchor).
+      const { ref } = periodPerUnit();
+      const rl = ref >= 0 ? (lots[ref] as LotState) : undefined;
+      let excluded = 0;
+      if (rl) {
+        const a0 = (principal[ref] as number) / rl.quantity;
+        lots.forEach((l, i) => {
+          if (i === ref || l.anchorDay !== undefined || l.openDay <= day - 15 || l.openDay <= (anchors[ref] as number)) return;
+          const f = accrualFactor(this.ctx, inst, anchors[ref] as number, l.openDay) ?? 1;
+          if (!(f > 1)) return;
+          if (l.unitValue - a0 < ((f - 1) * a0) / 2) {
+            excluded += l.quantity;
+            ent[i] = 0;
+          }
+        });
+      }
+      const E = totalQ - excluded;
+      units = E;
+      // units sold between the record date and the payment (sold ex-coupon)
+      const { p } = periodPerUnit();
+      const cands = this.unitsBeforePayment(tx, inst.id, day, totalQ).map((c) => c - totalQ).filter((x) => x > QTY_EPS);
+      if (cands.length && p > 0) {
+        let err = Math.abs(Math.log(coupon / (E * p)));
+        for (const extra of cands) {
+          const e = Math.abs(Math.log(coupon / ((E + extra) * p)));
           if (e < err - 1e-6) {
             err = e;
-            units = c;
+            units = E + extra;
           }
         }
       }
       if (units !== totalQ) this.diag(tx, day, 'COUPON_RECORD_DATE_UNITS', `${tx.type} of ${amountTx} on ${inst.id} apportioned over the ${units} units held at the record date (${totalQ} held on the payment date)`, 'info');
     }
-    const ent = b.lots.map((l) => l.quantity);
-    if (units < totalQ - QTY_EPS) {
-      // the newest units were bought after the record date
-      let notEntitled = totalQ - units;
-      const order = b.lots.map((_, i) => i).sort((x, y) => (b.lots[y] as LotState).openDay - (b.lots[x] as LotState).openDay);
-      for (const i of order) {
-        if (notEntitled <= 0) break;
-        const take = Math.min(notEntitled, ent[i] as number);
-        ent[i] = (ent[i] as number) - take;
-        notEntitled -= take;
-      }
-    }
-    let p = 0;
-    let pStart = day;
-    b.lots.forEach((l, i) => {
-      if (!((ent[i] as number) > 0) || !(l.quantity > 0)) return;
-      const per = (since[i] as number) / l.quantity;
-      if (per > p) {
-        p = per;
-        pStart = anchors[i] as number;
-      }
-    });
+    const { p, pStart } = periodPerUnit();
     return { values, principal, since, ent, units, totalQ, p, pStart, conv };
   }
 
@@ -1215,7 +1244,7 @@ export class Ledger {
    * Coupon / periodic interest of an accrual instrument (C36): the payment leaves the accrued
    * value and each entitled lot is re-anchored at the payment day, so later accrual, the net value
    * and the redemption at maturity only include interest accrued since the last payment.
-   * - Round 6 (C47/C43): a payment between 70 % and 102 % of the interest accrued over the period
+   * - Round 6 (C47/C43): a payment between 70 % and 98 % of the interest accrued over the period
    *   settles that interest: each lot drops by the full period interest. The shortfall is
    *   withholding or a day-count/rate convention of the issuer, never interest still owed, so no
    *   phantom accrued interest stays (INTEREST_BELOW_ACCRUED, info, when nothing explains it).
@@ -1232,7 +1261,8 @@ export class Ledger {
     const E = plan.ent.reduce((s, x) => s + x, 0);
     const P = plan.p * E;
     const R = P > 1e-12 ? (perUnit * E) / P : Infinity;
-    const settle = R >= 0.7 && R <= 1.02;
+    // within ±2 % the coupon itself is subtracted (as in rounds 4-5); a larger shortfall settles
+    const settle = R >= 0.7 && R < 0.98;
     const spec = inst.accrual;
     const issue = spec?.issueDate && isStrictIsoDate(spec.issueDate) ? isoToDay(spec.issueDate) : -Infinity;
     const periodStart = Math.max(this.lastCoupon.get(inst.id) ?? -Infinity, issue, day - 366);
@@ -1255,7 +1285,7 @@ export class Ledger {
     });
     this.lastCoupon.set(inst.id, day);
     if (excess > 0) this.diag(tx, day, 'COUPON_EXCEEDS_ACCRUED_INTEREST', `${tx.type} of ${grossTx} on ${inst.id} exceeds the interest accrued by ${excess.toFixed(2)} ${inst.currency}; the excess is income and the principal is kept intact — check the amount`, 'warning');
-    if (settle && R < 0.98 && unexplained) {
+    if (settle && unexplained) {
       this.diag(tx, day, 'INTEREST_BELOW_ACCRUED', `${tx.type} of ${grossTx} on ${inst.id} is ${(R * 100).toFixed(1)} % of the ${(P / plan.conv).toFixed(2)} accrued over the period; the difference is treated as withholding or the issuer's day-count convention, not as interest still owed. If the amount is net of withholding, set amountIsNet or taxes`, 'info');
     }
   }

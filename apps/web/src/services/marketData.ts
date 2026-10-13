@@ -11,7 +11,7 @@ import { cacheCorporateActions, cacheQuotes, mergeFxSeries, mergeIndexSeries, me
 import { useApp, type MarketStatus, type SourceStatus } from '../store/app';
 import { addDays, todayIso } from '../lib/ids';
 import { BENCHMARKS } from '../lib/benchmarks';
-import { createHttpMarketClient, type FxRequest, type HistoryRequest, type MarketClient, type SearchResult } from './marketClient';
+import { createHttpMarketClient, MarketDataApiError, type FxRequest, type HistoryRequest, type MarketClient, type SearchResult } from './marketClient';
 import { evaluateAlerts } from './alerts';
 
 let inflight: Promise<void> | null = null;
@@ -116,13 +116,21 @@ export async function buildPlan(today = todayIso()): Promise<Plan> {
   return plan;
 }
 
-export async function refreshMarketData(opts: { force?: boolean } = {}): Promise<void> {
+export function refreshMarketData(opts: { force?: boolean } = {}): Promise<void> {
   if (inflight) return inflight;
-  // Auto refreshes are throttled across reloads using the persisted timestamp.
-  const last = Math.max(lastAuto, useApp.getState().market.lastRefresh ?? 0);
-  if (!opts.force && Date.now() - last < 5 * 60_000) return;
-  lastAuto = Date.now();
-  inflight = doRefresh().finally(() => {
+  inflight = (async () => {
+    // Auto refreshes are throttled across reloads using persisted timestamps. Failed attempts
+    // count too and a 429 backs off longer: reloading must not hammer the server (W28).
+    if (!opts.force) {
+      const lastAttempt = ((await db.meta.get('lastAttempt'))?.value as number | undefined) ?? 0;
+      const backoffUntil = ((await db.meta.get('refreshBackoffUntil'))?.value as number | undefined) ?? 0;
+      const last = Math.max(lastAuto, useApp.getState().market.lastRefresh ?? 0);
+      if (Date.now() - last < 5 * 60_000 || Date.now() - lastAttempt < 2 * 60_000 || Date.now() < backoffUntil) return;
+    }
+    lastAuto = Date.now();
+    await db.meta.put({ key: 'lastAttempt', value: lastAuto });
+    await doRefresh();
+  })().finally(() => {
     inflight = null;
   });
   return inflight;
@@ -191,11 +199,11 @@ async function doRefresh(): Promise<void> {
           bump(r.data.series.source || 'fx', true);
         } else bump('fx', false, r.error.message);
       }
-      for (const r of res.indices ?? []) {
+      for (const [k, r] of (res.indices ?? []).entries()) {
         if (r.ok) {
           await mergeIndexSeries(r.data.series);
           bump(`idx_${r.data.series.id}`, true);
-        } else bump('indices', false, r.error.message);
+        } else bump(`idx_${plan.indices[i + k]?.id ?? 'unknown'}`, false, r.error.message); // W27: name the index
       }
       const quotes = res.quotes.flatMap((q, k) =>
         q.ok
@@ -218,10 +226,17 @@ async function doRefresh(): Promise<void> {
     const now = Date.now();
     const status: MarketStatus = failed.length ? 'partial' : 'ok';
     await persistStatus(status, sources, now);
-    setMarket({ status, lastRefresh: now, sources, failedSymbols: failed });
+    setMarket({ status, lastRefresh: now, sources, failedSymbols: failed, error: undefined });
     void evaluateAlerts();
   } catch (e) {
-    setMarket({ status: 'offline', sources: { server: { ok: false, message: String(e) } } });
+    const status = e instanceof MarketDataApiError ? e.status : undefined;
+    const code = e instanceof MarketDataApiError ? e.code : undefined;
+    const message = e instanceof Error ? e.message : String(e);
+    if (status === 429) {
+      const retry = Number((e as MarketDataApiError).details && ((e as MarketDataApiError).details as { retryAfter?: number }).retryAfter) || 300;
+      await db.meta.put({ key: 'refreshBackoffUntil', value: Date.now() + retry * 1000 });
+    }
+    setMarket({ status: 'offline', error: { status, code, message }, sources: { server: { ok: false, message } } });
     await persistStatus('offline');
   }
 }

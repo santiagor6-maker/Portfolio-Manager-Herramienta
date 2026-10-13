@@ -70,6 +70,9 @@ test('W2: report prints with colours and every monthly column; snapshot is self-
   await expect(report.locator('table').nth(1).locator('thead th')).toHaveCount(13);
   const heatBg = await report.locator('.heat .c').first().evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(heatBg).not.toBe('rgb(255, 255, 255)');
+  // W23: allocation bars have a visible fill.
+  const fillWidth = await report.locator('.bar .f').first().evaluate((el) => el.getBoundingClientRect().width);
+  expect(fillWidth).toBeGreaterThan(5);
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('report-snapshot').click()]);
   const html = readFileSync((await download.path())!, 'utf8');
   expect(html).toContain('<style>');

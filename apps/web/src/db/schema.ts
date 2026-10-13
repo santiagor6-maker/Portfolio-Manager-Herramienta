@@ -47,6 +47,10 @@ export interface CachedPriceSeries {
   source: ProviderId;
   updatedAt: number;
   isDemo?: boolean;
+  /** Market-data R5: the source covered only part of the last requested range. */
+  partial?: boolean;
+  coverageFrom?: string;
+  coverageTo?: string;
 }
 
 export interface CachedFxSeries {

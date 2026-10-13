@@ -109,7 +109,7 @@ export function InstrumentPicker({
           <span aria-hidden>{flagEmoji(value.country)}</span>
           <span className="font-semibold">{value.symbol}</span>
           <span className="text-muted truncate text-xs flex-1">{value.name}</span>
-          <span className="text-[11px] text-muted">{exchangeLabel(value.exchange)}</span>
+          <span className="chip !h-5 font-medium" data-testid="picked-exchange" title={t('picker.exchange')}>{exchangeLabel(value.exchange)}</span>
           <span className="chip">{value.currency}</span>
         </button>
       ) : (
@@ -186,7 +186,12 @@ export function InstrumentPicker({
                 <span aria-hidden>{flagEmoji(r.country)}</span>
                 <span className="font-semibold w-24 truncate">{r.symbol}</span>
                 <span className="flex-1 truncate text-ink-2">{r.name}</span>
-                <span className="text-[11px] text-muted whitespace-nowrap">{r.origin === 'template' ? t('picker.template') : exchangeLabel(r.exchange)}</span>
+                {r.origin === 'template' ? (
+                  <span className="text-[11px] text-muted whitespace-nowrap">{t('picker.template')}</span>
+                ) : (
+                  // Bare tickers resolve to one market (ECOPETROL → BVC, SAP → Xetra): make it obvious.
+                  <span className="chip !h-5 font-medium whitespace-nowrap" title={t('picker.exchange')}>{exchangeLabel(r.exchange)}</span>
+                )}
                 <span className="chip">{r.currency}</span>
               </li>
             ))}

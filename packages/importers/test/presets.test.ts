@@ -26,7 +26,8 @@ describe('Interactive Brokers — Activity Statement', async () => {
     expect(byLine(r, 29)).toMatchObject({ status: 'skipped' });
     expect(byLine(r, 29).issues[0]!.code).toBe('UNSUPPORTED_ASSET');
     expect(tx(r, 31)).toMatchObject({ type: 'SPLIT', instrumentId: 'XNAS:AAPL', ratio: 2 });
-    expect(byLine(r, 32).issues[0]!.code).toBe('SKIPPED_MOVEMENT');
+    // Cash acquisition (round 4): the position is sold at the cash price.
+    expect(tx(r, 32)).toMatchObject({ type: 'SELL', instrumentId: 'XNYS:XYZ', quantity: 10, price: 10, amount: 100 });
   });
   it('merges withholding into dividends and nets reversals', () => {
     expect(tx(r, 39)).toMatchObject({ type: 'DIVIDEND', instrumentId: 'XNAS:AAPL', amount: 2.3, taxes: 0.69 });
@@ -41,7 +42,7 @@ describe('Interactive Brokers — Activity Statement', async () => {
     expect(tx(r, 54)).toMatchObject({ type: 'INTEREST', amount: 3.12 });
     expect(tx(r, 57)).toMatchObject({ type: 'FEE', amount: 10 });
     expect(tx(r, 58)).toMatchObject({ type: 'FEE', amount: -10 });
-    expect(r.stats).toMatchObject({ imported: 14, errors: 0 });
+    expect(r.stats).toMatchObject({ imported: 15, errors: 0 });
     expect(r.transactions.every((t) => t.source === 'import:ibkr-activity' && t.portfolioId === 'p1')).toBe(true);
   });
 });

@@ -18,7 +18,7 @@ import { parseNumber } from '../numbers';
 import type { DraftTransaction, ParsedRow } from '../types';
 import { normalizeText, round } from '../util';
 import type { ParseContext } from '../presets/common';
-import type { PdfDocument, PdfLine } from './extract';
+import type { PdfDocument, PdfItem, PdfLine } from './extract';
 import { B3_BDR_MULTICLASS, B3_BDR_PREGAO, B3_DATED_ROOTS, B3_ETF_PREGAO, B3_FII_PREGAO, B3_PREGAO_ROOTS, BDR_CLASSES, CLASS_DIGIT, SPEC_MARKS, normName, suggestB3Names } from './b3-names';
 
 export { B3_PREGAO_ROOTS, B3_ETF_PREGAO, B3_FII_PREGAO, B3_BDR_PREGAO, B3_BDR_MULTICLASS } from './b3-names';
@@ -122,7 +122,7 @@ export interface SinacorTrade {
 const OBS_RE = /\s+(#|D|F|T|@|2|8|B|C|H|X|P|Y|L|A|I)$/i;
 
 /** Parse one "Negócios realizados" line; undefined when it is not a trade line. */
-export function parseTradeLine(text: string, lineIndex: number): SinacorTrade | undefined {
+export function parseTradeLine(text: string, lineIndex: number, columnObs?: string): SinacorTrade | undefined {
   const t = normalizeText(text).toUpperCase();
   const raw = text.trim();
   const m = /^(?:(?:\d+\s+)?BOVESPA\s+|B3 RV LISTADO\s+)?([CV])\s+(.*)$/.exec(t);
@@ -144,9 +144,10 @@ export function parseTradeLine(text: string, lineIndex: number): SinacorTrade | 
   let wi = words.findIndex((w) => w === 'C' || w === 'V') + 1 + marketWords;
   if (/^\d{2}\/\d{2}$/.test(words[wi] ?? '')) wi++;
   let spec = head.slice(words.slice(0, wi).join(' ').length).trim();
-  let obs = '';
+  let obs = columnObs ?? '';
   let mo: RegExpExecArray | null;
-  while ((mo = OBS_RE.exec(spec))) {
+  // Without the Obs column position, trailing single markers are stripped by pattern.
+  while (columnObs === undefined && (mo = OBS_RE.exec(spec))) {
     obs = mo[1]!.toUpperCase() + obs;
     spec = spec.slice(0, mo.index).trim();
   }
@@ -201,10 +202,44 @@ export interface SinacorNote {
 
 const DATE_RE = /(\d{2}\/\d{2}\/\d{4})/;
 
+/** Broker name: a cell of the line that names a brokerage (not the "NOTA DE NEGOCIAÇÃO" title beside it). */
+function brokerCell(l: PdfLine | undefined): string | undefined {
+  if (!l) return undefined;
+  const c = l.cells.find((x) => BROKER_RE.test(x) && !/nota|ouvidoria|sac\b|e-mail|internet/i.test(x) && x.length < 90);
+  return c?.trim();
+}
+const OBS_ITEM_RE = /^[#DFTC@28BHXPYLAI]{1,3}$/i;
+
+/** Join items like itemsToLines does (space when there is a gap). */
+function joinItems(items: { x: number; w: number; str: string }[]): string {
+  let text = '';
+  let prevEnd = -Infinity;
+  for (const it of items) {
+    const s = it.str.trim();
+    if (!s) continue;
+    const gap = it.x - prevEnd;
+    text += text ? (gap > 12 ? `  ${s}` : gap > 1 ? ` ${s}` : s) : s;
+    prevEnd = it.x + it.w;
+  }
+  return text;
+}
+
+/**
+ * Trade line with the Obs (*) column taken by position when the column header was seen: a letter
+ * printed in the specification column ("ALPHABET DRN C") stays in the specification.
+ */
+function tradeFromLine(l: PdfLine, i: number, obsRange: [number, number] | undefined): SinacorTrade | undefined {
+  if (!obsRange) return parseTradeLine(l.text, i);
+  const inObs = (it: PdfItem) => it.x >= obsRange[0] && it.x < obsRange[1] && OBS_ITEM_RE.test(it.str.trim());
+  const obs = l.items.filter(inObs).map((it) => it.str.trim().toUpperCase()).join('');
+  return parseTradeLine(joinItems(l.items.filter((it) => !inObs(it))), i, obs);
+}
+
 export function parseSinacor(doc: PdfDocument): SinacorNote[] {
   const notes = new Map<string, SinacorNote>();
   let current: SinacorNote | undefined;
   let inTrades = false;
+  let obsRange: [number, number] | undefined;
   let broker: string | undefined;
   const lines = doc.lines;
   const open = (nr: string, i: number, date: string | undefined) => {
@@ -214,17 +249,18 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
       notes.set(nr, current);
     }
     if (date && !current.date) current.date = parseDate(date, 'DMY');
-    // The broker name is printed just below the header block on each page.
-    const below = lines.slice(i + 1, i + 10).find((x) => BROKER_RE.test(x.text) && !/nota/i.test(x.text));
-    if (below) current.broker = below.text.replace(/\s{2,}.*/, '').trim();
+    // The broker name is printed beside / below the header block on each page.
+    const near = lines.slice(Math.max(0, i - 4), i + 10).map(brokerCell).find(Boolean);
+    if (near) current.broker = near;
     else if (broker && !current.broker) current.broker = broker;
     inTrades = false;
   };
   for (let i = 0; i < lines.length; i++) {
     const l: PdfLine = lines[i]!;
     const text = l.text;
-    if (BROKER_RE.test(text) && !/nota/i.test(text) && text.length < 90) {
-      broker = text.replace(/\s{2,}.*/, '').trim();
+    const bc = brokerCell(l);
+    if (bc) {
+      broker = bc;
       if (current && !current.broker) current.broker = broker;
     }
     if (/nr\.?\s*(da\s*)?nota/i.test(text) && !/neg[oó]cios/i.test(text)) {
@@ -238,10 +274,20 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
         continue;
       }
       if (/data\s*preg/i.test(text)) {
-        const next = lines[i + 1]?.text ?? '';
-        const nr = /(\d{1,12})/.exec(next)?.[1] ?? `nota${i}`;
-        open(nr, i, DATE_RE.exec(next)?.[1]);
-        i++;
+        // Values sit under their labels: match by x position (other text may share the lines).
+        const nrLabel = l.items.find((it) => /^nr\.?/i.test(it.str.trim()));
+        const dtLabel = l.items.find((it) => /^data\s*preg/i.test(it.str.trim()) || /preg[aã]o/i.test(it.str));
+        const under = (label: PdfItem | undefined, re: RegExp) => {
+          if (!label) return undefined;
+          for (const nl of lines.slice(i + 1, i + 4)) {
+            const hit = nl.items.find((it) => Math.abs(it.x - label.x) <= 20 && re.test(it.str.trim()));
+            if (hit) return re.exec(hit.str.trim())![1];
+          }
+          return undefined;
+        };
+        const nr = under(nrLabel, /^(\d{1,12})$/) ?? /(\d{1,12})/.exec(lines[i + 1]?.text ?? '')?.[1] ?? `nota${i}`;
+        const date = under(dtLabel, /^(\d{2}\/\d{2}\/\d{4})$/) ?? DATE_RE.exec(lines[i + 1]?.text ?? '')?.[1];
+        open(nr, i, date);
         continue;
       }
     }
@@ -253,7 +299,14 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
     }
     if (/resumo dos neg[oó]cios|resumo financeiro/i.test(text)) inTrades = false;
     if (inTrades) {
-      const tr = parseTradeLine(text, i);
+      // Column header: remember where the Obs (*) column sits.
+      if (/especifica/i.test(text) && /obs/i.test(text)) {
+        const obsItem = l.items.find((it) => /^obs/i.test(it.str.trim()));
+        const qtyItem = l.items.find((it) => /^quantidade/i.test(it.str.trim()));
+        obsRange = obsItem && qtyItem && qtyItem.x > obsItem.x ? [obsItem.x - 3, qtyItem.x - 2] : undefined;
+        continue;
+      }
+      const tr = tradeFromLine(l, i, obsRange);
       if (tr) current.trades.push(tr);
       continue;
     }
@@ -283,11 +336,39 @@ function allocate(total: number, weights: number[]): number[] {
   });
 }
 
+const NOTE_PREFIX = /^Nota \S+$/;
+
+/**
+ * Specification → instrument id learned from the user's earlier SINACOR imports (I30): every imported
+ * trade keeps its specification in the note ("Nota 123 · GERDAU MET PN N1"), so an answer given once
+ * (securityMap) is reused by every later note without storing anything else. Conflicting answers and
+ * dated names (NATURA) are not learned.
+ */
+export function securityMapFromTransactions(transactions: { note?: string; instrumentId?: string; source?: string }[]): Record<string, string> {
+  const seen = new Map<string, Set<string>>();
+  for (const t of transactions) {
+    if (!t.instrumentId || !t.note || (t.source && !/nota/.test(t.source))) continue;
+    const parts = t.note.split(' · ');
+    if (parts.length < 2 || !NOTE_PREFIX.test(parts[0]!)) continue;
+    const spec = parts[1]!;
+    if (!spec || spec === 'day trade') continue;
+    const k = normalizeText(spec);
+    const { tokens, clsIdx } = splitSpec(spec);
+    if (clsIdx > 0 && B3_DATED_ROOTS[normName(tokens.slice(0, clsIdx).join(' '))]) continue;
+    seen.set(k, (seen.get(k) ?? new Set()).add(t.instrumentId));
+  }
+  const out: Record<string, string> = {};
+  for (const [k, ids] of seen) if (ids.size === 1) out[k] = [...ids][0]!;
+  return out;
+}
+
 export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] {
   ctx.dateFormat = 'DMY';
   ctx.numberFormat = 'comma';
   const rows: ParsedRow[] = [];
   const map = new Map(Object.entries(ctx.options.securityMap ?? {}).map(([k, v]) => [normalizeText(k), v]));
+  const learned = new Map(Object.entries(securityMapFromTransactions(ctx.options.existingTransactions ?? [])));
+  const extra = catalogNames(ctx.options.catalog);
   const notes = parseSinacor(doc);
   if (!notes.length) ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: '?' }));
   for (const note of notes) {
@@ -313,13 +394,18 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
         row.issues.push(ctx.issue('INVALID_DATE', 'error', { value: '' }, row.line));
         continue;
       }
-      const mapped = map.get(normalizeText(tr.spec));
-      const ticker = mapped ? undefined : sinacorTicker(tr.spec);
+      // Order: the user's explicit answers, the certain tables, then what was learned from earlier notes.
+      const specKey = normalizeText(tr.spec);
+      const res = map.has(specKey) ? undefined : resolveSpec(tr.spec, note.date, extra);
+      const mapped = map.get(specKey) ?? (res?.ticker ? undefined : learned.get(specKey));
+      const ticker = mapped ? undefined : res?.ticker;
       if (!mapped && !ticker) {
-        row.issues.push(ctx.issue('UNKNOWN_SECURITY', 'error', { spec: tr.spec }, row.line));
-        ctx.askSecurity(tr.spec, row.line, sinacorSuggestions(tr.spec));
+        const code = res?.reason === 'bdr_class' || res?.reason === 'multiclass' ? 'BDR_CLASS_UNCERTAIN' : 'UNKNOWN_SECURITY';
+        row.issues.push(ctx.issue(code, 'error', { spec: tr.spec }, row.line));
+        ctx.askSecurity(tr.spec, row.line, res?.suggestions ?? []);
         continue;
       }
+      if (mapped && learned.get(specKey) === mapped && !map.has(specKey)) row.issues.push(ctx.issue('SECURITY_LEARNED', 'info', { spec: tr.spec, id: mapped }, row.line));
       const d: DraftTransaction = {
         date: note.date,
         type: tr.side === 'C' ? 'BUY' : 'SELL',
@@ -330,7 +416,7 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
         instrument: mapped
           ? { ...(mapped.includes(':') ? { id: mapped } : { symbol: mapped, exchange: 'BVMF' }), name: tr.spec, currency: 'BRL' }
           : { symbol: ticker!, exchange: 'BVMF', currency: 'BRL', name: tr.spec },
-        note: `Nota ${note.number}${tr.dayTrade ? ' · day trade' : ''}`,
+        note: `Nota ${note.number} · ${tr.spec}${tr.dayTrade ? ' · day trade' : ''}`,
         // Two notes may contain identical trades: the note number makes them distinct.
         brokerRef: `nota:${note.number}:${tr.lineIndex}`,
       };

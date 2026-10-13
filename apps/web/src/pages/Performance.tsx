@@ -163,7 +163,11 @@ export default function PerformancePage() {
           value={<Pct value={risk?.maxDrawdown} colored />}
           sub={<span className="text-xs text-muted">{risk?.maxDrawdownStart ? `${formatMonth(risk.maxDrawdownStart, f.locale)} → ${risk.maxDrawdownEnd ? formatMonth(risk.maxDrawdownEnd, f.locale) : '…'}` : '—'}</span>}
         />
-        <Kpi loading={loading} label="Sharpe" value={<span className="num">{ratio(risk?.sharpe, f.locale)}</span>} sub={<span className="text-xs text-muted">{t('perf.sharpeSub')}</span>} />
+        <Kpi loading={loading} label="Sharpe" value={<span className="num">{ratio(risk?.sharpe, f.locale)}</span>} sub={
+            <span className="text-xs text-muted" data-testid="risk-free">
+              {t('perf.riskFreeUsed', { rate: formatPct(a?.riskFree?.rate, f.locale), source: a?.riskFree && a.riskFree.source !== 'setting' ? indexName(a.riskFree.source) : t('perf.riskFreeSetting') })}
+            </span>
+          } />
         <Kpi loading={loading} label="Sortino" value={<span className="num">{ratio(risk?.sortino, f.locale)}</span>} sub={<span className="text-xs text-muted">{t('perf.sortinoSub')}</span>} />
         <Kpi loading={loading} label={t('perf.beta')} value={<span className="num">{ratio(risk?.beta, f.locale)}</span>} sub={<span className="text-xs text-muted">{t('perf.correlation')}: {ratio(risk?.correlation, f.locale)}</span>} />
         <Kpi loading={loading} label={t('monthly.positiveMonths')} value={<Pct value={risk?.positiveMonthsRatio} decimals={0} />} sub={<span className="text-xs text-muted">{t('monthly.monthsCount', { count: months })}</span>} />

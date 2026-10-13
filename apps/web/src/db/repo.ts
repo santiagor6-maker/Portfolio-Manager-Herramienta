@@ -40,6 +40,8 @@ export interface AppSettings {
   benchmarks: string[];
   /** Annual risk-free rate (decimal) for Sharpe/Sortino. */
   riskFreeRate: number;
+  /** W29: use the reporting currency's reference rate (IBR, CDI) when loaded; else riskFreeRate. */
+  riskFreeAuto: boolean;
   autoRefresh: boolean;
   /** Monthly table: column preset or explicit column list, and row density. */
   monthlyColumns: string[] | 'essential' | 'complete';
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultCostMethod: 'FIFO',
   benchmarks: BENCHMARK_IDS,
   riskFreeRate: 0.04,
+  riskFreeAuto: true,
   autoRefresh: true,
   monthlyColumns: 'essential',
   density: 'comfortable',
@@ -181,14 +184,31 @@ export async function cachePriceSeries(series: PriceSeries[], isDemo = false): P
 }
 
 /** Merge new points into an existing cached series (new points win on the same date). */
-export async function mergePriceSeries(series: PriceSeries): Promise<void> {
+export async function mergePriceSeries(
+  series: PriceSeries & { partial?: boolean; coverageFrom?: string; coverageTo?: string },
+): Promise<void> {
   const prev = await db.priceSeries.get(series.instrumentId);
   const map = new Map<string, number>();
   // Real data fully replaces synthetic sample series.
   if (prev && !prev.isDemo) for (const p of prev.points) map.set(p.date, p.close);
-  for (const p of series.points) map.set(p.date, p.close);
+  // Points are keyed by their own date: a `carried` seed (last real trade before the requested
+  // window) lands on its real trade date, never inside the window. A carried seed never
+  // overwrites a close already stored for that date.
+  for (const p of series.points as (PriceSeries['points'][number] & { carried?: boolean })[]) {
+    if (p.carried && map.has(p.date)) continue;
+    map.set(p.date, p.close);
+  }
   const points = [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, close]) => ({ date, close }));
-  await db.priceSeries.put({ ...series, points, updatedAt: Date.now(), isDemo: false });
+  const { instrumentId, currency, source } = series;
+  await db.priceSeries.put({
+    instrumentId,
+    currency,
+    source,
+    points,
+    updatedAt: Date.now(),
+    isDemo: false,
+    ...(series.partial ? { partial: true, coverageFrom: series.coverageFrom, coverageTo: series.coverageTo } : {}),
+  });
 }
 
 export async function cacheFxSeries(series: FxSeries[], isDemo = false): Promise<void> {

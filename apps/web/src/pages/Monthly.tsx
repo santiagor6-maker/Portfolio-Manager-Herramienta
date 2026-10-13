@@ -103,6 +103,14 @@ export function resolveColumns(setting: string[] | 'essential' | 'complete'): Co
 export default function MonthlyPage() {
   const { t } = useTranslation();
   const { analysis: a, loading } = useAnalysis();
+  // W22: months whose purchases were funded by an implicit deposit (inflated contributions).
+  const implicitMonths = useMemo(() => new Set((a?.implicitFunding ?? []).map((x) => x.month)), [a]);
+  const implicitBadge = (month: string) =>
+    implicitMonths.has(month) ? (
+      <Link to="/movimientos" className="chip !h-5 !text-[10.5px] !text-warn !border-warn/30 ml-1.5" title={t('diag.code.IMPLICIT_DEPOSIT')} data-testid="implicit-month">
+        {t('diag.implicitMonth')}
+      </Link>
+    ) : null;
   const f = useFmt();
   const settings = useApp((s) => s.settings);
   const setSetting = useApp((s) => s.setSetting);
@@ -389,6 +397,7 @@ export default function MonthlyPage() {
                                 <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} compact />
                               </span>
                             ) : null}
+                            {implicitBadge(r.month)}
                             {(r.partial || r.month === currentMonth) && <span className="block text-[10.5px] font-normal text-muted leading-tight">{t('monthly.inProgress')}</span>}
                           </td>
                           {cols.map((c) => (
@@ -430,6 +439,7 @@ export default function MonthlyPage() {
                               <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} />
                             </span>
                           ) : null}
+                          {implicitBadge(r.month)}
                         </div>
                         <div className="text-xs text-muted">
                           <Money value={r.endValueBase} /> · <Money value={r.gainBase} signed />

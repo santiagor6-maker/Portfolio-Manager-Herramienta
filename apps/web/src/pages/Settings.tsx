@@ -77,6 +77,9 @@ function Preferences() {
             <option value="LIFO">LIFO</option>
           </select>
         </Field>
+        <label className="sm:col-span-2 flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={s.riskFreeAuto} onChange={(e) => set('riskFreeAuto', e.target.checked)} /> {t('settings.riskFreeAuto')}
+        </label>
         <Field label={t('settings.riskFree')} htmlFor="s-rf" hint={t('settings.riskFreeHint', { value: formatPct(s.riskFreeRate, f.locale) })}>
           <input
             id="s-rf"

@@ -13,7 +13,9 @@ describe('validateTxDraft', () => {
     const { errors } = validateTxDraft({ ...base, instrument: undefined, quantity: 0, price: undefined }, ctx);
     expect(errors.instrument).toBe('validation.instrument');
     expect(errors.quantity).toBe('validation.positive');
-    expect(errors.price).toBe('validation.nonNegative');
+    expect(errors.price).toBe('validation.required');
+    // W25: a negative price says so; an empty quantity is "required".
+    expect(validateTxDraft({ ...base, price: -1, quantity: undefined }, ctx).errors).toMatchObject({ price: 'validation.nonNegative', quantity: 'validation.required' });
   });
   it('warns when selling more than held and on future dates', () => {
     const { warnings } = validateTxDraft({ ...base, type: 'SELL', quantity: 20, date: '2027-01-01' }, { ...ctx, heldQuantity: 10 });

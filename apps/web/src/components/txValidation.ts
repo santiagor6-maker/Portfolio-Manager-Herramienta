@@ -48,10 +48,16 @@ export function validateTxDraft(d: TxDraft, ctx: { today: string; heldQuantity?:
   if (!d.currency || !/^[A-Z]{3}$/.test(d.currency)) errors.currency = 'validation.currency';
   if (NEEDS_INSTRUMENT.includes(d.type) && !d.instrument) errors.instrument = 'validation.instrument';
   if (NEEDS_QTY_PRICE.includes(d.type)) {
-    if (!(d.quantity !== undefined && d.quantity > 0)) errors.quantity = 'validation.positive';
-    if (d.price === undefined || d.price < 0) errors.price = 'validation.nonNegative';
+    // W25: an empty field is "required", a wrong value says what is wrong with it.
+    if (d.quantity === undefined) errors.quantity = 'validation.required';
+    else if (!(d.quantity > 0)) errors.quantity = 'validation.positive';
+    if (d.price === undefined) errors.price = 'validation.required';
+    else if (d.price < 0) errors.price = 'validation.nonNegative';
   }
-  if (NEEDS_AMOUNT.includes(d.type) && !(d.amount !== undefined && d.amount > 0)) errors.amount = 'validation.positive';
+  if (NEEDS_AMOUNT.includes(d.type)) {
+    if (d.amount === undefined) errors.amount = 'validation.required';
+    else if (!(d.amount > 0)) errors.amount = 'validation.positive';
+  }
   if (NEEDS_RATIO.includes(d.type) && !(d.ratio !== undefined && d.ratio > 0)) errors.ratio = 'validation.positive';
   if (d.type === 'FX_CONVERSION') {
     if (!d.toCurrency || !/^[A-Z]{3}$/.test(d.toCurrency)) errors.toCurrency = 'validation.currency';

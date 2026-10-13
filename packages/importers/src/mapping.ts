@@ -151,6 +151,14 @@ export function suggestMappingFromHeaders(headers: string[]): Omit<MappingSugges
       columns[c.field] = [...(Array.isArray(prev) ? prev : prev !== undefined ? [prev] : []), c.column];
     } else columns[c.field] = c.column;
   }
+  // Statements without an operation column describe the movement in "Descripción" ("Compra acciones",
+  // "Dividendo en efectivo", "GMF 4x1000") next to a separate security column: that text is the type.
+  if (columns.type === undefined && columns.name !== undefined && columns.symbol !== undefined && /descrip|detalle|concepto|glosa|historico|histórico/i.test(headers[columns.name as number] ?? '')) {
+    columns.type = columns.name;
+    delete columns.name;
+    const f = chosen.find((c) => c.field === 'name');
+    if (f) f.field = 'type';
+  }
   const missing: MappingField[] = [];
   if (columns.date === undefined) missing.push('date');
   if (columns.type === undefined && columns.quantity === undefined && columns.amount === undefined && columns.netAmount === undefined) {

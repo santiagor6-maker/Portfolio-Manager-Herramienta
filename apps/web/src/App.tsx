@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { setLanguage } from './i18n';
 import { Layout } from './components/Layout';
 import { useApp } from './store/app';
 import { useAnalysisDriver } from './hooks/useData';
@@ -43,7 +44,7 @@ function Effects() {
   const language = useApp((s) => s.settings.language);
   useAnalysisDriver();
   useEffect(() => {
-    if (i18n.language !== language) void i18n.changeLanguage(language);
+    if (i18n.language !== language) void setLanguage(language);
     document.documentElement.lang = language;
   }, [language, i18n]);
   return null;

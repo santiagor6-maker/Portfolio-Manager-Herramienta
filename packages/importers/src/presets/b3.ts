@@ -198,7 +198,7 @@ export const b3MovimentacaoPreset: PresetDefinition = {
         // Incorporação / cisão / conversão: collect legs for the corporate-action wizard.
         let ca = ctx.corporateActions.find((x) => x.date === date && x.kind === rule.action);
         if (!ca) {
-          ca = { line: row.line, date, kind: rule.action, description: movement, legs: [] };
+          ca = { line: row.line, date, kind: rule.action, description: movement, legs: [], currency: 'BRL' };
           ctx.corporateActions.push(ca);
         }
         const leg: (typeof ca.legs)[number] = { direction: credit ? 'in' : 'out' };

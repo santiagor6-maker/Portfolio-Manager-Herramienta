@@ -17,6 +17,8 @@ export interface MarketState {
   lastRefresh?: number;
   sources: Record<string, SourceStatus>;
   failedSymbols: string[];
+  /** Last server error (W28): HTTP status and API code, e.g. 403 FORBIDDEN_ORIGIN, 429 RATE_LIMITED. */
+  error?: { status?: number; code?: string; message: string };
 }
 
 interface AppState {

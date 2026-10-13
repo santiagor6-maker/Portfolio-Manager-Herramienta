@@ -4,6 +4,7 @@
  * and PDF tables.
  */
 import type { AssetClass, TransactionType } from '@pm/core';
+import { parseDate } from '../dates';
 import { findHeaderRow } from '../mapping';
 import { exchangeCurrency } from '../markets';
 import { isAmbiguousNumber, parseNumber, parseRatio } from '../numbers';
@@ -49,7 +50,15 @@ export interface GenericParseOptions {
   /** Formats known for this source: skip detection. */
   fixedDateFormat?: boolean;
   fixedNumberFormat?: boolean;
+  /**
+   * The table was rebuilt from a statement's text (PDF): lines whose date cell is not a date are page
+   * headers, footers, legal notes or wrapped text — never movements — and are skipped, not errors.
+   */
+  statementLines?: boolean;
 }
+
+/** Opening / closing balance lines inside a movements table ("SALDO ANTERIOR", "Saldo final"). */
+const BALANCE_RE = /^(saldo|balance)\s*(anterior|inicial|final|al corte|a la fecha|disponible|en efectivo|del periodo|anterior en efectivo|de apertura|de cierre|opening|closing)?\b/i;
 
 export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: ColumnMapping, gopts: GenericParseOptions = {}): ParsedRow[] {
   const headerRow = mapping.headerRow ?? findHeaderRow(table);
@@ -150,6 +159,15 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const dateCell = cell(raw, c.date);
     if (cellToString(dateCell) === '' && !hasNumbers) {
       row.skipped = true; // section titles / spacer rows
+      continue;
+    }
+    if (gopts.statementLines && !(dateCell instanceof Date) && !parseDate(cellToString(dateCell), ctx.dateFormat) && !parseDate(cellToString(dateCell), 'YMD')) {
+      ctx.skip(row, 'NOT_A_MOVEMENT', { value: raw.map((x) => cellToString(x)).filter(Boolean).join(' ').slice(0, 60) });
+      continue;
+    }
+    const descText = [str(raw, c.type), str(raw, c.note), str(raw, c.name)].find((x) => x) ?? '';
+    if (BALANCE_RE.test(normalizeText(descText)) && !str(raw, c.symbol)) {
+      ctx.skip(row, 'BALANCE_ROW', { value: descText.slice(0, 40) });
       continue;
     }
     const date = ctx.date(dateCell, row);

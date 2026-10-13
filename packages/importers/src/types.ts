@@ -109,6 +109,12 @@ export interface DraftTransaction {
   deltaShares?: number;
   /** Excluded from cross-source duplicate checks (e.g. synthetic rows). */
   noDuplicateCheck?: boolean;
+  /**
+   * Already-finalized transactions re-entering the pipeline (server inbox, other apps): keep their
+   * id, source and importHash so re-imports and cross-source checks see the same identity, and carry
+   * fields the importer does not build itself (subtype, targetInstrumentId, costFraction…).
+   */
+  keep?: { id?: string; source?: string; importHash?: string; fields?: Partial<Transaction> };
 }
 
 export interface ParsedRow {
@@ -284,6 +290,46 @@ export interface CorporateActionSuggestion {
   kind: 'merger' | 'spinoff' | 'conversion' | 'symbol_change' | 'other';
   description: string;
   legs: { symbol?: string; name?: string; quantity?: number; direction: 'in' | 'out' }[];
+  /** Parsed by the preset when the broker says it: the security that gives (parent) and receives (target). */
+  parent?: InstrumentHint;
+  target?: InstrumentHint;
+  /** New shares per old share, when stated ("SPINOFF 1 FOR 4" → 0.25). */
+  ratio?: number;
+  /** Shares of the target received (to derive the ratio from the parent position). */
+  receivedQuantity?: number;
+  currency?: CurrencyCode;
+  /** Account the event belongs to (IBKR U-number). */
+  account?: string;
+  /**
+   * Ready-to-confirm transaction for @pm/core (I33): SPLIT with subtype SPINOFF / MERGER / TICKER_CHANGE,
+   * `targetInstrumentId`, `ratio` and (spin-off) `costFraction` pre-filled. The UI shows it and confirms
+   * with one click by passing `acceptCorporateActions: [line]` (plus `corporateActionAnswers` for
+   * anything in `missing`). `applied` = it is already in `transactions`.
+   */
+  proposal?: CorporateActionProposal;
+}
+
+export interface CorporateActionProposal {
+  /** Absent while the parent or target is unknown. */
+  transaction?: Transaction;
+  /** Instruments the transaction needs that the portfolio does not have yet (e.g. the spun-off company). */
+  instruments: Instrument[];
+  /** Where the cost fraction comes from: the user's answer, or market values on the ex-date (referencePrice). */
+  costFractionSource?: 'answer' | 'market';
+  /** Data still needed before it can be applied ('parent', 'ratio', 'costFraction'). */
+  missing: ('parent' | 'target' | 'ratio' | 'costFraction')[];
+  applied: boolean;
+  /** The same event was imported before (same importHash): nothing to do. */
+  alreadyImported?: boolean;
+}
+
+/** User answers for a corporate-action proposal, by row line. */
+export interface CorporateActionAnswer {
+  costFraction?: number;
+  ratio?: number;
+  /** Instrument id of the parent (B3 cisão rows only name the received company). */
+  parentId?: string;
+  targetId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +441,10 @@ export interface ImportOptions {
    * 'all' accepts every possible duplicate, or pass the line numbers the user accepted.
    */
   acceptDuplicates?: 'none' | 'in-file' | 'all' | number[];
+  /** Apply the proposed corporate-action transactions (spin-offs, mergers) of these lines, or all complete ones. */
+  acceptCorporateActions?: 'all' | number[];
+  /** Answers that complete corporate-action proposals (cost fraction, ratio, parent), by line. */
+  corporateActionAnswers?: Record<number, CorporateActionAnswer>;
   /** Instrument catalog (e.g. `CATALOG.instruments` from @pm/market-data) for ISIN/symbol → exchange. */
   catalog?: Instrument[];
   /** User answers: ticker or spec → instrument id or MIC (e.g. `{ 'PETROBRAS PN N2': 'BVMF:PETR4', SAN: 'XMAD' }`). */

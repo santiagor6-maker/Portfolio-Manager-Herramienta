@@ -36,8 +36,7 @@ test('IBKR Flex: connect, errors, daily inbox through the import preview', async
   await card.getByText('¿Dónde consigo el token y el id?').click();
   await card.getByLabel('Token Flex').fill('123456789012345678901234');
   await card.getByLabel('Id de la consulta Flex (Activity)').fill('987654');
-  await card.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${SHOTS}/ibkr-connect.png`, fullPage: true });
+  await card.screenshot({ path: `${SHOTS}/ibkr-connect.png` });
 
   // 503: the server has no SYNC_SECRET.
   await card.getByRole('button', { name: 'Conectar' }).click();
@@ -54,5 +53,6 @@ test('IBKR Flex: connect, errors, daily inbox through the import preview', async
   await expect(page.getByTestId('import-preview')).toBeVisible();
   await page.getByTestId('import-confirm').click();
   await expect(page.getByText(/1 movimiento importado/)).toBeVisible();
-  await expect.poll(() => calls.some((c) => c.method === 'DELETE' && c.url.includes('/inbox?portfolioId='))).toBe(true);
+  // Acknowledged by id, so rows the daily job adds meanwhile stay in the inbox.
+  await expect.poll(() => calls.find((c) => c.method === 'DELETE' && c.url.includes('/inbox?portfolioId='))?.body).toEqual({ ids: ['ibkr-1'] });
 });

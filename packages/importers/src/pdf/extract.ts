@@ -12,6 +12,8 @@ export interface PdfItem {
   y: number;
   w: number;
   str: string;
+  /** Font size (from the text matrix), when known. */
+  size?: number;
 }
 
 export interface PdfLine {
@@ -66,10 +68,14 @@ export function itemsToLines(page: number, items: PdfItem[]): PdfLine[] {
     let prevEnd = -Infinity;
     let cur = '';
     let curX = 0;
+    // Column gap relative to the font size: small fonts (6-7 pt statements) sit in tight columns.
+    const sizes = l.items.map((i) => i.size).filter((x): x is number => !!x && x > 0);
+    const size = sizes.length ? sizes.reduce((a, b) => a + b, 0) / sizes.length : 8;
+    const colGap = Math.max(4, Math.min(12, size * 1.5));
     for (const it of l.items) {
       const gap = it.x - prevEnd;
       const s = it.str.trim();
-      if (cur && gap > 12) {
+      if (cur && gap > colGap) {
         cells.push(cur);
         cellX.push([curX, prevEnd]);
         cur = s;
@@ -128,7 +134,8 @@ export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown, passw
     for (const raw of content.items) {
       const it = raw as { str?: string; transform?: number[]; width?: number };
       if (typeof it.str !== 'string' || !it.transform) continue;
-      items.push({ x: it.transform[4]!, y: it.transform[5]!, w: it.width ?? 0, str: it.str });
+      const size = Math.hypot(it.transform[2]!, it.transform[3]!);
+      items.push({ x: it.transform[4]!, y: it.transform[5]!, w: it.width ?? 0, str: it.str, ...(size > 0 ? { size } : {}) });
     }
     lines.push(...itemsToLines(p, items));
   }

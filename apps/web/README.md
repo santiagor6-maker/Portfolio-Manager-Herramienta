@@ -131,7 +131,15 @@ src/
   un caso por brecha W1–W20, incluido `big.csv` (3.000 movimientos).
 - `e2e/live.spec.ts` — actualización real desde el servidor de precios (si está corriendo).
 
-Totales: 54 pruebas unitarias (8 archivos) y 23 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/ibkrSync.test.ts` — sincronización IBKR Flex con `fetch` simulado: conectar, errores
+  503/401/IBKR/red, sincronizar, bandeja diaria con deduplicación y confirmación por `ids`, desconectar,
+  y el token de API nunca va a un respaldo.
+- `e2e/regression-r2.spec.ts` — revisión ronda 2: W21 (la compra del asistente va al portafolio creado,
+  también con enlace directo en frío) y W22 (aporte con fecha y aviso de aporte implícito).
+- `e2e/ibkr-sync.spec.ts` — conectar IBKR contra un servidor simulado, error 503, bandeja → vista previa →
+  confirmar → `DELETE` con `ids`.
+
+Totales: 61 pruebas unitarias (9 archivos) y 27 pruebas e2e (+1 en vivo que se omite sin servidor).
 
 Capturas en `e2e/screenshots/`.
 
@@ -187,3 +195,40 @@ de datos y llama a sus métodos. Se usan: `positionPerformance`, `realTwr` / `pe
 **Otros arreglos de esta ronda.** El cambio de moneda hecho antes de que carguen los ajustes ya no se
 pierde; los diálogos no le quitan el foco a un campo en el que ya se escribe; el asistente de inicio
 no se abre cuando una importación reemplaza el ejemplo.
+
+## Respuesta a la revisión ronda 2
+
+Revisión: `reviews/web-r2.md`. Pruebas en `e2e/regression-r2.spec.ts`, `e2e/regression-r1.spec.ts` (W23)
+y `src/__tests__/`.
+
+| Brecha | Arreglo |
+|---|---|
+| W21 (alta) | El formulario ya no fija el portafolio al abrir: sigue el predeterminado hasta que el usuario elige, y se recalcula cuando carga la lista (enlace directo en frío). Nunca crea un portafolio nuevo si existe uno real y el usuario no eligió «Nuevo portafolio». |
+| W22 (alta) | El asistente pide la fecha del aporte inicial («¿Desde cuándo inviertes?»). Las compras sin efectivo previo aparecen en Diagnóstico como «Compra sin aporte previo» con el monto y un botón «Crear aporte en esa fecha», y la tabla mensual marca esos meses con «Aporte implícito». |
+| W23 | Barras de distribución del Informe con relleno visible (pantalla, PDF y HTML); los rótulos del eje no se cortan. |
+| W24 | Los diagnósticos se muestran con plantillas por código en es/pt/en: símbolo en vez de id interno y montos con formato local. El mensaje técnico del motor queda en el tooltip. |
+| W25 | Precio o cantidad vacíos dicen «Campo obligatorio»; un valor negativo, «No puede ser negativo». |
+| W26 | El cambio del día compara los dos últimos cierres de mercado (sin activos manuales ni de causación). «Mayores movimientos» excluye activos manuales y muestra la fecha de cada fila cuando difieren. |
+| W27 | Un índice que falla aparece con su nombre («Índice IBR») y el impacto (rentabilidad real y «% del índice»). |
+| W28 | El aviso del servidor distingue origen rechazado (403 `FORBIDDEN_ORIGIN`, con el valor para `CORS_ORIGIN`), límite de solicitudes (429), token faltante (401) y otros códigos HTTP. La actualización automática cuenta también los intentos fallidos y espera tras un 429. |
+| W29 | Sharpe y Sortino usan por defecto la tasa de referencia de la moneda (IBR para COP, CDI para BRL, realizada en los últimos 12 meses); se puede desactivar en Ajustes. Rendimiento muestra la tasa usada. |
+| W12 | «Próximos dividendos» proyecta un año adelante los dividendos del proveedor del último año (AAPL, PETR4…), además de los anunciados y del historial propio. |
+| W20 | Portugués e inglés se cargan solo al elegirlos (−74 kB en el primer render); íconos PNG 192/512 y `apple-touch-icon` para iOS. El paquete de gráficos (~690 kB) sigue cargándose en el Resumen. |
+| W10 | Sin cambios: la sincronización sigue siendo por respaldo cifrado e informe HTML. La sincronización con IBKR (abajo) cubre el caso del corredor. |
+
+**Interactive Brokers (Flex).** En Importar, «Conectar Interactive Brokers» guarda el token Flex y el id de
+la consulta en el servidor (`POST /api/sync/ibkr-flex`, `action: save`). El token no queda en el navegador.
+«Sincronizar ahora» pasa por la misma vista previa, deduplicación y confirmación que un archivo. La bandeja
+de la sincronización diaria se revisa al abrir la app (insignia en «Importar») y se confirma por `ids`.
+Errores claros para 503 (sin `SYNC_SECRET`), 401 (falta el token de API, que se configura en Ajustes y no
+entra en los respaldos) y errores de IBKR.
+
+**Otros cambios.**
+- Core ronda 5: etiquetas de los nuevos diagnósticos y aviso «Precio por confirmar / atípico» en el mes y en
+  el resumen de Rendimiento, con «Confirmar precio» (`priceConfirmed`). Al editar un movimiento se conservan
+  `importHash` y `priceConfirmed` (si el precio no cambia).
+- Datos de mercado ronda 5:
+  - el punto `carried` queda en su fecha real y no pisa un cierre existente;
+  - las series `partial` muestran «Datos parciales» en el activo y en «Frescura de datos»;
+  - el buscador muestra la bolsa como etiqueta visible.
+

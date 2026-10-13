@@ -54,8 +54,8 @@ export const REPORT_CSS = `
 .rp .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .rp .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 .rp .bar{display:grid;grid-template-columns:110px 1fr 46px;align-items:center;gap:6px;margin:3px 0;font-size:10.5px}
-.rp .bar .t{height:9px;background:#eef1f5;border-radius:3px;overflow:hidden}
-.rp .bar .f{height:100%;border-radius:3px}
+.rp .bar .t{display:block;height:9px;background:#eef1f5;border-radius:3px;overflow:hidden}
+.rp .bar .f{display:block;height:100%;border-radius:3px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .rp .note{font-size:10px;color:#5f687b}
 .rp .pb{break-before:page}
 @media print{.rp{padding:0;max-width:none}}
@@ -519,6 +519,7 @@ function SvgValueChart({ data, privacy, locale, currency, inflation }: { data: S
   const W = 1000;
   const H = 220;
   const pad = { l: 70, r: 10, t: 10, b: 24 };
+  // Edge labels are anchored inward so the first/last date is never clipped (W23).
   const vals = data.flatMap((d) => [d.valueBase, d.netInvestedBase, d.investedRealBase ?? d.netInvestedBase]);
   const min = Math.min(...vals) * 0.97;
   const max = Math.max(...vals) * 1.02;
@@ -539,7 +540,7 @@ function SvgValueChart({ data, privacy, locale, currency, inflation }: { data: S
         </g>
       ))}
       {xt.map((i) => (
-        <text key={i} x={x(i)} y={H - 6} fontSize="10" textAnchor="middle" fill="#5f687b">
+        <text key={i} x={x(i)} y={H - 6} fontSize="10" textAnchor={i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle'} fill="#5f687b">
           {data[i] ? formatDate(data[i]!.date, locale, 'short') : ''}
         </text>
       ))}

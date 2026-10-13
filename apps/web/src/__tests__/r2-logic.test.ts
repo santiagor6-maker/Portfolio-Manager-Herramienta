@@ -9,7 +9,7 @@ import { ESSENTIAL_COLUMNS, resolveColumns } from '../pages/Monthly';
 import { corporateActionToTransaction } from '../services/importers';
 import { exchangeLabel } from '../lib/exchanges';
 import { fxReferenceName } from '../components/TransactionForm';
-import { resources } from '../i18n';
+import { resources, translationsFor } from '../i18n';
 
 const FIC: Instrument = { id: 'MANUAL:FIC', symbol: 'FIC', name: 'FIC', exchange: 'MANUAL', currency: 'COP', country: 'CO', assetClass: 'fund', pricing: 'manual' };
 const CDT: Instrument = { ...FIC, id: 'MANUAL:CDT', symbol: 'CDT', assetClass: 'fixed_income', accrual: { kind: 'fixed', annualRate: 0.1 } };
@@ -106,10 +106,10 @@ describe('importer corporate events', () => {
 describe('i18n completeness', () => {
   const keys = (o: object, p = ''): string[] =>
     Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' ? keys(v as object, `${p}${k}.`) : [`${p}${k}`]));
-  it('pt and en have exactly the same keys as es', () => {
+  it('pt and en have exactly the same keys as es', async () => {
     const es = keys(resources.es.translation).sort();
-    expect(keys(resources.pt.translation).sort()).toEqual(es);
-    expect(keys(resources.en.translation).sort()).toEqual(es);
+    expect(keys(await translationsFor('pt')).sort()).toEqual(es);
+    expect(keys(await translationsFor('en')).sort()).toEqual(es);
   });
 });
 

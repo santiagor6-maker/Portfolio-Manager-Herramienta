@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 193 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5, 18 ronda 6)
+npx vitest run packages/tax      # 214 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5, 18 ronda 6, 21 ronda 7)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -307,3 +307,16 @@ se muestra, pero se retiene la parte que depende de ese costo hasta que el usuar
 Las opciones nuevas (`transferBasis`, `confirmedTransfers`, `transferMaxLateDays`) llegan al ruteo
 de cripto desde `brazilCryptoReport`, `brazilForeignAnnualReport`, `brazilBensDireitos` y
 `brazilTaxPack`.
+
+---
+
+## Respuesta a la revisión ronda 7
+
+Revisión: `reviews/tax-r7.md`. Las pruebas de regresión están en `src/review-r7.test.ts`
+(escenarios r7-s1, S3, S4, S4c, S5 y Q5 del revisor).
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T61 | media | Todos los DARF usan ahora el mismo mecanismo en `brazil/darf.ts`: `DarfGuide`, `newDarf`, `accumulateDarfs` y `settleDarfs`. Sirve para el 6015 de la B3, el 4600 de cripto y, en el régimen anterior a 2024, el 4600 del exterior y el 0190 del carnê-leão. **Mínimo de R$ 10:** el impuesto confirmado menor a R$ 10 no se paga; se acumula (`darfCarriedForward`, `DARF_BELOW_MINIMUM`) y el DARF sale en el mes en que el acumulado llega a R$ 10, con `includesMonths` (art. 68 de la Lei 9.430/1996). El acumulado arrastra desde diciembre del año anterior. **Conciliación de pagos:** el pago se busca por código y mes. Puede venir de la opción `payments` o de una transacción TAX con la nota "DARF 4600 AAAA-MM". El DARF queda con estado `paga`, `paga_em_atraso`, `vencida` (según `asOf`) o `pendente`. Si se pagó tarde o venció, se calculan multa y Selic y se actualizan los datos del Sicalc con la fecha de pago. Si se pagó de menos, se avisa con `DARF_UNDERPAID`. Un pago sin código sigue imputándose al 6015, para que un mismo pago no cuente en dos DARF. r7-s1 → sin DARF de R$ 3,75; S3 → `paga_em_atraso`, 41 días de atraso, multa y juros, aviso de pago insuficiente. El CSV de cripto del paquete agrega estado, meses incluidos, total con recargos y acumulado bajo el mínimo |
+| T62 | baja | El ruteo de cripto registra, por activo, custodia y fecha, las unidades de costo provisorio y las de costo pendente (`costStatusLog`, `cryptoCostStatusAt`). En Bens e Direitos, los ítems de cripto en Brasil, en el exterior y en tránsito llevan `costStatus` (`provisorio` o `pendente`). La `discriminacao` termina en "(custo provisório — confirmar)" o "(custo pendente — informar custo de aquisição)" y se avisa con `BENS_COST_NOT_CONFIRMED`. S4 → 300.000 provisorio; S5 → R$ 0 pendente; S4c (confirmado con nota) → línea limpia |
+| T63 | baja | Una salida sin entrada confirmada ya no se arrastra en silencio. Pasados `transferMaxLateDays`, la línea "EM TRÂNSITO" dice "SEM ENTRADA CONFIRMADA". Pasados `transitMaxMonths` (12 por defecto), se **excluye** de la posición al 31/12: `situacaoAtual` queda en 0, el ítem lleva `transitoExcluido` y se emite un error `CRYPTO_TRANSIT_STALE` que pide decidir. Con `transitResolution` (id de la salida) el usuario elige `"alienado"` (sale de Bens e Direitos desde la fecha de salida, con el aviso `CRYPTO_TRANSIT_DISPOSED` de registrar la venta como SELL o revisar el ITCMD si fue donación) o `"mantido"` (se conserva sin límite). Q5 → incluido en 2025 con la marca, excluido en 2026, ausente en 2027 |

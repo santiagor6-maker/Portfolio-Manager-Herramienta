@@ -87,6 +87,9 @@ export const coStatementParser: PdfParser = {
     const cut = doc.lines.findIndex((l, i) => i > h && HOLDINGS_RE.test(normalizeText(l.text)));
     const table = cut > 0 ? { ...full, rows: full.rows.slice(0, cut), lines: full.lines.slice(0, cut) } : full;
     if (cut > 0) {
+      // Format detection (dates / decimal separator) must not look at the holdings either.
+      ctx.table.rows.length = Math.min(ctx.table.rows.length, cut);
+      ctx.table.lines.length = Math.min(ctx.table.lines.length, cut);
       const positions = parseHoldings(doc.lines.slice(cut + 1));
       if (positions.length) {
         const period = /(\d{2}\/\d{2}\/\d{4})\s*[-–a]\s*(\d{2}\/\d{2}\/\d{4})/.exec(doc.text);
@@ -97,7 +100,7 @@ export const coStatementParser: PdfParser = {
     const s = suggestMappingFromHeaders((table.rows[h] ?? []).map((c) => cellToString(c)));
     const broker = coBroker(doc.text);
     const mapping = { ...s.mapping, headerRow: h, defaultExchange: 'XBOG', defaultCurrency: ctx.options.defaultCurrency ?? 'COP' };
-    const opts: Parameters<typeof parseWithMapping>[3] = { numberHint: 'comma' };
+    const opts: Parameters<typeof parseWithMapping>[3] = { numberHint: 'comma', statementLines: true };
     if (broker) opts.account = broker;
     const rows = parseWithMapping(table, ctx, mapping, opts);
     for (const r of rows) r.sheet = `pág. ${doc.lines[r.line - 1]?.page ?? 1}`;

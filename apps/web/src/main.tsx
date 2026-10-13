@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
-import i18n from './i18n';
+import { setLanguage } from './i18n';
 import { App } from './App';
 import { useApp } from './store/app';
 import { bootstrap } from './services/onboarding';
@@ -25,7 +25,7 @@ async function start() {
   );
   try {
     const settings = await bootstrap();
-    await i18n.changeLanguage(settings.language);
+    await setLanguage(settings.language);
     document.documentElement.lang = settings.language;
     useApp.getState().setReady(settings);
     await hydrateMarketState();

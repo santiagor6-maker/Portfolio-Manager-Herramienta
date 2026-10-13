@@ -5,7 +5,7 @@
 import Papa from 'papaparse';
 import readXlsxFile from 'read-excel-file/universal';
 import { decodeBytes, toUint8Array, type TextEncodingName } from './decode';
-import { parseXls } from './xls';
+import { parseXls, XlsEncryptedError } from './xls';
 import type { Cell, FileKind, ImportData, RawTable } from './types';
 import { cellToString } from './util';
 
@@ -216,6 +216,7 @@ export async function readTables(data: ImportData, fileName?: string, encoding?:
     try {
       return { kind, tables: parseXls(input) };
     } catch (e) {
+      if (e instanceof XlsEncryptedError) return { kind, tables: [], error: { code: 'XLS_ENCRYPTED' } };
       return { kind, tables: [], error: { code: 'FILE_XLS_LEGACY', detail: e instanceof Error ? e.message : String(e) } };
     }
   }

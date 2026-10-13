@@ -13,6 +13,7 @@
  * Coverage: the Ibovespa / IBrX-100 constituents of 2023-2025 and other liquid names, the common ETFs,
  * FIIs and BDRs.
  */
+import { TICKER_RENAMES } from '../markets';
 import { normalizeText } from '../util';
 
 /** Shares: normalized nome de pregão → ticker root (class ON/PN/PNA/PNB/UNT gives the digit). */
@@ -178,6 +179,8 @@ export function suggestB3Names(name: string, opts: { digit?: string; kind?: 'sha
     for (const [n, ts] of Object.entries(B3_BDR_MULTICLASS)) for (const t of ts) add(n, t);
   }
   for (const e of opts.extra ?? []) add(e.name, e.ticker);
+  // Renamed tickers are shown under their current code (TRPL4 → ISAE4).
+  for (const c of out) c.ticker = (TICKER_RENAMES[`BVMF:${c.ticker}`] ?? `BVMF:${c.ticker}`).split(':')[1]!;
   out.sort((a, b) => b.score - a.score || a.ticker.localeCompare(b.ticker));
   const seen = new Set<string>();
   return out.filter((c) => (seen.has(c.ticker) ? false : (seen.add(c.ticker), true)));

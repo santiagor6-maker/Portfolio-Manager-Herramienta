@@ -120,9 +120,18 @@ export async function fetchIbkrInbox(portfolioId: string): Promise<IbkrInbox> {
   return { portfolioId, pending: r?.pending ?? [], instruments: r?.instruments ?? [], lastRun: r?.lastRun };
 }
 
-export async function clearIbkrInbox(portfolioId: string): Promise<void> {
-  await call(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`, { method: 'DELETE' });
-  useApp.getState().setIbkrInbox(portfolioId, 0);
+/**
+ * Acknowledges the inbox. With `ids` only those transactions leave it (rows the daily job added
+ * after the preview are kept); without ids the whole inbox is emptied.
+ */
+export async function clearIbkrInbox(portfolioId: string, ids?: string[]): Promise<void> {
+  const r = await call<{ cleared?: number }>(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`, {
+    method: 'DELETE',
+    ...(ids ? { body: JSON.stringify({ ids }) } : {}),
+  });
+  const prev = useApp.getState().ibkrInbox[portfolioId] ?? 0;
+  const left = ids ? Math.max(0, prev - (r?.cleared ?? ids.length)) : 0;
+  useApp.getState().setIbkrInbox(portfolioId, left);
 }
 
 /** Checks the daily-sync inbox of every user portfolio (app load). Silent when not connected/offline. */

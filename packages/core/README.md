@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 218 pruebas
+npx vitest run packages/core        # 232 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -126,12 +126,24 @@ devengo **saca el monto bruto del valor devengado**. Cada lote se re-ancla en la
 `valor devengado − su parte del cupón`. Así el valor, el valor líquido y la redención solo incluyen el interés
 devengado desde el último pago. Ejemplos: un CDT del 12 % con pago trimestral da TWR ≈ 11,1 % (neto de
 retención), no 20,2 %; un bono con cupón semestral vale ≈ 1.100, no 1.148,81.
-Ronda 5: el cupón se reparte entre las unidades de la fecha de registro (`quantity` de la transacción, o la
-tenencia antes de una venta en los 15 días previos si explica mejor el monto: `COUPON_RECORD_DATE_UNITS`). La
-reducción se limita al interés causado (desde el ancla o en el periodo del cupón, máximo un año); el exceso es
-ingreso, el principal no se toca y se avisa `COUPON_EXCEEDS_ACCRUED_INTEREST`. Un interés sin `taxes` cuyo monto
-coincide con el causado neto de retención (`CO_RETENCION`, `BR_IR_REGRESSIVE`) se toma como neto y se infiere
-la retención (`INTEREST_NET_ASSUMED`).
+Rondas 5 y 6:
+- **Fecha de registro.** El cupón se reparte entre las unidades de la fecha de registro. Se usa `quantity` de
+  la transacción si viene. Si no: un lote comprado en los 15 días previos al pago tiene derecho si su precio fue
+  sucio (cercano al valor con intereses de los lotes antiguos), y no lo tiene si fue limpio. Las unidades
+  vendidas en esa ventana se suman cuando explican mejor el monto (`COUPON_RECORD_DATE_UNITS`).
+- **Pago menor que lo causado.** Un pago entre el 70 % y el 98 % del interés causado en el periodo lo salda
+  completo: el lote vuelve a su valor ancla. La diferencia es retención o la base de días del emisor, nunca
+  interés pendiente (`INTEREST_BELOW_ACCRUED`, informativo). Dentro de ±2 % se resta el cupón mismo.
+- **Pago mayor que lo causado.** La reducción se limita al interés causado (desde el ancla o en el periodo del
+  cupón, máximo un año, lo que cubre el interés comprado a precio sucio). El exceso es ingreso, el principal no
+  se toca y se avisa `COUPON_EXCEEDS_ACCRUED_INTEREST`.
+- **Interés neto.** Con `amountIsNet: true` se infiere la retención del régimen (`CO_RETENCION` o IR
+  regresivo por lote con su propio plazo). Sin esa marca, solo se infiere cuando no hay ambigüedad: la tasa de
+  retención debe ser al menos 3 veces la diferencia entre bases de días (ACT/365, ACT/360, 30/360; mínimo
+  1,5 %), y el monto debe estar a ±0,5 % del neto esperado. La retención del 4 % de Colombia nunca califica
+  (`INTEREST_POSSIBLY_NET`, informativo). Toda retención inferida queda marcada como
+  `IncomeEvent.taxesEstimated` (`INTEREST_NET_ASSUMED`), para que el reporte tributario no la trate como
+  certificada.
 
 Vencimiento (ronda 3):
 - El pago se espera el siguiente día hábil del calendario del instrumento.
@@ -227,6 +239,10 @@ Precios de operación atípicos (rondas 3 a 5):
   `TRADE_PRICE_UNCONFIRMED` para que la UI pida confirmación. Así un fondo que sube 40 % o BTC +45 % se valoran
   bien.
 - Ambos avisos llegan también a `MonthlyRow.warnings` y `PerformanceSummary.warnings` (`CODIGO:<ids>`).
+- Ronda 6: dos o más precios rechazados consecutivos que concuerdan entre sí, sin un cierre que los contradiga,
+  confirman el nuevo nivel. Se re-aceptan todos y se informa `TRADE_PRICE_CONFIRMED_BY_RUN`. Un precio sin
+  confirmar seguido de uno consistente deja de estar marcado. Un precio con `priceConfirmed` se vuelve la
+  referencia de los siguientes.
 - Tampoco se usan las operaciones de menos del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
@@ -569,3 +585,27 @@ Cambios aditivos al contrato:
 - Diagnósticos nuevos: `COUPON_RECORD_DATE_UNITS`, `COUPON_EXCEEDS_ACCRUED_INTEREST` (reemplaza a
   `COUPON_EXCEEDS_ACCRUAL`) e `INTEREST_NET_ASSUMED`.
 - Avisos nuevos en filas y resúmenes: `TRADE_PRICE_OUTLIER:<ids>` y `TRADE_PRICE_UNCONFIRMED:<ids>`.
+
+## Respuesta a la revisión ronda 5
+
+Revisión: `reviews/core-r5.md`; estos cambios forman la **ronda 6** del motor. Los escenarios del revisor
+(`r5-a`) quedaron como pruebas en `src/review-r5.test.ts`. Total: **232 pruebas**, que pasan también con
+`TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. `apps/web`, `tax`, `importers` y `market-data` pasan (700
+pruebas), y todos los paquetes y apps compilan sin errores. Los 18 scripts del revisor (rondas 1–5) pasan,
+salvo los ya aceptados (F1, F4, S2a, S2b).
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C45 `priceConfirmed` fuera del hash | Media | El hash por fila incluye **todos** los campos de `Transaction`, también los descriptivos (`note`, `source`, `importHash`) y los nuevos `priceConfirmed` y `amountIsNet`. Una prueba lee la interfaz `Transaction` de `types.ts` y comprueba que cambiar cada campo cambia `inputHash`. Así un campo nuevo no puede quedar fuera. V1: 4.400 tras confirmar en sitio o en una copia (antes 1.100). |
+| C46 Banda dura anclada para siempre | Media | Dos o más precios rechazados consecutivos que concuerdan entre sí (dentro de la tolerancia normal), sin un cierre que los contradiga, confirman el nuevo nivel. Todos se re-aceptan, desde el primero (`TRADE_PRICE_CONFIRMED_BY_RUN`, informativo). Un precio sin confirmar seguido de uno consistente deja de estar marcado. `priceConfirmed` re-ancla la referencia. V2: 1 → 3,5 → 4 → 4,2 vale **4.326** (antes 1.030). Cripto ×6,25 con un segundo precio consistente: aceptado. Un único precio sigue esperando confirmación (V3), y dos errores que no concuerdan entre sí siguen rechazados. |
+| C47 Retención inventada sobre montos brutos | Media | Solo se infiere automáticamente cuando la tasa de retención es al menos 3 veces la dispersión entre bases de días (ACT/365, ACT/360, 30/360; mínimo 1,5 %) y el monto está a ±0,5 % del neto. Así el monto queda más cerca del neto que del bruto con cualquier base. El 4 % colombiano nunca califica: se informa `INTEREST_POSSIBLY_NET` y el monto queda como bruto. La marca explícita `Transaction.amountIsNet` (o `false` para impedir la inferencia) decide. Toda retención inferida lleva `IncomeEvent.taxesEstimated = true`. X1 y X2: sin retención (antes 3.899 y 11.359 inventados). |
+| C43 Lotes con distinto plazo de IR (W3) | Baja | Un pago entre 70 % y 98 % de lo causado en el periodo salda ese interés; la diferencia no queda como interés pendiente (`INTEREST_BELOW_ACCRUED`). W3: **5.000** (antes 5.048,73). Con `amountIsNet`, el IR se calcula por lote con su propio plazo (20 % y 22,5 %). J6, X1 y X2 también quedan en 10.000.000 sin interés fantasma. El derecho al cupón de un lote comprado cerca del pago se decide por su precio (sucio o limpio): W1 = 5.000 y W2 = 5.000 + 3 días de causación. |
+
+Cambios aditivos al contrato:
+- `Transaction.amountIsNet?` indica que el monto se registró neto de la retención.
+- `IncomeEvent.taxesEstimated?` marca que la retención la infirió el motor y no está certificada.
+  **`packages/tax` debe excluirla de las retenciones certificadas.**
+- Diagnósticos nuevos (todos informativos): `TRADE_PRICE_CONFIRMED_BY_RUN`, `INTEREST_POSSIBLY_NET` e
+  `INTEREST_BELOW_ACCRUED`.
+- Cambio de comportamiento: J6 (CDT con interés neto del 4 % sin `taxes`) ya no infiere la retención. El valor
+  sigue exacto (10.000.000), pero la retención solo aparece con `amountIsNet` o `taxes`.

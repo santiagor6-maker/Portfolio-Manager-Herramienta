@@ -18,6 +18,8 @@ export const esR2 = {
   },
   dashboard: {
     upcomingEstimated: 'Próximos (anunciados y estimados)',
+    moversSubMixed: "Último cierre de cada activo vs. su cierre anterior",
+    indexFailedImpact: "Sin esta serie no se calculan la rentabilidad real ni el «% del índice»; se reintenta en la próxima actualización.",
     sinceClose: 'desde el cierre del {{date}}',
     real: 'Real',
     realHint: 'Rentabilidad descontando la inflación ({{index}})',
@@ -48,6 +50,8 @@ export const esR2 = {
     pctOfIndexShort: '% del índice de tasa',
     pctOfIndexHint: 'Rentabilidad del portafolio dividida por la del índice de tasa (100 % = igual que el CDI/IBR).',
     indexWas: '{{index}} del periodo: {{value}}',
+    riskFreeUsed: "Libre de riesgo: {{source}} {{rate}}",
+    riskFreeSetting: "tasa de Ajustes",
     indexUntil: 'datos hasta {{month}}',
     inflationEstimated: 'inflación publicada hasta {{month}}, resto estimado',
     noIndex: 'Sin CDI/IBR cargado',
@@ -112,6 +116,7 @@ export const esR2 = {
     maturity: 'El vencimiento debe ser posterior a la emisión.',
   },
   picker: {
+    exchange: 'Bolsa / mercado',
     searching: 'Buscando…',
     template: 'Plantilla',
   },
@@ -301,6 +306,8 @@ export const esR2 = {
     keepDemo: 'Conservar los datos de ejemplo',
     create: 'Crear portafolio',
     depositIntro: '¿Con cuánto empiezas? Registrar el aporte permite medir bien la rentabilidad.',
+    depositDate: "¿Desde cuándo inviertes?",
+    depositDateHint: "Fecha del aporte. Si vas a registrar compras anteriores, usa la fecha del primer aporte para no inflar los aportes.",
     depositLabel: 'Aporte inicial ({{currency}})',
     depositHint: 'Opcional; puedes registrar aportes después.',
     initialDeposit: 'Aporte inicial',
@@ -317,6 +324,7 @@ export const esR2 = {
     task: { deposit: 'Registrar un aporte', buy: 'Registrar una compra', close: 'Hacer un cierre de mes', alerts: 'Crear una alerta', backup: 'Descargar un respaldo' },
   },
   settings: {
+    riskFreeAuto: "Usar la tasa de referencia de la moneda (IBR para COP, CDI para BRL) cuando esté cargada",
     passphrase: 'Contraseña del respaldo (opcional)',
     passphraseHint: 'Si la escribes, el respaldo se cifra (AES-256) y podrás llevarlo a otro dispositivo por cualquier nube.',
     backupError: { needs_passphrase: 'El respaldo está cifrado: escribe su contraseña.', wrong_passphrase: 'Contraseña incorrecta.' },
@@ -337,7 +345,14 @@ export const esR2 = {
     review: 'Revisar movimientos',
     dashboard_one: 'El motor encontró {{count}} error en tus movimientos.',
     dashboard_other: 'El motor encontró {{count}} errores en tus movimientos.',
+    implicitText: "No había efectivo registrado: el motor asumió un aporte implícito de {{amount}} en esta fecha. Esto infla los aportes; registra el aporte real con su fecha.",
+    implicitNote: "Aporte para cubrir compras anteriores",
+    createDeposit: "Crear aporte en esa fecha",
+    details: "Detalle técnico",
+    implicitMonth: "Aporte implícito",
+    text: {"netOfTax": ", neto de una retención estimada de {{amount}}", "MATURITY_REDEEMED": "{{symbol}} se redimió automáticamente (estimado) por {{amount}}{{tax}}. Registra el pago real para reemplazarlo.", "IMPLICIT_FX_CONVERSION": "Se convirtieron {{from}} en {{to}} a la tasa del mercado para pagar la operación ({{type}}).", "IMPLICIT_FX_OTHER_ACCOUNT": "El efectivo en {{currency}} está en otras cuentas; para «{{account}}» se asumió un aporte implícito.", "WITHDRAWAL_EXCEEDS_CASH": "{{type}} de {{amount}} supera el efectivo; el faltante de {{shortfall}} se tomó como aporte implícito (¿falta registrar un aporte?).", "NEGATIVE_CASH": "El efectivo queda negativo ({{amount}}) después de esta operación ({{type}}).", "OVERSELL": "Se vendieron {{quantity}} de {{symbol}} pero solo había {{held}}; solo se registró la parte que existía.", "MISSING_FX": "No hay tasa {{pair}} para el {{date}}.", "NEGATIVE_ACCOUNT_QTY": "La cuenta «{{account}}» queda con {{quantity}} de {{symbol}} (se vendió desde una cuenta que no compró).", "INCOME_WITHOUT_POSITION": "{{type}} de {{symbol}} sin unidades en cartera en esa fecha.", "INTEREST_ALREADY_RECORDED": "El interés de {{symbol}} ya se registró al vencimiento; la redención automática solo paga el capital.", "MISSING_PRICE": "Traslado de {{symbol}} sin precio.", "UNKNOWN_INSTRUMENT": "El activo de este movimiento no existe; se valora en la moneda del movimiento.", "MISSING_INSTRUMENT": "{{type}} sin activo.", "INVALID_QUANTITY": "La cantidad debe ser mayor que cero.", "INVALID_RATIO": "La proporción debe ser mayor que cero.", "MISSING_TARGET": "Falta el activo destino.", "MISSING_CURRENCY": "Falta la moneda destino.", "LATE_REDEMPTION": "Redención de {{symbol}} registrada después del vencimiento.", "TRADE_PRICE_OUTLIER": "El precio de {{price}} de {{symbol}} está lejos del mercado y no se usa como precio. Revísalo o confírmalo.", "TRADE_PRICE_UNCONFIRMED": "El precio de {{price}} de {{symbol}} es un movimiento grande sin cierre que lo confirme. Confírmalo si es correcto.", "COUPON_EXCEEDS_ACCRUED_INTEREST": "El cupón de {{symbol}} supera en {{excess}} el interés causado; revisa el monto.", "INTEREST_NET_ASSUMED": "El interés de {{symbol}} se tomó como neto: bruto {{gross}}, retención estimada {{withheld}}.", "COUPON_RECORD_DATE_UNITS": "El cupón de {{symbol}} se repartió entre {{units}} unidades a la fecha de registro ({{held}} al pago)."},
     code: {
+      IMPLICIT_DEPOSIT: "Compra sin aporte previo",
       NEGATIVE_CASH: 'Efectivo negativo',
       OVERSELL: 'Venta mayor a la posición',
       MISSING_INSTRUMENT: 'Activo desconocido',
@@ -443,4 +458,6 @@ export const esR2 = {
     "apiTokenHint": "El valor de API_TOKEN del servidor. Lo usan la sincronización con corredores y las rutas protegidas."
   },
   pw: {"outlier": "Precio atípico", "unconfirmed": "Precio por confirmar", "hint": "Este periodo usa un precio de operación dudoso ({{symbols}}). Revisa la operación o confirma que el precio es correcto.", "open": "Abrir", "confirm": "Confirmar precio", "none": "No hay operaciones por confirmar."},
+  md: {"partial": "Datos parciales", "partialHint": "El servidor solo tiene precios de este activo del {{from}} al {{to}}; fuera de ese rango se usa el último precio conocido.", "partialList": "Datos parciales (el servidor no cubre todo el periodo): {{symbols}}"},
+  market: { err: {"originTitle": "El servidor de precios rechazó este origen.", "originBody": "Agrega {{origin}} a CORS_ORIGIN en el servidor (ver apps/server/README.md).", "rateLimitedTitle": "El servidor de precios pidió esperar.", "rateLimitedBody": "Se alcanzó el límite de solicitudes; la actualización automática se reintenta en unos minutos.", "unauthorizedTitle": "El servidor de precios pide un token de API.", "unauthorizedBody": "Escríbelo en Ajustes → Fuente de datos («Token de API del servidor»).", "httpTitle": "El servidor de precios respondió con un error.", "httpBody": "Código HTTP {{status}}; se usan los precios guardados en este navegador."} },
 };

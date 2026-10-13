@@ -98,7 +98,7 @@ export function IbkrSyncCard({
       )}
       {!conn ? (
         <form
-          className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_auto] gap-3 items-end"
+          className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_auto] gap-3 items-start"
           onSubmit={(e) => {
             e.preventDefault();
             void run('connect', async () => {
@@ -114,7 +114,7 @@ export function IbkrSyncCard({
           <Field label={t('ibkr.queryId')} htmlFor="ibkr-query">
             <input id="ibkr-query" className="input num" inputMode="numeric" required value={queryId} onChange={(e) => setQueryId(e.target.value)} />
           </Field>
-          <button className="btn btn-primary lg:mb-[22px]" type="submit" disabled={!!busy || !token.trim() || !queryId.trim()}>
+          <button className="btn btn-primary lg:mt-[22px]" type="submit" disabled={!!busy || !token.trim() || !queryId.trim()}>
             {busy === 'connect' ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}
             {busy === 'connect' ? t('ibkr.connecting') : t('ibkr.connect')}
           </button>

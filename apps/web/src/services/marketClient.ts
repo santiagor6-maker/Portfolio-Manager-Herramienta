@@ -2,7 +2,8 @@
  * Adapter over `@pm/market-data/client` (HTTP API served by apps/server). The rest of the app
  * only talks to `MarketClient`, so tests can inject a fake.
  */
-import { MarketDataClient } from '@pm/market-data/client';
+import { MarketDataClient, MarketDataApiError } from '@pm/market-data/client';
+export { MarketDataApiError };
 import type { BatchRequest, BatchResponse, HealthResponse, SearchResult } from '@pm/market-data/client';
 
 export type { BatchRequest, BatchResponse, FxRequest, HistoryRequest, Quote, SearchResult } from '@pm/market-data/client';

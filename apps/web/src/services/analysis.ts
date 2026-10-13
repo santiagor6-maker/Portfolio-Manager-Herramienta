@@ -51,6 +51,7 @@ export interface Dataset {
   asOf: ISODate;
   benchmarks: string[];
   riskFreeRate: number;
+  riskFreeAuto?: boolean;
   defaultCostMethod: Portfolio['costMethod'];
 }
 
@@ -95,6 +96,15 @@ export interface Suggestion {
   transaction: Transaction;
 }
 
+export interface ImplicitFunding {
+  date: string;
+  month: string;
+  currency: CurrencyCode;
+  amount: number;
+  amountBase?: number;
+  transactionId?: string;
+}
+
 export interface Analysis {
   asOf: ISODate;
   baseCurrency: CurrencyCode;
@@ -130,8 +140,17 @@ export interface Analysis {
   pendingCloses: PendingClose[];
   /** Engine diagnostics from replaying the ledger (negative cash, oversells, implicit FX...). */
   diagnostics: core.Diagnostic[];
+  /**
+   * W22: purchases the engine funded with an implicit deposit (no cash recorded before them).
+   * They inflate contributions and can leave phantom cash when a later deposit is dated today.
+   */
+  implicitFunding: ImplicitFunding[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
+  /** Risk-free rate used by Sharpe/Sortino and where it came from (W29). */
+  riskFree?: { rate: number; source: IndexId | 'setting' };
+  /** Closes compared by the day change (W26). */
+  dayRange?: { from: ISODate; to: ISODate };
   issues: { errors: ValidationIssue[]; warnings: ValidationIssue[] };
   /** Engine failures by step (e.g. "monthlyPerformance not implemented yet"). */
   engineErrors: Record<string, string>;
@@ -238,6 +257,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     reviewActions: [],
     pendingCloses: [],
     diagnostics: [],
+    implicitFunding: [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
@@ -309,10 +329,21 @@ export function computeAnalysis(ds: Dataset): Analysis {
     }
   }
 
+  // W29: the reporting currency's own reference rate (IBR for COP, CDI for BRL), realized over the
+  // last 12 covered months, instead of a fixed 4 % for every currency.
+  const RF_INDEX: Partial<Record<string, IndexId>> = { COP: 'IBR', BRL: 'CDI' };
+  const rfId = RF_INDEX[ds.reportingCurrency];
+  const rfRows = rfId ? out.monthly.filter((m) => m.indexReturns?.[rfId] !== undefined).slice(-12) : [];
+  out.riskFree =
+    ds.riskFreeAuto !== false && rfId && rfRows.length >= 6
+      ? { rate: Math.pow(rfRows.reduce((c, m) => c * (1 + m.indexReturns![rfId]!), 1), 12 / rfRows.length) - 1, source: rfId }
+      : { rate: ds.riskFreeRate, source: 'setting' };
+  const riskFreeAnnual = out.riskFree.rate;
+
   if (out.monthly.length) {
     out.risk = attempt('riskMetrics', () =>
       core.riskMetrics(out.monthly, {
-        riskFreeAnnual: ds.riskFreeRate,
+        riskFreeAnnual,
         benchmarkMonthly: benchmarks[0] ? out.monthly.map((m) => m.benchmarkReturns?.[benchmarks[0]!] ?? 0) : undefined,
         benchmarkId: benchmarks[0],
       }),
@@ -324,7 +355,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
         cum *= 1 + m.twr;
         m.cumulativeTwr = cum - 1;
       }
-      const r = attempt(`riskMetrics.${b}`, () => core.riskMetrics(bm, { riskFreeAnnual: ds.riskFreeRate }));
+      const r = attempt(`riskMetrics.${b}`, () => core.riskMetrics(bm, { riskFreeAnnual }));
       if (r) out.benchmarkRisk[b] = r;
     }
   }
@@ -340,6 +371,21 @@ export function computeAnalysis(ds: Dataset): Analysis {
       (m, h) => (h.priceDate && (!m || h.priceDate > m) ? h.priceDate : m),
       undefined,
     );
+    // W26: day change between the last two market closes (manual / accrual assets excluded).
+    // Each holding is valued at its own last close on or before each date, so holdings with
+    // older closes simply contribute no change instead of hiding the figure.
+    const dates = new Set<string>();
+    const manual = new Set(ds.instruments.filter((i) => i.pricing === 'manual' || i.accrual).map((i) => i.id));
+    const held = new Set(valuation.holdings.filter((h) => h.quantity && !manual.has(h.instrumentId)).map((h) => h.instrumentId));
+    for (const ps of ds.prices) if (held.has(ps.instrumentId)) for (const p of ps.points) if (p.date <= ds.asOf) dates.add(p.date);
+    const sorted = [...dates].sort();
+    const to = sorted[sorted.length - 1];
+    const from = sorted[sorted.length - 2];
+    if (to && from) {
+      const d = attempt('performanceSummary.DAY', () => E.summary('CUSTOM', to, { from, to }));
+      if (d) out.summaries.DAY = d;
+      out.dayRange = { from, to };
+    }
   }
 
   out.positions = attempt('positionPerformance', () => E.positions('SI', ds.asOf)) ?? [];
@@ -354,6 +400,16 @@ export function computeAnalysis(ds: Dataset): Analysis {
     out.reviewActions = sug.review;
   }
   out.diagnostics = attempt('ledgerDiagnostics', () => E.diagnostics()) ?? [];
+  out.implicitFunding =
+    attempt('implicitFunding', () =>
+      E.ledger.flows
+        .filter((fl) => fl.kind === 'IMPLICIT_DEPOSIT' && fl.amount > 0)
+        .map((fl) => {
+          const date = new Date(fl.day * 86_400_000).toISOString().slice(0, 10);
+          return { date, month: date.slice(0, 7), currency: fl.currency, amount: fl.amount, amountBase: fl.base, transactionId: fl.transactionId };
+        })
+        .sort((a, b) => (a.date < b.date ? -1 : 1)),
+    ) ?? [];
   out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
 
   return finish(out, t0);
@@ -442,21 +498,40 @@ function upcomingDividends(ds: Dataset, v: Valuation, income: IncomeEvent[], mar
     const pay = addDays(e.date, 365);
     if (announced.has(`${e.instrumentId}|${pay.slice(0, 7)}`)) continue;
     out.push({ instrumentId: e.instrumentId, payDate: pay, currency: e.currency, quantity: h.quantity, grossBase: e.net ? (e.netBase * e.gross) / e.net : e.netBase, netBase: e.netBase, withholdingRate: e.gross ? e.taxes / e.gross : 0, source: 'history' });
+    announced.add(`${e.instrumentId}|${pay.slice(0, 7)}`);
+  }
+  // W12: positions bought recently have no payments of their own yet. Project the provider's
+  // past year of dividends (quarterly AAPL, PETR4...) one year ahead, at the current quantity.
+  for (const a of ds.corporateActions ?? []) {
+    if (a.type !== 'DIVIDEND' || !a.amountPerShare) continue;
+    const h = held.get(a.instrumentId);
+    if (!h) continue;
+    const paid = a.payDate ?? a.date;
+    if (paid <= from || paid > ds.asOf) continue;
+    const pay = addDays(paid, 365);
+    if (pay <= ds.asOf || pay > horizon || announced.has(`${a.instrumentId}|${pay.slice(0, 7)}`)) continue;
+    const ccy = a.currency ?? inst.get(a.instrumentId)?.currency ?? h.currency;
+    const fx = market.fx(ccy, ds.reportingCurrency, ds.asOf) ?? 0;
+    const w = a.subtype === 'JCP' ? 0.15 : rate(a.instrumentId);
+    const gross = a.amountPerShare * h.quantity * fx;
+    out.push({ instrumentId: a.instrumentId, payDate: pay, amountPerShare: a.amountPerShare, currency: ccy, quantity: h.quantity, grossBase: gross, netBase: gross * (1 - w), withholdingRate: w, source: 'history' });
+    announced.add(`${a.instrumentId}|${pay.slice(0, 7)}`);
   }
   return out.sort((a, b) => (a.payDate < b.payDate ? -1 : 1));
 }
 
 function computeMovers(v: Valuation, ds: Dataset, market: MarketData): Mover[] {
-  // Change between each holding's last two available closes (manual prices override provider).
+  // Change between each market-priced holding's last two closes; each row keeps its own dates (W26).
   const series = new Map<string, Map<string, number>>();
-  for (const s of [...ds.prices, ...ds.manualPrices]) {
+  for (const s of ds.prices) {
     const m = series.get(s.instrumentId) ?? new Map<string, number>();
     for (const p of s.points) if (p.date <= ds.asOf) m.set(p.date, p.close);
     series.set(s.instrumentId, m);
   }
   const movers: Mover[] = [];
+  const manual = new Set(ds.instruments.filter((i) => i.pricing === 'manual' || i.accrual).map((i) => i.id));
   for (const h of v.holdings) {
-    if (!h.quantity) continue;
+    if (!h.quantity || manual.has(h.instrumentId)) continue;
     const pts = [...(series.get(h.instrumentId)?.entries() ?? [])].sort((a, b) => (a[0] < b[0] ? -1 : 1));
     const last = pts[pts.length - 1];
     const prev = pts[pts.length - 2];

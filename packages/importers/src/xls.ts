@@ -118,8 +118,17 @@ function chars(b: Uint8Array, o: number, cch: number, high: boolean): string {
 
 const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
 
-function excelDate(serial: number): Date {
-  return new Date(Math.round((serial - 25569) * 86400000));
+/** Excel serial → Date. 1904 date system (DATEMODE = 1, old Mac workbooks): serial 0 = 1904-01-01. */
+function excelDate(serial: number, date1904 = false): Date {
+  return new Date(Math.round((serial + (date1904 ? 1462 : 0) - 25569) * 86400000));
+}
+
+/** The workbook is encrypted (FILEPASS): Excel's "password to open". */
+export class XlsEncryptedError extends Error {
+  constructor() {
+    super('Encrypted .xls (password to open)');
+    this.name = 'XlsEncryptedError';
+  }
 }
 
 /** Parse the SST across CONTINUE boundaries. `parts` are the SST record body followed by its CONTINUE bodies. */
@@ -195,7 +204,8 @@ export function parseXls(bytes: Uint8Array): RawTable[] {
     recs.push({ type, off: o, data: wb.subarray(o + 4, o + 4 + len) });
     o += 4 + len;
   }
-  const sheets: { name: string; pos: number }[] = [];
+  const sheets: { name: string; pos: number; hidden: boolean }[] = [];
+  let date1904 = false;
   let sst: string[] = [];
   const customFormats = new Map<number, string>();
   const xfFormats: number[] = [];
@@ -204,7 +214,12 @@ export function parseXls(bytes: Uint8Array): RawTable[] {
     if (r.type === 0x0085) {
       const cch = r.data[6]!;
       const high = (r.data[7]! & 1) === 1;
-      sheets.push({ pos: u32(r.data, 0), name: chars(r.data, 8, cch, high) });
+      // Only worksheets (type 0); charts / macro sheets carry no cells.
+      if (r.data[5] === 0) sheets.push({ pos: u32(r.data, 0), name: chars(r.data, 8, cch, high), hidden: (r.data[4]! & 3) !== 0 });
+    } else if (r.type === 0x002f) {
+      throw new XlsEncryptedError();
+    } else if (r.type === 0x0022) {
+      date1904 = u16(r.data, 0) === 1;
     } else if (r.type === 0x00fc) {
       const parts = [r.data];
       while (recs[i + 1]?.type === 0x003c) parts.push(recs[++i]!.data);
@@ -233,7 +248,7 @@ export function parseXls(bytes: Uint8Array): RawTable[] {
       if (!m) grid.set(row, (m = new Map()));
       m.set(col, v);
     };
-    const numberCell = (xf: number, n: number): Cell => (isDateXf(xf) ? excelDate(n) : n);
+    const numberCell = (xf: number, n: number): Cell => (isDateXf(xf) ? excelDate(n, date1904) : n);
     let pendingFormula: { row: number; col: number } | undefined;
     for (idx = idx + 1; idx < recs.length; idx++) {
       const { type, data: d } = recs[idx]!;
@@ -246,7 +261,8 @@ export function parseXls(bytes: Uint8Array): RawTable[] {
         const first = u16(d, 2);
         const n = (d.length - 6) / 6;
         for (let k = 0; k < n; k++) put(row, first + k, numberCell(u16(d, 4 + k * 6), rk(u32(d, 6 + k * 6))));
-      } else if (type === 0x0204) {
+      } else if (type === 0x0204 || type === 0x00d6) {
+        // LABEL / RSTRING (rich text: formatting runs follow the characters).
         const cch = u16(d, 6);
         put(u16(d, 0), u16(d, 2), chars(d, 9, cch, (d[8]! & 1) === 1));
       } else if (type === 0x0205) put(u16(d, 0), u16(d, 2), d[7] ? null : d[6] === 1);
@@ -277,5 +293,6 @@ export function parseXls(bytes: Uint8Array): RawTable[] {
     }
     tables.push({ name: sh.name, rows, lines });
   }
-  return tables;
+  // Hidden sheets last: the visible one is what the user exported.
+  return tables.sort((a, b) => Number(sheets.find((s) => s.name === a.name)?.hidden) - Number(sheets.find((s) => s.name === b.name)?.hidden));
 }

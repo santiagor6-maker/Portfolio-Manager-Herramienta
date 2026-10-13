@@ -19,6 +19,8 @@ export const ptR2: typeof esR2 = {
   },
   dashboard: {
     upcomingEstimated: 'Próximos (anunciados e estimados)',
+    moversSubMixed: "Último fechamento de cada ativo vs. o anterior",
+    indexFailedImpact: "Sem esta série não se calculam a rentabilidade real nem o «% do índice»; nova tentativa na próxima atualização.",
     sinceClose: 'desde o fechamento de {{date}}',
     real: 'Real',
     realHint: 'Rentabilidade descontada a inflação ({{index}})',
@@ -49,6 +51,8 @@ export const ptR2: typeof esR2 = {
     pctOfIndexShort: '% do índice de juros',
     pctOfIndexHint: 'Rentabilidade da carteira dividida pela do índice (100 % = igual ao CDI/IBR).',
     indexWas: '{{index}} do período: {{value}}',
+    riskFreeUsed: "Livre de risco: {{source}} {{rate}}",
+    riskFreeSetting: "taxa dos Ajustes",
     indexUntil: 'dados até {{month}}',
     inflationEstimated: 'inflação publicada até {{month}}, restante estimado',
     noIndex: 'Sem CDI/IBR carregado',
@@ -112,7 +116,8 @@ export const ptR2: typeof esR2 = {
     rate: 'Taxa inválida.',
     maturity: 'O vencimento deve ser posterior à emissão.',
   },
-  picker: { searching: 'Buscando…', template: 'Modelo' },
+  picker: {
+    exchange: 'Bolsa / mercado', searching: 'Buscando…', template: 'Modelo' },
   manual: {
     title: 'Novo ativo manual',
     namePlaceholder: 'CDB Banco X 110 % CDI, Fundo RF…',
@@ -299,6 +304,8 @@ export const ptR2: typeof esR2 = {
     keepDemo: 'Manter os dados de exemplo',
     create: 'Criar carteira',
     depositIntro: 'Com quanto você começa? Registrar o aporte permite medir bem a rentabilidade.',
+    depositDate: "Desde quando você investe?",
+    depositDateHint: "Data do aporte. Se for registrar compras anteriores, use a data do primeiro aporte para não inflar os aportes.",
     depositLabel: 'Aporte inicial ({{currency}})',
     depositHint: 'Opcional; você pode registrar aportes depois.',
     initialDeposit: 'Aporte inicial',
@@ -315,6 +322,7 @@ export const ptR2: typeof esR2 = {
     task: { deposit: 'Registrar um aporte', buy: 'Registrar uma compra', close: 'Fazer um fechamento de mês', alerts: 'Criar um alerta', backup: 'Baixar um backup' },
   },
   settings: {
+    riskFreeAuto: "Usar a taxa de referência da moeda (IBR para COP, CDI para BRL) quando carregada",
     passphrase: 'Senha do backup (opcional)',
     passphraseHint: 'Se informar, o backup é criptografado (AES-256) e pode ir para outro dispositivo por qualquer nuvem.',
     backupError: { needs_passphrase: 'O backup está criptografado: informe a senha.', wrong_passphrase: 'Senha incorreta.' },
@@ -335,7 +343,14 @@ export const ptR2: typeof esR2 = {
     review: 'Revisar movimentações',
     dashboard_one: 'O motor encontrou {{count}} erro nas suas movimentações.',
     dashboard_other: 'O motor encontrou {{count}} erros nas suas movimentações.',
+    implicitText: "Não havia caixa registrado: o motor assumiu um aporte implícito de {{amount}} nesta data. Isso infla os aportes; registre o aporte real com a data.",
+    implicitNote: "Aporte para cobrir compras anteriores",
+    createDeposit: "Criar aporte nessa data",
+    details: "Detalhe técnico",
+    implicitMonth: "Aporte implícito",
+    text: {"netOfTax": ", líquido de uma retenção estimada de {{amount}}", "MATURITY_REDEEMED": "{{symbol}} foi resgatado automaticamente (estimado) por {{amount}}{{tax}}. Registre o pagamento real para substituí-lo.", "IMPLICIT_FX_CONVERSION": "{{from}} foram convertidos em {{to}} à taxa de mercado para pagar a operação ({{type}}).", "IMPLICIT_FX_OTHER_ACCOUNT": "O caixa em {{currency}} está em outras contas; para «{{account}}» foi assumido um aporte implícito.", "WITHDRAWAL_EXCEEDS_CASH": "{{type}} de {{amount}} supera o caixa; a diferença de {{shortfall}} foi tratada como aporte implícito (falta registrar um aporte?).", "NEGATIVE_CASH": "O caixa fica negativo ({{amount}}) após esta operação ({{type}}).", "OVERSELL": "Foram vendidas {{quantity}} de {{symbol}}, mas só havia {{held}}; só a parte existente foi registrada.", "MISSING_FX": "Não há taxa {{pair}} para {{date}}.", "NEGATIVE_ACCOUNT_QTY": "A conta «{{account}}» fica com {{quantity}} de {{symbol}} (venda numa conta que não comprou).", "INCOME_WITHOUT_POSITION": "{{type}} de {{symbol}} sem unidades na carteira nessa data.", "INTEREST_ALREADY_RECORDED": "Os juros de {{symbol}} já foram registrados no vencimento; o resgate automático paga só o principal.", "MISSING_PRICE": "Transferência de {{symbol}} sem preço.", "UNKNOWN_INSTRUMENT": "O ativo desta movimentação não existe; é avaliado na moeda da movimentação.", "MISSING_INSTRUMENT": "{{type}} sem ativo.", "INVALID_QUANTITY": "A quantidade deve ser maior que zero.", "INVALID_RATIO": "A proporção deve ser maior que zero.", "MISSING_TARGET": "Falta o ativo de destino.", "MISSING_CURRENCY": "Falta a moeda de destino.", "LATE_REDEMPTION": "Resgate de {{symbol}} registrado após o vencimento.", "TRADE_PRICE_OUTLIER": "O preço de {{price}} de {{symbol}} está longe do mercado e não é usado como preço. Revise ou confirme.", "TRADE_PRICE_UNCONFIRMED": "O preço de {{price}} de {{symbol}} é um movimento grande sem fechamento que o confirme. Confirme se estiver correto.", "COUPON_EXCEEDS_ACCRUED_INTEREST": "O cupom de {{symbol}} supera em {{excess}} os juros acumulados; revise o valor.", "INTEREST_NET_ASSUMED": "Os juros de {{symbol}} foram tratados como líquidos: bruto {{gross}}, retenção estimada {{withheld}}.", "COUPON_RECORD_DATE_UNITS": "O cupom de {{symbol}} foi rateado entre {{units}} unidades na data de registro ({{held}} no pagamento)."},
     code: {
+      IMPLICIT_DEPOSIT: "Compra sem aporte prévio",
       NEGATIVE_CASH: 'Caixa negativo',
       OVERSELL: 'Venda maior que a posição',
       MISSING_INSTRUMENT: 'Ativo desconhecido',
@@ -441,4 +456,6 @@ export const ptR2: typeof esR2 = {
     "apiTokenHint": "O valor de API_TOKEN do servidor. Usado pela sincronização com corretoras e pelas rotas protegidas."
   },
   pw: {"outlier": "Preço atípico", "unconfirmed": "Preço a confirmar", "hint": "Este período usa um preço de operação duvidoso ({{symbols}}). Revise a operação ou confirme que o preço está correto.", "open": "Abrir", "confirm": "Confirmar preço", "none": "Não há operações a confirmar."},
+  md: {"partial": "Dados parciais", "partialHint": "O servidor só tem preços deste ativo de {{from}} a {{to}}; fora desse intervalo usa-se o último preço conhecido.", "partialList": "Dados parciais (o servidor não cobre todo o período): {{symbols}}"},
+  market: { err: {"originTitle": "O servidor de cotações recusou esta origem.", "originBody": "Adicione {{origin}} a CORS_ORIGIN no servidor (veja apps/server/README.md).", "rateLimitedTitle": "O servidor de cotações pediu para aguardar.", "rateLimitedBody": "O limite de solicitações foi atingido; a atualização automática tenta de novo em alguns minutos.", "unauthorizedTitle": "O servidor de cotações exige um token de API.", "unauthorizedBody": "Informe-o em Ajustes → Fonte de dados («Token de API do servidor»).", "httpTitle": "O servidor de cotações respondeu com um erro.", "httpBody": "Código HTTP {{status}}; são usados os preços salvos neste navegador."} },
 };

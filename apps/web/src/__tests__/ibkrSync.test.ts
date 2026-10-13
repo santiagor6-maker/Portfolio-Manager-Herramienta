@@ -126,8 +126,8 @@ describe('IBKR Flex sync client', () => {
     expect(r.instruments.map((i) => i.id)).toEqual(['XNYS:KO']);
     expect(r.stats).toMatchObject({ imported: 1, duplicates: 1, newInstruments: 1 });
 
-    await clearIbkrInbox('p1');
-    expect(calls[1]).toMatchObject({ method: 'DELETE', url: 'http://srv:8787/api/sync/ibkr-flex/inbox?portfolioId=p1' });
+    await clearIbkrInbox('p1', r.rows.map((x) => x.transaction!.id));
+    expect(calls[1]).toMatchObject({ method: 'DELETE', url: 'http://srv:8787/api/sync/ibkr-flex/inbox?portfolioId=p1', body: { ids: ['n1', 'n2'] } });
     expect(useApp.getState().ibkrInbox.p1).toBe(0);
   });
 

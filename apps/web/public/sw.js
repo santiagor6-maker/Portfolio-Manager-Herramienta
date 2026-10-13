@@ -1,6 +1,6 @@
 /* Portafolio Pro service worker: offline app shell. Data lives in IndexedDB, never here. */
-const VERSION = 'pp-v3';
-const SHELL = ['/', '/index.html', '/favicon.svg', '/manifest.webmanifest'];
+const VERSION = 'pp-v4';
+const SHELL = ['/', '/index.html', '/favicon.svg', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

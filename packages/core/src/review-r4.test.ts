@@ -234,10 +234,11 @@ describe('C43 — interest recorded net of withholding without `taxes`', () => {
     return { inp, v: valuePortfolio(inp, '2024-02-01').holdings[0]!.marketValueBase!, codes: ledgerDiagnostics(inp).map((d) => d.code) };
   };
 
-  it('J6: net amount (96 %) infers the 4 % withholding: no phantom accrued interest', () => {
+  it('J6: net amount (96 %) leaves no phantom accrued interest; the 4 % is ambiguous with a 30/360 gross, so no tax is inferred (round 6, C47)', () => {
     const { v, codes } = run(m * 0.96);
     expect(v).toBeCloseTo(10_000_000, 4);
-    expect(codes).toContain('INTEREST_NET_ASSUMED');
+    expect(codes).not.toContain('INTEREST_NET_ASSUMED');
+    expect(codes).toContain('INTEREST_POSSIBLY_NET');
   });
 
   it('a gross amount is kept as recorded', () => {

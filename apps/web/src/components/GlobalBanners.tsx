@@ -43,8 +43,32 @@ export function GlobalBanners() {
       )}
       {market.status === 'offline' && !hideOffline && (
         <Banner tone="info" onClose={() => setHideOffline(true)}>
-          <strong className="font-semibold">{t('market.offlineTitle')}</strong>{' '}
-          <span className="text-ink-2">{t('market.offlineBody')}</span>
+          {(() => {
+            // W28: say what the server answered instead of "start the server".
+            const e = market.error;
+            const kind =
+              e?.code === 'FORBIDDEN_ORIGIN' || (e?.status === 403 && e.code !== 'FORBIDDEN')
+                ? 'origin'
+                : e?.status === 429 || e?.code === 'RATE_LIMITED'
+                  ? 'rateLimited'
+                  : e?.status === 401 || e?.code === 'UNAUTHORIZED'
+                    ? 'unauthorized'
+                    : e?.status
+                      ? 'http'
+                      : undefined;
+            return kind ? (
+              <span data-testid="server-error">
+                <strong className="font-semibold">{t(`market.err.${kind}Title`)}</strong>{' '}
+                <span className="text-ink-2">{t(`market.err.${kind}Body`, { origin: location.origin, status: e?.status })}</span>{' '}
+                {e?.code && <code className="text-xs opacity-70">{e.code}</code>}
+              </span>
+            ) : (
+              <>
+                <strong className="font-semibold">{t('market.offlineTitle')}</strong>{' '}
+                <span className="text-ink-2">{t('market.offlineBody')}</span>
+              </>
+            );
+          })()}
         </Banner>
       )}
       {engineDown && (

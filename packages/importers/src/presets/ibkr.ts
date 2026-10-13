@@ -7,9 +7,10 @@
  *  - Flex Query CSV (Trades and/or Cash Transactions sections, user-chosen columns, optional BOF/BOS markers).
  */
 import type { AssetClass, TransactionType } from '@pm/core';
+import { parseIbkrCorporate } from '../corporate';
 import { IBKR_EXCHANGES } from '../markets';
 import type { Cell, CorporateActionSuggestion, DraftTransaction, InstrumentHint, ParsedRow, RawTable } from '../types';
-import { cellToString, normalizeText } from '../util';
+import { cellToString, normalizeText, round } from '../util';
 import { parseDate } from '../dates';
 import { HeaderIndex, type ParseContext, type PresetDefinition } from './common';
 
@@ -382,6 +383,32 @@ export const ibkrActivityPreset: PresetDefinition = {
           row.draft = d;
           return;
         }
+        const ci = parseIbkrCorporate(desc);
+        // Cash acquisition ("Merged(Acquisition) FOR USD 10.00 PER SHARE"): the position is sold for cash.
+        const cash = /\bFOR\s+([A-Z]{3})\s+(\d+(?:\.\d+)?)\s+PER SHARE/i.exec(desc);
+        const cq = ctx.num(get('Quantity'), row, 'quantity');
+        const proceeds = ctx.num(get('Proceeds'), row, 'amount');
+        if (cash && cq !== undefined && cq < 0 && date && (!ci.target || ci.target.symbol === ci.parent?.symbol)) {
+          const price = Number(cash[2]);
+          const d: DraftTransaction = { date, type: 'SELL', currency, quantity: Math.abs(cq), price, amount: proceeds && proceeds > 0 ? proceeds : round(Math.abs(cq) * price, 8), note: desc };
+          const ih = hint(ci.parent?.symbol ?? '', ci.parent?.isin, currency, info);
+          if (ih) d.instrument = ih;
+          row.draft = d;
+          row.issues.push(ctx.issue('CASH_MERGER', 'info', { value: desc.slice(0, 60) }, row.line));
+          return;
+        }
+        if (ci.kind !== 'other' && (ci.parent || ci.target) && ci.target?.symbol !== ci.parent?.symbol) {
+          const ca: CorporateActionSuggestion = { line: row.line, date: date ?? '', kind: ci.kind, description: desc, legs: [] };
+          if (currency) ca.currency = currency;
+          if (ci.parent) ca.parent = { symbol: ci.parent.symbol, ...(ci.parent.isin ? { isin: ci.parent.isin } : {}), ...(currency ? { currency } : {}) };
+          if (ci.target) ca.target = { symbol: ci.target.symbol, ...(ci.target.name ? { name: ci.target.name } : {}), ...(ci.target.isin ? { isin: ci.target.isin } : {}), ...(currency ? { currency } : {}) };
+          if (ci.ratio) ca.ratio = ci.ratio;
+          const q = ctx.num(get('Quantity'), row, 'quantity');
+          if (q !== undefined && q > 0) ca.receivedQuantity = q;
+          if (date) ctx.corporateActions.push(ca);
+          ctx.skip(row, 'CORPORATE_ACTION_PENDING', { value: desc.slice(0, 60) }, 'warning');
+          return;
+        }
         ctx.skip(row, 'SKIPPED_MOVEMENT', { value: desc.slice(0, 60), reason: 'acción corporativa: regístrala manualmente.' }, 'warning');
       }
     });
@@ -559,12 +586,21 @@ export const ibkrFlexPreset: PresetDefinition = {
           row.draft = { date: cdate, type: 'STOCK_DIVIDEND', currency, instrument: ih, deltaShares: Math.abs(qty), note: desc, ...(ref ? { brokerRef: ref } : {}) };
           return;
         }
-        const kind = code === 'SO' ? 'spinoff' : code === 'TC' || code === 'TO' || code === 'TM' ? 'merger' : code === 'IC' ? 'symbol_change' : 'other';
+        const info = parseIbkrCorporate(desc, code);
+        const kind = info.kind;
         const leg: CorporateActionSuggestion['legs'][number] = { direction: (qty ?? 0) < 0 ? 'out' : 'in' };
         if (symbol) leg.symbol = symbol;
         if (qty !== undefined) leg.quantity = Math.abs(qty);
         if (desc) leg.name = desc;
-        ctx.corporateActions.push({ line: row.line, date: cdate, kind, description: desc || code, legs: [leg] });
+        const ca: CorporateActionSuggestion = { line: row.line, date: cdate, kind, description: desc || code, legs: [leg] };
+        if (currency) ca.currency = currency;
+        if (IBKR_ACCOUNT_RE.test(acctId)) ca.account = acctId.toUpperCase();
+        if (info.parent) ca.parent = { symbol: info.parent.symbol, ...(info.parent.isin ? { isin: info.parent.isin } : {}), ...(currency ? { currency } : {}) };
+        if (info.target) ca.target = { symbol: info.target.symbol, ...(info.target.name ? { name: info.target.name } : {}), ...(info.target.isin ? { isin: info.target.isin } : {}), ...(currency ? { currency } : {}) };
+        if (info.ratio) ca.ratio = info.ratio;
+        // The received shares are on the row when it is the target's (IBKR lists the new security).
+        if (qty !== undefined && qty > 0 && (!info.target || info.target.symbol === symbol)) ca.receivedQuantity = qty;
+        ctx.corporateActions.push(ca);
         ctx.skip(row, 'CORPORATE_ACTION_PENDING', { value: (desc || code).slice(0, 60) }, 'warning');
         return;
       }

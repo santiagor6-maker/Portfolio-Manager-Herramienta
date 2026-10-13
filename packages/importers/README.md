@@ -88,8 +88,10 @@ Confianza:
   usuario.
 - **Baja:** el formato fue reconstruido sin un archivo real a la vista, o es una plantilla genérica.
 
-Las pruebas usan archivos sintéticos fieles a esa estructura. Durante el desarrollo no hubo acceso web
-para verificar con exportaciones reales.
+Las pruebas usan archivos sintéticos fieles a esa estructura. Desde la ronda 4 hay además un corpus
+"real-like" (`test/fixtures/real-like/`) que reproduce cómo generan sus PDF y `.xls` los corredores
+(compresión, fuentes, texto por palabra o por letra, cifrado, orden de dibujo, CFB fragmentado). Durante
+el desarrollo no hubo documentos reales de usuarios.
 
 | Formato (id) | Corredor | Archivo | Confianza | Qué importa |
 |---|---|---|---|---|
@@ -110,7 +112,9 @@ para verificar con exportaciones reales.
 | `nota-sinacor-pdf` | Notas de corretagem SINACOR (XP, Clear, Rico, BTG, Inter, Nu, Genial…) | **PDF** | Media | Negócios realizados + Resumo Financeiro: costos prorrateados por valor, IRRF a las ventas, verificación contra "Líquido para" |
 | `extracto-co-pdf` | Extracto colombiano en PDF (Trii, tyba, Davivienda Corredores, Acciones & Valores, Credicorp…) | **PDF** | Baja | Tabla de movimientos reconstruida por posición del texto |
 | `cdt-pdf` | Certificado/constancia de CDT (Colombia) | **PDF** | Baja | Emisor, valor, tasa E.A. o IPC/IBR + spread, emisión y vencimiento → activo `fixed_income` con `accrual` + compra |
-| `ibkr-flex-sync` | Interactive Brokers, Flex Web Service (token + query id) | API | Media | Igual que Flex: operaciones, efectivo, transferencias y posiciones abiertas |
+| `ibkr-flex-sync` | Interactive Brokers, Flex Web Service (token + query id) | API | Media | Igual que Flex: operaciones, efectivo, transferencias, posiciones abiertas y eventos corporativos |
+| `inbox` | Bandeja del servidor (`GET /api/sync/ibkr-flex/inbox`) o cualquier lote de `Transaction[]` | JSON | Alta | Pasa por el pipeline normal: duplicados exactos y entre fuentes, activos, validación |
+| (correo) | Correos reenviados con notas, extractos o confirmaciones (`importEmail`) | .eml | Media | Cada adjunto importable (PDF con contraseña, CSV, Excel, HTML), sin duplicar entre adjuntos |
 | `generic` | Cualquiera | CSV/XLSX/XLS/HTML | Depende del mapeo | Mapeo de columnas sugerido automáticamente (es/pt/en) y editable |
 
 **Colombia.** No se conoce un formato estable de exportación CSV/Excel de Trii, tyba, Acciones &
@@ -200,6 +204,9 @@ La validación revisa:
 | `listPresets()` | Nombre, confianza e instrucciones de exportación de cada formato |
 | `translateIssue(issue, 'pt')` | Volver a traducir los mensajes |
 | `parseNumber`, `parseDate`, `classifyType`, `InstrumentResolver` | Utilidades sueltas |
+| `importTransactionBatch(inbox, opts)` | Importar la bandeja de sincronización (o un lote de transacciones) con la misma vista previa y deduplicación |
+| `importEmail(eml, { pdfPasswords })` | Importar los adjuntos de un correo reenviado |
+| `resolveSpec`, `sinacorSuggestions`, `securityMapFromTransactions` | Nombres de pregão: ticker, sugerencias y respuestas aprendidas |
 
 ## Pruebas
 
@@ -214,9 +221,11 @@ Los archivos de ejemplo están en `test/fixtures/` y son sintéticos, pero tiene
 - `.xls` BIFF8 (normal y con mini stream), PDF de notas SINACOR, CDT y extracto de Trii;
 - respuestas grabadas del Flex Web Service de IBKR (`ibkr-flex-ws/`).
 
-Se regeneran con `npx tsx packages/importers/test/fixtures/generate.ts` (XLSX y CSV Latin-1) y
-`npx tsx packages/importers/test/fixtures/generate-r2.ts` (PDF, XLS y Posição). Los generadores usan los
-escritores mínimos de `test/helpers/` (PDF, XLS y XLSX).
+Se regeneran con `npx tsx packages/importers/test/fixtures/generate.ts` (XLSX y CSV Latin-1),
+`npx tsx packages/importers/test/fixtures/generate-r2.ts` (PDF, XLS y Posição) y
+`npx tsx packages/importers/test/fixtures/generate-r4.ts` (corpus real-like). Los generadores usan los
+escritores de `test/helpers/`: los mínimos (PDF, XLS y XLSX) y los realistas (`pdf-real.ts` y
+`xls-excel.ts`).
 
 ## Pendientes conocidos (ronda 1, actualizado)
 
@@ -574,9 +583,9 @@ de corte se toma del "Periodo" del extracto.
 ### Confianza y límites
 
 - **Sin OCR.** Las notas escaneadas se rechazan con un mensaje claro.
-- **Nombres de pregão.** No hay acceso al cadastro de B3 sin conexión, así que la tabla es limitada (120
-  emisores, 11 ETF y 22 BDR). Lo que no está en la tabla se pregunta y nunca se adivina. La respuesta del
-  usuario (`securityMap`) puede guardarse y reutilizarse.
+- **Nombres de pregão.** No hay acceso al cadastro de B3 sin conexión, así que la tabla es limitada (ver
+  la ronda 4: 184 emisores, ETF, FII y BDR). Lo que no está en la tabla se pregunta y nunca se adivina.
+  Desde la ronda 4, la respuesta del usuario se aprende de sus propios movimientos.
 - **Renda+ y Educa+.** `@pm/market-data` tiene los códigos `RENDA` y `EDUCA`, pero el id usa la fecha
   de vencimiento real (fin de los pagos), que no se puede deducir con certeza del año del nombre. Por eso
   no se adivina: si `options.catalog` trae el título con el mismo nombre, se usa su id `TD:`; si no,
@@ -584,4 +593,190 @@ de corte se toma del "Periodo" del extracto.
 - **XP, BTG y Avenue.** Sus extratos propios siguen sin analizador dedicado, porque no se conoce un
   formato estable. Las notas SINACOR y los archivos de B3 cubren las operaciones de XP y BTG.
 - **Formatos sin archivo real.** Los PDF de SINACOR y de los extractos colombianos se validaron con
-  archivos sintéticos fieles al layout, no con archivos reales de usuarios.
+  archivos sintéticos fieles al layout, no con archivos reales de usuarios (ver el corpus real-like de la
+  ronda 4).
+
+## Respuesta a la revisión ronda 3
+
+Revisión: `reviews/importers-r3.md` (7,5 frente a 8 de Sharesight). Las regresiones están en
+`test/review-r3.test.ts`, organizadas por número de brecha.
+
+**Línea base:**
+- Antes: 189 pruebas.
+- Ahora: **240 pruebas**, todas pasan (`npx vitest run packages/importers`).
+- `npx tsc -p packages/importers --noEmit` termina sin errores. Los archivos de prueba también pasan el typecheck.
+- Las 50 pruebas de `apps/server` que usan este paquete siguen pasando.
+
+### I30 — Nomes de pregão
+
+- **Cambios de código.** `TICKER_RENAMES` (en `markets.ts`) refleja las filas `rename` de
+  `TICKER_ALIASES` de `@pm/market-data` y agrega ISA CTEEP → ISA Energia (TRPL → ISAE):
+  - ELET3 → AXIA3;
+  - EMBR3 → EMBJ3;
+  - CCRO3 → MOTV3;
+  - MRFG3 → MBRF3;
+  - PFBCOLOM → PFCIBEST y BCOLOMBIA → CIBEST.
+
+  El resolvedor las aplica en todos los formatos, no solo en SINACOR, con el aviso `TICKER_RENAMED`.
+  Hay un solo activo por acción: si el portafolio ya tiene el código viejo, se sigue usando. Las fusiones
+  y conversiones (BRFS3, NTCO3, CPLE6) no se tratan como cambios de código.
+- **Nombres por fecha.** "NATURA ON" es NTCO3 hasta el 01/07/2025 y NATU3 desde el 02/07/2025.
+- **Cobertura** (`src/pdf/b3-names.ts`):
+  - 210 nombres (184 emisores), con los componentes del Ibovespa y el IBrX-100 de 2023-2025;
+  - 13 ETF;
+  - 38 FII, incluidos los que no traen el ticker en la especificação ("FII XP LOG CI ER" → XPLG11);
+  - 50 BDR, contando la clase DR3 de ROXO34.
+
+  Solo se listan los nombres cuyo ticker es seguro.
+- **Sugerencias aproximadas** (`suggestB3Names`): combinan palabras en común, prefijos y distancia de
+  edición, y muestran el código vigente. Por ejemplo:
+  - "ISA ENERG PN" sugiere ISAE4 primero;
+  - "PETROBRAZ PN" sugiere PETR4.
+
+  También usan los nombres del catálogo inyectado (`options.catalog`, por ejemplo `CATALOG.instruments`
+  de `@pm/market-data`).
+- **Respuestas aprendidas.** Cada operación importada guarda su especificação en la nota ("Nota 123 ·
+  GERDAU MET PN N1"). `securityMapFromTransactions(existentes)` reconstruye las respuestas que el usuario
+  ya dio y se aplican solas en las notas siguientes, con el aviso informativo `SECURITY_LEARNED`. No
+  requiere almacenamiento extra.
+  - Orden de prioridad: respuesta explícita, tabla segura, respuesta aprendida, pregunta.
+  - No se aprenden las respuestas contradictorias ni los nombres que dependen de la fecha.
+
+### I31 — Corpus real-like
+
+No hay documentos reales de usuarios. En su lugar se construyó un corpus que reproduce cómo se generan
+los documentos reales, y las pruebas lo leen desde `test/fixtures/real-like/`.
+
+**Notas SINACOR** de XP (2 páginas), Clear, BTG, Inter y Nu Invest (2024 y 2025). Reproducen:
+- la caja de cabecera, que a veces comparte línea con la dirección o con el nombre de la corredora;
+- el bloque del cliente;
+- las 10 columnas de "Negócios realizados";
+- "Resumo dos Negócios" y "Resumo Financeiro" en dos columnas, con subtotales (Total CBLC, Total Bovespa,
+  Total Custos) que no son costos;
+- "CONTINUA..." en la página 1;
+- el IRRF con su base y el IRRF de day trade;
+- la leyenda de Obs.
+
+Cada nota cambia lo que suele romper a los lectores:
+- Helvetica, Courier o Times;
+- texto por celda, por palabra, por letra o en `TJ` con kerning;
+- contenido comprimido (FlateDecode);
+- orden de dibujo aleatorio;
+- cifrado RC4 o AES-128;
+- "1-BOVESPA" o "B3 RV LISTADO".
+
+**Extractos colombianos:**
+- **Estilo Davivienda Corredores:** resumen del portafolio antes de los movimientos, "SALDO ANTERIOR" y
+  "SALDO FINAL" con fecha, descripciones en dos líneas, montos `$`, `-$` y `( )`, encabezado repetido en
+  la página 2 y pies de página.
+- **Estilo Trii:** fechas "05 mar. 2024", montos "COP 2.390,00" y portafolio al cierre.
+
+**`.xls` guardado por Excel** (`test/helpers/xls-excel.ts`):
+- streams de SummaryInformation en el mini stream;
+- directorio en árbol rojo-negro;
+- cadena del Workbook fragmentada;
+- SST de más de 8 224 bytes partida en CONTINUE a mitad de cadena, con cambio de ancho de carácter,
+  texto enriquecido y datos fonéticos;
+- celdas MULRK, MULBLANK, RK ×100, FORMULA + STRING, BOOLERR y LABEL;
+- celdas combinadas, una hoja oculta y fechas en el sistema 1904 (Mac).
+
+**Errores reales que el corpus destapó y se corrigieron:**
+- **Cabecera de la nota.** El número y la fecha se leían de la línea equivocada cuando la cabecera
+  compartía línea con la dirección. Ahora los valores se buscan bajo su etiqueta, por posición.
+- **Corredora.** No se detectaba si el título "NOTA DE NEGOCIAÇÃO" estaba en la misma línea. Ahora se
+  busca por celda.
+- **Columnas del PDF.** Se mezclaban columnas con fuentes de 6-7 pt. El umbral entre columnas ahora
+  depende del tamaño de la fuente.
+- **Saldos.** "SALDO ANTERIOR" y "SALDO FINAL" con fecha se importaban como depósitos. Ahora se omiten
+  con `BALANCE_ROW`.
+- **Texto suelto de los extractos.** Pies de página, avisos legales y la cabecera de la página 2 daban
+  errores. Ahora quedan como `NOT_A_MOVEMENT`.
+- **Tipo de movimiento.** Sin columna de tipo, "Descripción" (al lado de "Especie") no se usaba, y la
+  venta salía como compra y el dividendo como depósito. Ahora esa columna da el tipo.
+- **Portafolio al cierre.** Influía en la detección del separador decimal. Ya no.
+- **Lector `.xls`:**
+  - honra `DATEMODE` 1904;
+  - lee RSTRING;
+  - ignora las hojas que no son de celdas y pone las ocultas al final;
+  - avisa `XLS_ENCRYPTED` si el libro tiene contraseña de apertura.
+
+### I20 — Cuentas IBKR
+
+- Los movimientos del Activity Statement y del Flex (CSV o XML) llevan el número de cuenta (`U1234567`)
+  como `account`, salvo que el usuario haya elegido otra etiqueta.
+- `accountsCompatible` reglas:
+  - dos números distintos son cuentas distintas;
+  - "IBKR" o "Interactive Brokers" es compatible con cualquiera de ellos;
+  - alias de institución: IBKR/IB/Interactive, Schwab/Charles Schwab, Nu/Nubank/Easynvest, T212/Trading 212.
+- Conciliación:
+  - un extracto con número solo se compara con los movimientos de esa cuenta;
+  - los movimientos de la misma corredora **sin cuenta** se usan por defecto (caso de una sola cuenta);
+  - si el portafolio tiene otras cuentas de la corredora, se usa la variante que mejor explica el
+    extracto;
+  - en ambos casos se avisa `RECONCILIATION_UNASSIGNED` con `reconciliation.unassignedTransactions`.
+
+### I32 — Clase de los BDR
+
+- Una letra después de DRN que no sea una marca conocida (ED, EJ, N1, NM…) se pregunta con
+  `BDR_CLASS_UNCERTAIN` y los códigos candidatos. Por ejemplo, "ALPHABET DRN C" sugiere GOGL34 y GOGL35.
+  Un BDR de varias clases sin letra también se pregunta.
+- **Columna Obs (*).** Si la cabecera de la columna está presente, se lee por posición. Así, una letra
+  en la especificação ya no se confunde con un marcador de Obs.
+
+### I33 — Eventos corporativos listos para confirmar
+
+- Las descripciones de IBKR se leen con `parseIbkrCorporate`, en Flex y en Activity:
+  - "MMM(US…) SPINOFF 1 FOR 4 (SOLV, SOLVENTUM CORP, US…)";
+  - fusiones;
+  - cambios de ISIN.
+- Cada evento trae `proposal.transaction`, una transacción de `@pm/core` lista para usar:
+  - `SPLIT` con `subtype: 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE'`, `targetInstrumentId` y `ratio`;
+  - en los spin-offs, `costFraction` precalculado por valor de mercado del día ex (`referencePrice`);
+  - el activo nuevo en `proposal.instruments`.
+- `missing` dice qué falta (`parent`, `ratio`, `costFraction`).
+- **Un clic:** `acceptCorporateActions: [línea]` o `'all'`, más `corporateActionAnswers` si falta algo,
+  aplica la transacción y la fila pasa a `ok`. Reimportar marca `alreadyImported`.
+- Las incorporações y cisões de B3 Movimentação usan las mismas propuestas a partir de sus filas de
+  entrada y salida.
+- Las adquisiciones en efectivo del Activity ("Merged(Acquisition) FOR USD 10.00 PER SHARE") se importan
+  como venta.
+
+### I2 — Bandeja del servidor por el pipeline normal
+
+`importTransactionBatch({ pending, instruments }, opciones)` hace pasar la respuesta de
+`GET /api/sync/ibkr-flex/inbox` (o cualquier lote de `Transaction[]`) por `finalizeRows`:
+- conserva `id`, `source` e `importHash` del servidor, así que un CSV de Flex ya importado queda
+  `duplicate`;
+- un movimiento cargado a mano o desde otra fuente queda `possible_duplicate`;
+- los activos se emparejan con los del usuario o se proponen;
+- se conservan los campos que el importador no construye (`subtype`, `targetInstrumentId`,
+  `costFraction`).
+
+`importFile` también reconoce ese JSON (`presetId: 'inbox'`), así que la web puede tratarlo como un
+archivo más. La pantalla queda a cargo del agente web.
+
+### Más allá de la revisión
+
+**Correos reenviados** (`importEmail`, `src/email.ts`), como el buzón de Sharesight. Lee:
+- MIME multipart anidado, base64 y quoted-printable;
+- nombres de archivo en RFC 2047 y RFC 2231;
+- correos reenviados como adjunto (`message/rfc822`).
+
+Cada adjunto importable pasa por `importFile`, deduplicado contra los anteriores (la misma nota adjunta
+dos veces queda duplicada). Las notas cifradas se abren con las contraseñas que el usuario guardó
+(`pdfPasswords`; en XP, Clear y Rico son los primeros dígitos del CPF). Si ninguna sirve, quedan en
+`needsPassword`. Una tabla en el HTML del mensaje se importa cuando no hay adjuntos.
+
+La recepción del correo y la verificación del remitente (SPF/DKIM) son tarea del servidor.
+
+### Límites
+
+- **Sin documentos reales.** El corpus es real-like, no real: sigue faltando validar con PDF y `.xls` de
+  usuarios. Se recomienda sumar cada documento real anonimizado a `test/fixtures/real-like/` con su
+  prueba.
+- **Sin OCR** para notas escaneadas.
+- **Sin cadastro de B3 en línea.** Lo que no está en las tablas se pregunta, con sugerencias, y se
+  aprende.
+- **Fracción de costo de los spin-offs.** Cuando el emisor publica una fracción oficial distinta, debe
+  ingresarse como respuesta: el valor de mercado del día ex es la aproximación por defecto.
+- **AXIA6.** `@pm/market-data` solo registra ELET3 → AXIA3, así que ELET6 (PNB) no se renombra.

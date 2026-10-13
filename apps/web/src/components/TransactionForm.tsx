@@ -63,9 +63,11 @@ export function TransactionForm({
     portfolios.find((p) => p.id === selected && !p.isDemo)?.id ?? portfolios.find((p) => !p.isDemo)?.id ?? NEW_PORTFOLIO;
 
   const [type, setType] = useState<TransactionType>('BUY');
-  const [portfolioChoice, setPortfolioId] = useState(defaultPortfolio);
+  // undefined = not chosen by the user: follow the default, which is re-evaluated when the
+  // portfolios live query loads (a cold /movimientos?nuevo=1 starts with an empty list) (W21).
+  const [portfolioChoice, setPortfolioId] = useState<string | undefined>(undefined);
   const portfolioId =
-    portfolioChoice === NEW_PORTFOLIO || portfolios.some((p) => p.id === portfolioChoice) ? portfolioChoice : defaultPortfolio;
+    portfolioChoice && (portfolioChoice === NEW_PORTFOLIO || portfolios.some((p) => p.id === portfolioChoice)) ? portfolioChoice : defaultPortfolio;
   const [date, setDate] = useState(todayIso());
   const [instrument, setInstrument] = useState<Instrument>();
   const [currency, setCurrency] = useState(f.currency);
@@ -108,7 +110,7 @@ export function TransactionForm({
       setNote(src.note ?? '');
     } else {
       setType('BUY');
-      setPortfolioId(defaultPortfolio);
+      setPortfolioId(undefined);
       setDate(todayIso());
       const pre = presetInstrumentId ? instruments.get(presetInstrumentId) : undefined;
       setInstrument(pre);
@@ -220,6 +222,13 @@ export function TransactionForm({
       const inst = draft.instrument;
       if (inst && !instruments.has(inst.id)) await upsertInstruments([inst]);
       let targetPortfolio = portfolioId;
+      // Never create a second portfolio implicitly: if the user did not pick "new" and a real
+      // portfolio exists (possibly created a moment ago), use it.
+      if (targetPortfolio === NEW_PORTFOLIO && portfolioChoice !== NEW_PORTFOLIO) {
+        const real = (await db.portfolios.toArray()).filter((p) => !p.isDemo);
+        const pick = real.find((p) => p.id === selected) ?? real[0];
+        if (pick) targetPortfolio = pick.id;
+      }
       if (targetPortfolio === NEW_PORTFOLIO) {
         const p = await createPortfolio({
           name: t('portfolio.defaultName'),

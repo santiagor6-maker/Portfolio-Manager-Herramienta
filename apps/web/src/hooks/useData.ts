@@ -93,6 +93,7 @@ export function toDataset(raw: RawData, settings: AppSettings, asOf = todayIso()
     asOf,
     benchmarks: settings.benchmarks,
     riskFreeRate: settings.riskFreeRate,
+    riskFreeAuto: settings.riskFreeAuto,
     defaultCostMethod: settings.defaultCostMethod,
   };
 }
@@ -133,7 +134,7 @@ export function useAnalysisDriver(): void {
   const dismissed = useLiveQuery(async () => ((await db.meta.get('dismissedSuggestions'))?.value as string[]) ?? [], []);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
-  const { selectedPortfolioId, reportingCurrency, benchmarks, riskFreeRate, defaultCostMethod } = settings;
+  const { selectedPortfolioId, reportingCurrency, benchmarks, riskFreeRate, riskFreeAuto, defaultCostMethod } = settings;
 
   useEffect(() => {
     if (!ready || !portfolios || !transactions || !instruments || !prices || !fx || !manual || !indexSeries || !corporateActions || !dismissed) return;
@@ -164,6 +165,7 @@ export function useAnalysisDriver(): void {
     reportingCurrency,
     benchmarks,
     riskFreeRate,
+    riskFreeAuto,
     defaultCostMethod,
     setAnalysis,
     setComputing,

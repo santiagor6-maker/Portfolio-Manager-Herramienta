@@ -13,6 +13,8 @@ import { indexName } from '../lib/labels';
 import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd } from '../lib/ids';
 import { useInstrumentMap } from '../hooks/useData';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db/schema';
 import { previousBusinessDay } from '../services/analysis';
 import { benchmarkName } from '../lib/benchmarks';
 
@@ -37,6 +39,8 @@ export default function DashboardPage() {
 
   // Prices older than the previous business day: a "today" change would be meaningless.
   const stalePrices = !!a?.latestPriceDate && a.latestPriceDate < previousBusinessDay(a.asOf);
+  // Movers whose last closes differ (e.g. B3 and NYSE holidays): one date per row (W26).
+  const moversMixed = new Set((a?.movers ?? []).slice(0, 6).map((m) => m.date)).size > 1;
   const rateIdx = a?.rateIndices[0];
   const periodSummary =
     period === 'MTD' ? mtd : period === 'YTD' ? ytd : period === '1Y' ? a?.summaries['1Y'] : period === '3Y' ? a?.summaries['3Y'] : si;
@@ -71,8 +75,8 @@ export default function DashboardPage() {
               <span className="flex items-center gap-1.5">
                 <Delta amount={day.gainBase} pct={day.twr} size="sm" />
                 <span className="text-muted text-xs">
-                  {a?.latestPriceDate && a.latestPriceDate < a.asOf
-                    ? t('dashboard.sinceClose', { date: formatDate(a.movers[0]?.prevDate ?? previousBusinessDay(a.latestPriceDate), f.locale) })
+                  {a?.dayRange && a.dayRange.to < a.asOf
+                    ? t('dashboard.sinceClose', { date: formatDate(a.dayRange.from, f.locale) })
                     : t('dashboard.today')}
                 </span>
               </span>
@@ -188,7 +192,13 @@ export default function DashboardPage() {
 
         <Card
           title={t('dashboard.movers')}
-          subtitle={a?.movers[0] ? t('dashboard.moversSub', { date: formatDate(a.movers[0].date, f.locale) }) : undefined}
+          subtitle={
+            a?.movers[0]
+              ? moversMixed
+                ? t('dashboard.moversSubMixed')
+                : t('dashboard.moversSub', { date: formatDate(a.movers[0].date, f.locale) })
+              : undefined
+          }
         >
           {loading ? (
             <Skeleton className="h-[200px]" />
@@ -204,6 +214,7 @@ export default function DashboardPage() {
                     >
                       <span className="w-[86px] font-semibold text-[13px] truncate">{l.symbol}</span>
                       <span className="flex-1 text-xs text-muted truncate">{l.name}</span>
+                      {moversMixed && <span className="text-[11px] text-muted num whitespace-nowrap" data-testid="mover-date">{formatDate(m.date, f.locale, 'short')}</span>}
                       <Delta pct={m.changePct} size="sm" className="w-[74px] justify-end" />
                     </Link>
                   </li>
@@ -303,6 +314,11 @@ function FreshnessCard() {
   const f = useFmt();
   const { analysis: a } = useAnalysis();
   const sources = Object.entries(market.sources);
+  const instruments = useInstrumentMap();
+  // Market-data R5: series where the server's snapshot covers only part of the range.
+  const partial = useLiveQuery(() => db.priceSeries.filter((s) => !!s.partial).primaryKeys(), [], [] as string[]).map(
+    (id) => instruments.get(String(id))?.symbol ?? String(id),
+  );
   return (
     <Card title={t('dashboard.freshness')} subtitle={t('dashboard.freshnessSub')}>
       <ul className="text-[13px] flex flex-col gap-2">
@@ -312,16 +328,22 @@ function FreshnessCard() {
           <span className="chip">{t(`market.status.${market.status}`)}</span>
         </li>
         {sources.map(([name, s]) => (
-          <li key={name} className="flex items-center gap-2">
+          <li key={name} className="flex flex-wrap items-center gap-2">
             <span className={`size-2 rounded-full ${s.ok ? 'bg-pos' : 'bg-warn'}`} aria-hidden />
             <span className="flex-1">
               {name.startsWith('idx_') ? `${t('source.index')} ${indexName(name.slice(4))}` : t(`source.${name}`, { defaultValue: name })}
               {s.count ? <span className="text-muted text-xs"> · {s.count}</span> : null}
             </span>
-            <span className="text-xs text-muted">{s.updatedAt ? formatRelative(s.updatedAt, f.locale) : s.ok ? '—' : t('market.failed')}</span>
+            <span className="text-xs text-muted" title={s.message}>{s.updatedAt ? formatRelative(s.updatedAt, f.locale) : s.ok ? '—' : t('market.failed')}</span>
+            {!s.ok && name.startsWith('idx_') && <span className="basis-full text-[11px] text-muted pl-4">{t('dashboard.indexFailedImpact')}</span>}
           </li>
         ))}
         {!sources.length && <li className="text-xs text-muted">{t('dashboard.noSources')}</li>}
+        {partial.length > 0 && (
+          <li className="text-xs text-warn" data-testid="partial-series">
+            {t('md.partialList', { symbols: partial.join(', ') })}
+          </li>
+        )}
         {a && (
           <li className="text-xs text-muted pt-1 border-t border-line">
             {t('dashboard.computeTime', { ms: a.computeMs })}

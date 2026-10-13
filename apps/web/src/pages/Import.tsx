@@ -121,7 +121,8 @@ export default function ImportPage() {
       // Daily-sync inbox: tell the server these transactions were picked up.
       if (syncOrigin === 'ibkr-inbox') {
         try {
-          await clearIbkrInbox(pid);
+          const ids = result.rows.flatMap((x) => (x.transaction ? [x.transaction.id] : []));
+          await clearIbkrInbox(pid, ids);
         } catch (e) {
           setError(syncErrorText(e, t));
         }

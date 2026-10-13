@@ -213,8 +213,10 @@ export async function importFlexXml(xml: string, options: ImportOptions): Promis
   const detection: DetectionInfo = {
     fileKind: 'unknown', presetId: 'ibkr-flex-sync', presetLabel: 'Interactive Brokers — Flex Web Service', presetConfidence: 'medium', score: 1,
   };
-  const ctx = new ParseContext(table, { account: 'Interactive Brokers', ...options }, 'ibkr-flex');
+  const ctx = new ParseContext(table, options, 'ibkr-flex');
   const rows = ibkrFlexPreset.parse(table, ctx);
+  // Rows without an account number (I20 labels the others with their U…) keep the broker name.
+  if (!options.account) for (const r of rows) for (const d of [r.draft, ...(r.extra ?? [])]) if (d && !d.account) d.account = 'Interactive Brokers';
   for (const [section, count] of unhandled) ctx.fileIssues.push(ctx.issue('UNHANDLED_SECTION', 'warning', { section, count }));
   detection.dateFormat = ctx.dateFormat;
   detection.numberFormat = ctx.numberFormat;
