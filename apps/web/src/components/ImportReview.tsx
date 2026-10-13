@@ -11,7 +11,7 @@ import type { Instrument } from '@pm/core';
 import { Card } from './ui';
 import { InstrumentPicker } from './InstrumentPicker';
 import { useFmt } from '../store/app';
-import { formatDate } from '../lib/format';
+import { formatDate, formatPct } from '../lib/format';
 import type { DateFormat, ImportAnswers, ImportResult, NumberFormat } from '../services/importers';
 import { unresolvedSecurities } from '../services/importers';
 import { MANUAL_EXCHANGES, exchangeLabel } from '../lib/exchanges';
@@ -220,12 +220,17 @@ export function CorporateEvents({
   onChange,
   updates,
   onUpdates,
+  onAccept,
+  busy,
 }: {
   result: ImportResult;
   choices: Record<number, CaChoice>;
   onChange: (c: Record<number, CaChoice>) => void;
   updates: Set<string>;
   onUpdates: (s: Set<string>) => void;
+  /** Importers R4: accept a ready-made proposal (re-runs the import). Undefined when re-running is impossible. */
+  onAccept?: (line: number, answer: { costFraction?: number }) => void;
+  busy?: boolean;
 }) {
   const { t } = useTranslation();
   const f = useFmt();
@@ -238,6 +243,59 @@ export function CorporateEvents({
         <ul className="flex flex-col gap-2" data-testid="import-corporate-actions">
           {cas.map((c) => {
             const ch = choices[c.line] ?? { include: true, costFraction: '' };
+            const pr = c.proposal;
+            if (pr) {
+              const tx = pr.transaction;
+              const needsCost = pr.missing.includes('costFraction');
+              const blocked = pr.missing.some((m) => m !== 'costFraction');
+              const cost = parseDecimal(ch.costFraction, f.locale);
+              return (
+                <li key={c.line} className="rounded-lg border border-line p-3 text-[13px]" data-testid="ca-proposal">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="chip">{t(`impr.caKind.${c.kind}`)}</span>
+                    <span className="num text-xs text-muted">{formatDate(c.date, f.locale, 'short')}</span>
+                    {pr.applied && <span className="chip !text-pos !border-pos/30">{t('impr.caAccepted')}</span>}
+                    {pr.alreadyImported && <span className="chip">{t('impr.caAlready')}</span>}
+                  </div>
+                  <div className="mt-1">{c.description}</div>
+                  {tx && (
+                    <div className="text-xs text-ink-2 mt-1">
+                      {t('impr.caProposal', {
+                        from: tx.instrumentId?.split(':').pop(),
+                        to: tx.targetInstrumentId?.split(':').pop(),
+                        ratio: new Intl.NumberFormat(f.locale, { maximumFractionDigits: 6 }).format(tx.ratio ?? 1),
+                      })}
+                      {tx.costFraction !== undefined && (
+                        <>
+                          {' · '}
+                          {t('impr.caCost', { pct: formatPct(tx.costFraction, f.locale) })}{' '}
+                          <span className="text-muted">({t(`impr.caCostSource.${pr.costFractionSource ?? 'market'}`)})</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {blocked && <div className="text-xs text-warn mt-1">{t('impr.caMissing', { fields: pr.missing.map((m) => t(`impr.caField.${m}`)).join(', ') })}</div>}
+                  {!pr.applied && !pr.alreadyImported && !blocked && onAccept && (
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      {needsCost && (
+                        <label className="flex items-center gap-2 text-xs">
+                          {t('impr.costFraction')}
+                          <input className="input num !w-24 !h-8" inputMode="decimal" value={ch.costFraction} onChange={(e) => onChange({ ...choices, [c.line]: { ...ch, costFraction: e.target.value } })} placeholder="10" />%
+                        </label>
+                      )}
+                      <button
+                        className="btn btn-sm btn-primary"
+                        data-testid="ca-accept"
+                        disabled={busy || (needsCost && cost === undefined)}
+                        onClick={() => onAccept(c.line, needsCost && cost !== undefined ? { costFraction: cost / 100 } : {})}
+                      >
+                        {t('impr.caAccept')}
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            }
             return (
               <li key={c.line} className="rounded-lg border border-line p-3 text-[13px]">
                 <label className="flex items-start gap-2">

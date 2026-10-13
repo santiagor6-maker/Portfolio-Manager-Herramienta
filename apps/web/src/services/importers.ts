@@ -37,6 +37,9 @@ export interface ImportAnswers {
   acceptDuplicates?: number[];
   /** Unknown security spec / ticker → instrument id or MIC. */
   securityMap?: Record<string, string>;
+  /** Importers R4: corporate-action proposals accepted with one click, and the answers they need. */
+  acceptCorporateActions?: number[];
+  corporateActionAnswers?: Record<number, { costFraction?: number; ratio?: number }>;
 }
 
 export interface ImportRequest {
@@ -75,6 +78,8 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
       dateFormat: req.answers?.dateFormat,
       numberFormat: req.answers?.numberFormat,
       acceptDuplicates: req.answers?.acceptDuplicates?.length ? req.answers.acceptDuplicates : 'none',
+      acceptCorporateActions: req.answers?.acceptCorporateActions?.length ? req.answers.acceptCorporateActions : undefined,
+      corporateActionAnswers: req.answers?.corporateActionAnswers,
       securityMap: req.answers?.securityMap && Object.keys(req.answers.securityMap).length ? req.answers.securityMap : undefined,
       catalog: (await import('../lib/catalog')).CATALOG,
       idFactory: () => newId('tx'),
