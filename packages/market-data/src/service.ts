@@ -298,14 +298,18 @@ export class MarketDataService {
       return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(y), target: this.target(y) };
     }
     if (!isValidSymbol(key)) throw new MarketDataError('BAD_REQUEST', `Invalid symbol "${key}"`);
-    // Bare symbols as broker statements write them (ECOPETROL, PFAVAL, GEB, ISA): the catalog is
-    // checked first, and only then the US (review R4, M33).
+    // Bare symbols. On Yahoo, and in the importers and the web app, a bare symbol IS the US listing
+    // (DTE = DTE Energy, BP = the NYSE ADR), so it stays US (review R5, M36). Exceptions:
+    //  - a plain word of 6-12 letters can never be a US ticker (at most 5 letters, plus a class):
+    //    it is a BVC nemotécnico (ECOPETROL, PFAVAL, CEMARGOS, BOGOTA) — catalog or `.CL` (R4, M33);
+    //  - a short catalog symbol with no US listing on Yahoo (GEB, ISA, IWDA) is moved to its catalog
+    //    listing by `resolveListed()`, which checks Yahoo (cached).
     if (!key.includes('.')) {
-      const local = this.catalog.bySymbol(key)[0];
-      if (local) return this.resolve(local.id);
-      // US tickers have at most 5 letters (plus a class: BRK-B); a longer plain word is a BVC
-      // nemotécnico (CEMARGOS, PFGRUPSURA, BOGOTA, CONCONCRET).
+      const matches = this.catalog.bySymbol(key);
+      const us = matches.find((i) => i.providerSymbols?.yahoo?.toUpperCase() === key.toUpperCase());
+      if (us) return this.resolve(us.id);
       if (/^[A-Z]{6,12}$/i.test(key)) {
+        if (matches[0]) return this.resolve(matches[0].id);
         const cl = `${key.toUpperCase()}.CL`;
         return findAlias(cl) ? this.resolve(cl) : { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(cl), target: this.target(cl) };
       }
@@ -320,6 +324,41 @@ export class MarketDataService {
     }
     const y = key.toUpperCase();
     return { kind: 'market', alias, instrument: this.catalog.byYahooSymbol(y), target: this.target(y) };
+  }
+
+  /**
+   * `resolve()` plus the one case that needs the network (review R5, M36): a bare symbol of up to
+   * 5 characters that the catalog lists only outside the US (GEB and ISA on the BVC, IWDA in
+   * Amsterdam) goes to that listing ONLY if Yahoo has no US listing under the same symbol. DTE, ALV,
+   * BP, VOD, SAP or ETB exist in the US, so they stay US (Yahoo's semantics for a bare symbol).
+   */
+  async resolveListed(input: string): Promise<Resolved> {
+    const r = this.resolve(input);
+    const key = typeof input === 'string' ? input.trim() : '';
+    if (r.kind !== 'market' || r.instrument || r.alias || !/^[A-Z][A-Z0-9-]{0,4}$/i.test(key)) return r;
+    const local = this.catalog.bySymbol(key);
+    if (!local.length) return r;
+    let us: boolean;
+    try {
+      us = await this.usListingExists(key.toUpperCase());
+    } catch {
+      us = true; // cannot tell (Yahoo down): keep Yahoo's semantics
+    }
+    return us ? r : this.resolve(local[0]!.id);
+  }
+
+  /** Does Yahoo have a US-dollar listing under this bare symbol? Cached 30 days. */
+  private async usListingExists(symbol: string): Promise<boolean> {
+    const { value } = await this.cache.getOrLoad(`bare-us:v1:${symbol}`, 30 * DAY, async () => {
+      try {
+        const q = await this.yahoo.quote(symbol);
+        return q.currency === 'USD';
+      } catch (e) {
+        if (e instanceof MarketDataError && e.code === 'NOT_FOUND') return false;
+        throw e;
+      }
+    });
+    return value;
   }
 
   private target(yahoo: string, inst?: Instrument): PriceTarget {
@@ -452,7 +491,7 @@ export class MarketDataService {
   // -------------------------------------------------------------------------- quotes
 
   async quote(input: string): Promise<Quote> {
-    const r = this.resolve(input);
+    const r = await this.resolveListed(input);
     if (r.kind === 'delisted') {
       const a = r.alias!;
       throw new MarketDataError(
@@ -765,7 +804,7 @@ export class MarketDataService {
     const adjust: PriceAdjustment = req.adjust ?? 'none';
     if (adjust !== 'none' && adjust !== 'splits' && adjust !== 'total') throw new MarketDataError('BAD_REQUEST', `Invalid adjust "${String(adjust)}" (none|splits|total)`);
     if (typeof req.symbol !== 'string') throw new MarketDataError('BAD_REQUEST', 'Missing "symbol"');
-    const r = this.resolve(req.symbol);
+    const r = await this.resolveListed(req.symbol);
     const asOf = this.now().toISOString();
     if (r.kind === 'delisted') return this.delistedHistory(req, r, from, to, interval, asOf);
     const { h: raw, fallbacks } = r.kind === 'market' ? await this.marketDaily(r, from, to) : await this.otherDaily(r, from, to);
@@ -985,7 +1024,7 @@ export class MarketDataService {
 
   /** Drop cached data for a symbol (all years, quotes, fallbacks). */
   async invalidate(symbol: string): Promise<{ removed: number }> {
-    const r = this.resolve(symbol);
+    const r = await this.resolveListed(symbol);
     let removed = 0;
     for (const prefix of [`hist:${YEAR_CHUNK_VERSION}:yahoo:${r.target.yahoo}:`, `quote:yahoo:${r.target.yahoo}`, `yahoo:splits:${r.target.yahoo}`, `hist:alt:`]) {
       if (prefix === 'hist:alt:') {
