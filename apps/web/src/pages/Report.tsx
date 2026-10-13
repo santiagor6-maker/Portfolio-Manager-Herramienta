@@ -5,9 +5,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileDown, Printer } from 'lucide-react';
+import { Copy, FileDown, Link2, Printer } from 'lucide-react';
 import type { MonthlyRow, PerformanceSummary } from '@pm/core';
-import { PageHeader, Segmented, Skeleton, Banner } from '../components/ui';
+import { PageHeader, Segmented, Skeleton, Banner, Modal, Field } from '../components/ui';
+import { encodeShare, sanitizeReportHtml } from '../lib/share';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { usePortfolios } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
@@ -118,8 +119,57 @@ export default function ReportPage() {
     downloadText(`informe-${(portfolioName || 'portafolio').toLowerCase().replace(/[^a-z0-9]+/gi, '-')}-${range?.to ?? today}.html`, html, 'text/html');
   };
 
+  // W10: read-only link carrying the rendered report in the URL fragment (optionally encrypted).
+  const [shareOpen, setShareOpen] = useState(false);
+  const [sharePass, setSharePass] = useState('');
+  const [shareUrl, setShareUrl] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const makeLink = async () => {
+    if (!ref.current) return;
+    const frag = await encodeShare(
+      { v: 1, t: `${t('report.title')} · ${portfolioName} · ${periodLabel}`, h: sanitizeReportHtml(ref.current.outerHTML), g: new Date().toISOString(), lang: f.language },
+      sharePass || undefined,
+    );
+    setShareUrl(`${location.origin}/compartido#${frag}`);
+    setCopied(false);
+  };
+
   return (
     <div>
+      <Modal
+        open={shareOpen}
+        onClose={() => {
+          setShareOpen(false);
+          setShareUrl(undefined);
+        }}
+        title={t('share.title')}
+      >
+        <div className="flex flex-col gap-3 text-[13px]">
+          <p className="text-ink-2">{t('share.explain')}</p>
+          <Field label={t('share.passphraseOptional')} htmlFor="share-pass-new" hint={t('share.passphraseHint')}>
+            <input id="share-pass-new" className="input" type="password" autoComplete="new-password" value={sharePass} onChange={(e) => setSharePass(e.target.value)} />
+          </Field>
+          <button className="btn btn-primary self-start" onClick={() => void makeLink()} data-testid="share-create">
+            <Link2 size={15} /> {t('share.create')}
+          </button>
+          {shareUrl && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex gap-2">
+                <input className="input font-mono text-xs" readOnly value={shareUrl} onFocus={(e) => e.target.select()} data-testid="share-url" aria-label={t('share.title')} />
+                <button
+                  className="btn"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(shareUrl).then(() => setCopied(true));
+                  }}
+                >
+                  <Copy size={14} /> {copied ? t('share.copied') : t('share.copy')}
+                </button>
+              </div>
+              <span className="text-xs text-muted">{t('share.size', { kb: Math.ceil(shareUrl.length / 1024) })}</span>
+            </div>
+          )}
+        </div>
+      </Modal>
       <div className="print:hidden">
         <PageHeader
           title={t('report.title')}
@@ -152,6 +202,9 @@ export default function ReportPage() {
                   ))}
                 </select>
               )}
+              <button className="btn" onClick={() => setShareOpen(true)} disabled={!a?.hasTransactions} data-testid="report-share">
+                <Link2 size={15} /> {t('share.button')}
+              </button>
               <button className="btn" onClick={snapshot} disabled={!a?.hasTransactions} data-testid="report-snapshot">
                 <FileDown size={15} /> {t('report.snapshot')}
               </button>

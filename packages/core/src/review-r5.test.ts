@@ -75,7 +75,8 @@ describe('C46 — a run of consistent trade prices confirms a new level', () => 
     // the first new price is re-accepted: February ends at 3.5
     expect(valuePortfolio(inp, '2024-02-29').totalMarketValueBase).toBeCloseTo(1010 * 3.5, 9);
     expect(codes(inp).filter((c) => c.startsWith('TRADE'))).toEqual(['TRADE_PRICE_CONFIRMED_BY_RUN']);
-    expect(performanceSummary(inp, 'SI', '2024-04-30').warnings ?? []).toEqual([]);
+    // round 7 (C48): the run confirmation is a warning that reaches the summary
+    expect(performanceSummary(inp, 'SI', '2024-04-30').warnings ?? []).toEqual(['TRADE_PRICE_CONFIRMED_BY_RUN:PV']);
   });
 
   const sol = (extra: Transaction[]): EngineInput => ({
@@ -121,7 +122,7 @@ describe('C46 — a run of consistent trade prices confirms a new level', () => 
       ],
     };
     expect(valuePortfolio(inp, '2024-03-31').totalMarketValueBase).toBeCloseTo(1020, 9);
-    expect(codes(inp).filter((c) => c.startsWith('TRADE'))).toEqual(['TRADE_PRICE_OUTLIER', 'TRADE_PRICE_OUTLIER']);
+    expect(codes(inp).filter((c) => c.startsWith('TRADE'))).toEqual(['TRADE_PRICE_UNIT_SUSPECT', 'TRADE_PRICE_UNIT_SUSPECT']);
   });
 });
 

@@ -311,7 +311,15 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
   // DARF payment status and late charges.
   const allDarfs = rows.flatMap((r) => (r.darf ? [r.darf] : []));
   const payments = [...(opts.payments ?? []), ...darfPaymentsFromTransactions(input.transactions)];
-  issues.push(...settleDarfs(allDarfs, payments, { asOf: opts.asOf, selicMonthly: opts.selicMonthly }));
+  // Only 6015 (or uncoded) payments belong to the B3 apuração; 4600/0190/0211 go to their reports.
+  const b3Payments = payments.filter((p) => !p.code || p.code === '6015');
+  issues.push(
+    ...settleDarfs(allDarfs, b3Payments, {
+      asOf: opts.asOf,
+      selicMonthly: opts.selicMonthly,
+      reportUnmatched: (p) => (p.month ?? p.date.slice(0, 7)) >= from && (p.month ?? p.date.slice(0, 7)) <= end,
+    }),
+  );
 
   const shown = rows.filter((r) => r.month >= from && r.month <= end);
   const darfs = shown.flatMap((r) => (r.darf ? [r.darf] : []));
@@ -327,7 +335,9 @@ export function brazilMonthlyApuracao(input: TaxInput, opts: BrApuracaoOptions =
       irrfUsed: sum(shown.map((r) => r.irrf.used)),
       darfTotal: sum(darfs.map((d) => d.amount)),
       exemptGain: sum(shown.map((r) => r.exemptGain)),
-      darfOpen: sum(darfs.filter((d) => d.status === 'pendente' || d.status === 'vencida').map((d) => d.late?.total ?? d.amount)),
+      darfOpen: sum(
+        darfs.map((d) => (d.status === 'paga_parcial' ? (d.balance ?? 0) : d.status === 'pendente' || d.status === 'vencida' ? (d.late?.total ?? d.amount) : 0)),
+      ),
     },
     lossesAtEnd: { comum: lossComum, dayTrade: lossDt, fii: lossFii },
     irrfUnusedByYear,

@@ -221,8 +221,28 @@ export interface ImportResult {
    * on several venues). The UI asks the user, stores the answers and passes them back as `securityMap`.
    */
   unknownSecurities?: UnknownSecurity[];
+  /**
+   * Brokerage notes held for review (I35): they do not add up to "Líquido para" or have unreadable trade
+   * lines. Their rows are `pending` and get no costs until fixed or accepted (`acceptNotes`).
+   */
+  noteChecks?: NoteCheck[];
   /** Suggested updates to existing instruments (e.g. a guessed US exchange now known). */
   instrumentUpdates?: { id: string; changes: Partial<Instrument>; reason: string }[];
+}
+
+export interface NoteCheck {
+  nota: string;
+  date?: ISODate;
+  /** Net printed in "Líquido para" (negative = debit), when present. */
+  actualNet?: number;
+  /** Net implied by the trades that were read and the costs. */
+  expectedNet: number;
+  /** Lines that look like trades but could not be read (each also has an UNPARSED_LINE error row). */
+  unparsedLines: number[];
+  /** Lines of the trades that were read (pending). */
+  lines: number[];
+  /** Total costs of the note (to be allocated once the note is accepted). */
+  costs: number;
 }
 
 export interface UnknownSecurity {
@@ -259,6 +279,8 @@ export interface ReportedPosition {
   costBasis?: number;
   marketValue?: number;
   price?: number;
+  /** Account of the position in consolidated statements (IBKR U1234567). */
+  account?: string;
 }
 
 export interface PositionDifference {
@@ -267,16 +289,20 @@ export interface PositionDifference {
   reported: number;
   computed: number;
   difference: number;
+  /** Account compared (consolidated multi-account statements). */
+  account?: string;
 }
 
 export interface Reconciliation {
   asOf?: ISODate;
   source: string;
   positions: ReportedPosition[];
-  cash: { currency: CurrencyCode; amount: number }[];
+  cash: { currency: CurrencyCode; amount: number; account?: string }[];
   /** Computed (existing + imported) vs. reported; only rows that differ. */
   positionDifferences: PositionDifference[];
-  cashDifferences: { currency: CurrencyCode; reported: number; computed: number; difference: number }[];
+  cashDifferences: { currency: CurrencyCode; reported: number; computed: number; difference: number; account?: string }[];
+  /** Accounts reconciled separately (consolidated statements). */
+  accounts?: string[];
   /**
    * Existing transactions of this broker without an account label whose attribution changes the result
    * (they may belong to another account of the same broker). Label them to make reconciliation exact.
@@ -443,6 +469,11 @@ export interface ImportOptions {
   acceptDuplicates?: 'none' | 'in-file' | 'all' | number[];
   /** Apply the proposed corporate-action transactions (spin-offs, mergers) of these lines, or all complete ones. */
   acceptCorporateActions?: 'all' | number[];
+  /**
+   * Brokerage notes (by number) the user accepts although they do not reconcile with "Líquido para" or
+   * have unreadable lines: costs are then allocated over the trades that were read (I35).
+   */
+  acceptNotes?: string[];
   /** Answers that complete corporate-action proposals (cost fraction, ratio, parent), by line. */
   corporateActionAnswers?: Record<number, CorporateActionAnswer>;
   /** Instrument catalog (e.g. `CATALOG.instruments` from @pm/market-data) for ISIN/symbol → exchange. */

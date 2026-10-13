@@ -4,6 +4,7 @@ import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import type { TransferBasisMap } from '../common/basis';
 import { displaySymbol, grossAmount, instrumentMap, round2, sortTransactions, sum } from '../common/util';
+import { restructureOf } from '../common/corporate';
 import { classifyForBrazil, cryptoCustodyOf, routeCryptoByCustody, type BrCategory, type CryptoCustody } from './classify';
 import { accumulateDarfs, paymentsForCode, settleDarfs, type DarfGuide, type DarfPayment } from './darf';
 
@@ -112,6 +113,8 @@ export interface CryptoOptions {
   acceptNoteProposals?: boolean;
   /** Confirmed pairings TRANSFER_IN id -> TRANSFER_OUT id (T58). */
   confirmedTransfers?: Record<string, string>;
+  /** Decision on crypto OUTs without arrival (T63/T70): 'mantido' pairs a later compatible deposit. */
+  transitResolution?: Record<string, 'alienado' | 'mantido'>;
   /** Max days between OUT and IN for automatic pairing (default 90, T58). */
   transferMaxLateDays?: number;
   /** Reference date for DARF status (pendente / vencida) — T61. */
@@ -140,6 +143,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     acceptNoteProposals: opts.acceptNoteProposals,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    transitResolution: opts.transitResolution,
   });
   const input = routed.input;
   const instruments = instrumentMap(input.instruments);
@@ -186,11 +190,16 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       const carried = routed.transferBasis[tx.id];
       // T48: a transfer from another custody carries its original BRL cost.
       p.cost += carried ? carried.totalCost * carried.fxRate : (grossAmount(tx) + (tx.fees ?? 0)) * rate;
+    } else if (tx.type === 'SPLIT') {
+      // Plain split: units scale; SPINOFF (fork): the parent keeps the units and gives up costFraction
+      // of its cost (moved to the target by the routing). MERGER/TICKER_CHANGE arrive as OUT/IN pairs.
+      const rs = restructureOf(tx);
+      if (!rs) p.qty *= tx.ratio ?? 1;
+      else if (rs.kind === 'SPINOFF' && rs.target) p.cost -= p.cost * rs.costFraction;
     } else if (tx.type === 'SELL' && routed.pendingCostSales.has(tx.id)) {
-      if (tx.date >= `${opts.year - 1}-01-01`) {
-        const grossBrl = grossAmount(tx) * rate;
-        sales.push({ transactionId: tx.id, date: tx.date, instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: tx.quantity ?? 0, grossBrl, costBrl: 0, gainBrl: 0, pendingCost: true });
-      }
+      // All years: the R$ 10 accumulation can come from any earlier month (T69).
+      const grossBrl = grossAmount(tx) * rate;
+      sales.push({ transactionId: tx.id, date: tx.date, instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: tx.quantity ?? 0, grossBrl, costBrl: 0, gainBrl: 0, pendingCost: true });
     } else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') {
       const q = Math.min(tx.quantity ?? 0, p.qty);
       if ((tx.quantity ?? 0) > p.qty + 1e-12) {
@@ -199,7 +208,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
       const cost = p.qty > 0 ? (p.cost * q) / p.qty : 0;
       p.qty -= q;
       p.cost -= cost;
-      if (tx.type === 'SELL' && tx.date >= `${opts.year - 1}-01-01` && q > 0) {
+      if (tx.type === 'SELL' && q > 0) {
         const share = q / (tx.quantity ?? q);
         const grossBrl = grossAmount(tx) * share * rate;
         const net = (grossAmount(tx) - (tx.fees ?? 0)) * share * rate;
@@ -291,6 +300,7 @@ export function brazilCryptoReport(rawInput: TaxInput, opts: CryptoOptions): Cry
     asOf: opts.asOf,
     selicMonthly: opts.selicMonthly,
     label: '4600 (criptoativos)',
+    reportUnmatched: (p) => (p.month ?? p.date.slice(0, 7)).startsWith(`${opts.year}-`),
   });
   issues.push(...settle.filter((i) => !/ de (\d{4})-/.test(i.message) || i.message.includes(` de ${opts.year}-`)));
   const months = allMonths.filter((m) => inYear(m.month));

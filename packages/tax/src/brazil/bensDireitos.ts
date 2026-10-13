@@ -215,6 +215,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     acceptNoteProposals: opts.acceptNoteProposals,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    transitResolution: opts.transitResolution,
   };
   const cryptoRouting = routeCryptoByCustody(input, cx);
   // T62: provisional/pending crypto cost is written on the line the user copies to the DIRPF.
@@ -287,6 +288,7 @@ export function brazilBensDireitos(input: TaxInput, opts: BensDireitosOptions): 
     acceptNoteProposals: opts.acceptNoteProposals,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    transitResolution: opts.transitResolution,
   });
   issues.push(...foreign.issues.filter((i) => i.code !== 'PRE_LEI_14754'));
   const fPrev = new Map(foreign.positionsPrevYear.map((p) => [p.instrumentId, p]));

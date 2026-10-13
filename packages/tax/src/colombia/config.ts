@@ -86,6 +86,17 @@ const COMMON = {
   gmfExemptMonthlyUvt: 350,
 };
 
+/**
+ * Retención en la fuente on rendimientos financieros (CDT, bonos) used ONLY to estimate the gross of an
+ * interest recorded net (`amountIsNet`, T67); same default as core's CO_RETENCION regime. The
+ * instrument's `accrual.withholdingRate` wins. Never credited as certified withholding.
+ */
+export const COLOMBIA_INTEREST_WITHHOLDING_RATE = 0.04;
+export const COLOMBIA_INTEREST_WITHHOLDING_META: ParamMeta = {
+  status: 'needs-verification',
+  source: 'Decreto 700/1997 y DUR 1625/2016 (rendimientos financieros); tarifa usual de CDT 4% — confirmar con el certificado del emisor',
+};
+
 export const COLOMBIA_TAX_YEARS: Record<number, ColombiaTaxYearConfig> = {
   2022: cfg({
     ...COMMON,

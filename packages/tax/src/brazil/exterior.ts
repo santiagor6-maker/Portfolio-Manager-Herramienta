@@ -1,6 +1,7 @@
 import type { CurrencyCode, ISODate, YearMonth } from '@pm/core';
 import { basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { CurrencyPool, type PoolBalance } from '../common/cashPool';
+import { mergerCashCostFraction, restructureIssues, restructureOf } from '../common/corporate';
 import { addDays, isBrazilBusinessDay, lastBrazilBusinessDayOfMonth, nextMonth, yearOf } from '../common/dates';
 import { gcapTax } from './crypto';
 import { TAX_DISCLAIMER } from '../common/disclaimer';
@@ -34,6 +35,8 @@ export interface BrForeignOptions {
   accountCustody?: Record<string, CryptoCustody>;
   /** Confirmed crypto pairings TRANSFER_IN id -> TRANSFER_OUT id (T58). */
   confirmedTransfers?: Record<string, string>;
+  /** Decision on crypto OUTs without arrival (T63/T70): 'mantido' pairs a later compatible deposit. */
+  transitResolution?: Record<string, 'alienado' | 'mantido'>;
   /** Max days between OUT and IN for automatic crypto pairing (default 90, T58). */
   transferMaxLateDays?: number;
   /** Pre-2024 DARFs (4600/0190): reference date for status, payments (by code) and Selic — T61. */
@@ -181,6 +184,7 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
     acceptNoteProposals: opts.acceptNoteProposals,
     confirmedTransfers: opts.confirmedTransfers,
     transferMaxLateDays: opts.transferMaxLateDays,
+    transitResolution: opts.transitResolution,
   });
   const routingIssues = routed.issues;
   const input = routed.input;
@@ -425,10 +429,60 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
         }
         break;
       }
-      case 'SPLIT':
+      case 'SPLIT': {
+        const rs = restructureOf(tx);
+        if (rs && inst?.assetClass === 'crypto') {
+          // Crypto restructurings are routed as per-custody OUT/IN pairs (classify.ts); a fork
+          // (SPINOFF) only gives up costFraction of the parent cost here.
+          if (rs.kind === 'SPINOFF' && rs.target) {
+            p.costFx -= p.costFx * rs.costFraction;
+            p.costBrl -= p.costBrl * rs.costFraction;
+          }
+          break;
+        }
+        if (rs) {
+          // T64/T65: merger / ticker change / spin-off — quantity and cost (FX and BRL) move to the target.
+          issues.push(...restructureIssues(tx, rs, displaySymbol(id, inst)));
+          if (!rs.target) break;
+          const tp = pos.get(rs.target) ?? { qty: 0, costFx: 0, costBrl: 0 };
+          pos.set(rs.target, tp);
+          if (rs.cash > 0 && p.qty > 0) {
+            const f = mergerCashCostFraction(rs, p.qty, p.costFx, input.market, tx.date, rs.cash);
+            const ps = rate('sell', ccy, tx.date);
+            const costBrl = p.costBrl * f;
+            const costFx = p.costFx * f;
+            p.costBrl -= costBrl;
+            p.costFx -= costFx;
+            agg(ty).sales.push({
+              transactionId: tx.id,
+              date: tx.date,
+              instrumentId: id,
+              symbol: displaySymbol(id, inst),
+              currency: ccy,
+              quantity: 0,
+              proceedsFx: rs.cash,
+              ptaxSell: ps,
+              proceedsBrl: rs.cash * ps,
+              costBrl,
+              costFx,
+              gainBrl: rs.cash * ps - costBrl,
+            });
+            pool.add(ccy, rs.cash, rs.cash * ps);
+          }
+          let q = p.qty * rs.ratio;
+          if (Math.abs(q - Math.round(q)) < 0.01) q = Math.round(q);
+          tp.qty += q;
+          tp.costFx += p.costFx * rs.costFraction;
+          tp.costBrl += p.costBrl * rs.costFraction;
+          p.costFx -= p.costFx * rs.costFraction;
+          p.costBrl -= p.costBrl * rs.costFraction;
+          if (rs.kind !== 'SPINOFF') Object.assign(p, { qty: 0, costFx: 0, costBrl: 0 });
+          break;
+        }
         p.qty *= snapRatio(tx.ratio ?? 1);
         if (Math.abs(p.qty - Math.round(p.qty)) < 0.01) p.qty = Math.round(p.qty);
         break;
+      }
       case 'STOCK_DIVIDEND': {
         const newQty = tx.quantity ?? p.qty * (tx.ratio ?? 0);
         p.qty += newQty;
@@ -448,7 +502,19 @@ export function brazilForeignAnnualReport(rawInput: TaxInput, opts: BrForeignOpt
       }
       case 'DIVIDEND':
       case 'INTEREST': {
-        const gross = grossAmount(tx);
+        // amountIsNet: the amount is net of the foreign withholding (core contract, T67).
+        const gross = grossAmount(tx) + (tx.amountIsNet ? taxes : 0);
+        if (tx.amountIsNet && tx.taxes === undefined && tx.date.startsWith(`${year}-`)) {
+          issues.push({
+            level: 'warning',
+            code: 'INCOME_RECORDED_NET',
+            transactionId: tx.id,
+            instrumentId: id,
+            message:
+              `${tx.type === 'DIVIDEND' ? 'Dividendo' : 'Juros'} de ${displaySymbol(id, inst)} registrado LÍQUIDO sem o imposto retido no exterior: ` +
+              'o bruto não pode ser inferido com segurança (alíquota depende do tratado/W-8BEN). Informe o bruto e o imposto retido (taxes) para declarar e compensar.',
+          });
+        }
         const ps = rate('sell', ccy, tx.date);
         const pb = rate('buy', ccy, tx.date);
         agg(ty).income.push(

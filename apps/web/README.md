@@ -139,7 +139,14 @@ src/
 - `e2e/ibkr-sync.spec.ts` — conectar IBKR contra un servidor simulado, error 503, bandeja → vista previa →
   confirmar → `DELETE` con `ids`.
 
-Totales: 61 pruebas unitarias (9 archivos) y 27 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/importers-r4.test.ts` — importación de un correo `.eml` con adjunto y sugerencias para
+  nombres de notas y clases de BDR.
+
+- `src/__tests__/share.test.ts` — enlaces de solo lectura: compresión en el fragmento, cifrado con
+  contraseña, enlaces dañados y limpieza de HTML.
+- `e2e/taxes.spec.ts` — paquete de Colombia (Formulario 210, XLSX) y de Brasil (Bens e Direitos, exportes).
+
+Totales: 66 pruebas unitarias (11 archivos) y 31 pruebas e2e (+1 en vivo que se omite sin servidor).
 
 Capturas en `e2e/screenshots/`.
 
@@ -213,8 +220,8 @@ y `src/__tests__/`.
 | W28 | El aviso del servidor distingue origen rechazado (403 `FORBIDDEN_ORIGIN`, con el valor para `CORS_ORIGIN`), límite de solicitudes (429), token faltante (401) y otros códigos HTTP. La actualización automática cuenta también los intentos fallidos y espera tras un 429. |
 | W29 | Sharpe y Sortino usan por defecto la tasa de referencia de la moneda (IBR para COP, CDI para BRL, realizada en los últimos 12 meses); se puede desactivar en Ajustes. Rendimiento muestra la tasa usada. |
 | W12 | «Próximos dividendos» proyecta un año adelante los dividendos del proveedor del último año (AAPL, PETR4…), además de los anunciados y del historial propio. |
-| W20 | Portugués e inglés se cargan solo al elegirlos (−74 kB en el primer render); íconos PNG 192/512 y `apple-touch-icon` para iOS. El paquete de gráficos (~690 kB) sigue cargándose en el Resumen. |
-| W10 | Sin cambios: la sincronización sigue siendo por respaldo cifrado e informe HTML. La sincronización con IBKR (abajo) cubre el caso del corredor. |
+| W20 | ECharts vive en su propio módulo (`EChartsView`), solo con los tipos usados (línea, barras, torta), y se pide cuando el navegador queda libre después de pintar las cifras. Medido en el Resumen: JS antes de ver los KPI, de 1.248 kB a 692 kB; total, de 1.354 kB a 1.260 kB (ECharts, de 674 kB a 568 kB). Portugués e inglés se cargan solo al elegirlos. Íconos PNG 192/512 y `apple-touch-icon`. Prueba e2e de regresión. |
+| W10 | En el Informe, «Enlace de solo lectura»: el informe va comprimido dentro del fragmento de la URL (`/compartido#p1.…`, unos 6 kB). El navegador no envía esa parte al servidor y no hace falta una cuenta. Con contraseña opcional, el enlace va cifrado con AES-GCM (`#e1.…`). Quien lo abre ve el informe en un iframe aislado sin scripts, sin tocar sus propios datos, y puede imprimirlo o descargar el HTML. |
 
 **Interactive Brokers (Flex).** En Importar, «Conectar Interactive Brokers» guarda el token Flex y el id de
 la consulta en el servidor (`POST /api/sync/ibkr-flex`, `action: save`). El token no queda en el navegador.
@@ -231,4 +238,29 @@ entra en los respaldos) y errores de IBKR.
   - el punto `carried` queda en su fecha real y no pisa un cierre existente;
   - las series `partial` muestran «Datos parciales» en el activo y en «Frescura de datos»;
   - el buscador muestra la bolsa como etiqueta visible.
+- Core ronda 6:
+  - etiquetas y textos de `TRADE_PRICE_CONFIRMED_BY_RUN`, `INTEREST_POSSIBLY_NET` (con el botón «Marcar como
+    neto») e `INTEREST_BELOW_ACCRUED`;
+  - casilla «Monto neto de retención» (`amountIsNet`) en intereses y cupones;
+  - retención «estimada» (`taxesEstimated`) en Dividendos.
+- Importadores ronda 4:
+  - propuestas de escisión o fusión con «Aceptar» en un clic (`acceptCorporateActions`, y la fracción del
+    costo si falta);
+  - sugerencias ordenadas para nombres de notas desconocidos y para la clase de un BDR (GOGL34 o GOGL35);
+  - la bandeja de IBKR pasa por `importTransactionBatch`, que filtra los duplicados de operaciones existentes;
+  - importación de correos `.eml` arrastrados (todos los adjuntos en una sola vista previa).
+- Impuestos ronda 8:
+  - la tabla mensual de Brasil muestra el estado de cada DARF (pagada, pagada con atraso, vencida,
+    pendiente), con multa y Selic;
+  - botón «Registrar pago», que crea el movimiento `TAX` con la nota `DARF <código> <mes>`.
+  - La web no muestra Bens e Direitos ni el informe de cripto, así que `costStatus` y `transitResolution`
+    quedan para cuando se agreguen.
+- Área de impuestos completa:
+  - **Brasil:** con `brazilTaxPack` se muestran la apuración mensual con estados de DARF, Bens e Direitos
+    (insignias de costo provisorio o pendiente, «en tránsito» y la decisión `alienado` / `mantido` para
+    `CRYPTO_TRANSIT_STALE`), cripto, exterior, renda fixa, come-cotas e IRPFM.
+  - **Colombia:** con `colombiaTaxPack` se muestran patrimonio, ganancia ocasional, dividendos y los
+    formularios 210 y 160.
+  - En los dos países: todas las secciones del documento del paquete y exportación XLSX, CSV por informe e
+    impresión a PDF.
 

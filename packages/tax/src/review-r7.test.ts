@@ -59,13 +59,15 @@ describe('T61 — DARF 4600 (crypto) with the same machinery as the 6015', () =>
     expect(r.darfs[0]).toMatchObject({ month: '2026-03', amount: 11, includesMonths: ['2026-01', '2026-03'] });
   });
   const s3 = (extra: Transaction[] = []) => [t('BUY', '2025-01-10', 1, 'Mercado Bitcoin', { price: 4_000 }), t('SELL', '2026-03-10', 1, 'Mercado Bitcoin', { price: 8_000 }), ...extra];
-  it('S3: DARF 4600 paid late (only the principal) → paga_em_atraso, multa/juros, Sicalc with payment date, DARF_UNDERPAID', () => {
+  it('S3: DARF 4600 paid late (only the principal) → paga_parcial (round 9, T68), multa/juros, Sicalc with payment date, DARF_UNDERPAID', () => {
     const c = brazilCryptoReport(inp(s3([darfTax('2026-06-10', 3_000, 'DARF 4600 2026-03')])), { year: 2026 });
     const d = c.months[0]!.darf!;
     expect(d.amount).toBe(3_000);
-    expect(d.status).toBe('paga_em_atraso');
+    // The late payment covers principal + charges pro rata: part of the principal is still owed.
+    expect(d.status).toBe('paga_parcial');
+    expect(d.balance!).toBeGreaterThan(0);
     expect(d.late!.daysLate).toBe(41);
-    expect(d.late!.multa).toBeCloseTo(3_000 * 0.0033 * 41, 2);
+    expect(d.late!.multaRate).toBeCloseTo(0.0033 * 41, 6);
     expect(d.late!.juros).toBeGreaterThan(0);
     expect(d.sicalc.dataPagamento).toBe('10/06/2026');
     expect(c.issues.find((i) => i.code === 'DARF_UNDERPAID')!.message).toContain('4600');
@@ -113,7 +115,7 @@ describe('T61 — DARF 4600 (crypto) with the same machinery as the 6015', () =>
     const p = brazilTaxPack(inp(s3([darfTax('2026-06-10', 3_000, 'DARF 4600 2026-03')])), { year: 2026 });
     const csv = p.files['brasil-2026-cripto.csv']!;
     expect(csv).toContain('darf_status');
-    expect(csv).toContain('paga_em_atraso');
+    expect(csv).toContain('paga_parcial');
     expect(csv).toContain('acumulado_abaixo_minimo');
   });
 });

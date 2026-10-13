@@ -12,8 +12,9 @@
  * ticker with a table of common issuers, accept explicit tickers in the spec, and otherwise ask the
  * user (`securityMap`).
  */
+import { tickerIdOn } from '@pm/core';
 import { parseDate } from '../dates';
-import { B3_TICKER_RE_STRICT } from '../markets';
+import { B3_TICKER_RE_STRICT, TICKER_RENAMES } from '../markets';
 import { parseNumber } from '../numbers';
 import type { DraftTransaction, ParsedRow } from '../types';
 import { normalizeText, round } from '../util';
@@ -72,7 +73,11 @@ export function resolveSpec(spec: string, date?: string, extra?: { name: string;
     return { suggestions: suggestB3Names(name, { kind: 'ci', extra }).slice(0, 5).map((c) => c.ticker), reason: 'unknown' };
   }
   const dated = B3_DATED_ROOTS[name];
-  const root = dated ? [...dated].reverse().find((d) => !date || d.from <= date)?.root : B3_PREGAO_ROOTS[name];
+  if (dated) {
+    const id = tickerIdOn(`BVMF:${dated}${CLASS_DIGIT[cls]}`, date ?? new Date().toISOString().slice(0, 10));
+    return { ticker: id.split(':')[1]!, suggestions: [] };
+  }
+  const root = B3_PREGAO_ROOTS[name];
   if (root) return { ticker: `${root}${CLASS_DIGIT[cls]}`, suggestions: [] };
   const digit = CLASS_DIGIT[cls];
   return { suggestions: suggestB3Names(name, { kind: 'share', digit, extra }).slice(0, 5).map((c) => c.ticker), reason: 'unknown' };
@@ -117,6 +122,8 @@ export interface SinacorTrade {
   obs: string;
   dayTrade: boolean;
   lineIndex: number;
+  /** Continuation lines appended to the specification. */
+  wrapped?: number;
 }
 
 const OBS_RE = /\s+(#|D|F|T|@|2|8|B|C|H|X|P|Y|L|A|I)$/i;
@@ -198,6 +205,14 @@ export interface SinacorNote {
   irrfDayTrade: number;
   net?: number;
   firstLine: number;
+  /** Lines of "Negócios realizados" that look like trades but could not be read (OCR noise, broken layout). */
+  unparsed: { lineIndex: number; text: string }[];
+}
+
+/** A line that should be a trade: starts with the Q Negociação / C/V / market columns. */
+function looksLikeTrade(text: string): boolean {
+  const t = normalizeText(text).toUpperCase();
+  return /^(\d+\s*)?(BOVESPA|B3 RV LISTADO|BMF|B3 RF)\b/.test(t) || /^[CV]\s+(VISTA|FRACIONARIO|OPCAO|TERMO|EXERC|LEILAO|FUTURO)\b/.test(t);
 }
 
 const DATE_RE = /(\d{2}\/\d{2}\/\d{4})/;
@@ -240,12 +255,13 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
   let current: SinacorNote | undefined;
   let inTrades = false;
   let obsRange: [number, number] | undefined;
+  let specX: number | undefined;
   let broker: string | undefined;
   const lines = doc.lines;
   const open = (nr: string, i: number, date: string | undefined) => {
     current = notes.get(nr);
     if (!current) {
-      current = { number: nr, trades: [], fees: new Map(), irrf: 0, irrfDayTrade: 0, firstLine: i };
+      current = { number: nr, trades: [], fees: new Map(), irrf: 0, irrfDayTrade: 0, firstLine: i, unparsed: [] };
       notes.set(nr, current);
     }
     if (date && !current.date) current.date = parseDate(date, 'DMY');
@@ -304,10 +320,25 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
         const obsItem = l.items.find((it) => /^obs/i.test(it.str.trim()));
         const qtyItem = l.items.find((it) => /^quantidade/i.test(it.str.trim()));
         obsRange = obsItem && qtyItem && qtyItem.x > obsItem.x ? [obsItem.x - 3, qtyItem.x - 2] : undefined;
+        specX = l.items.find((it) => /^especifica/i.test(it.str.trim()))?.x;
         continue;
       }
       const tr = tradeFromLine(l, i, obsRange);
-      if (tr) current.trades.push(tr);
+      if (tr) {
+        current.trades.push(tr);
+        continue;
+      }
+      // A specification wrapped onto the next line ("ITAUUNIBANCO" / "PN EJ N1"): text only, in the
+      // specification column, right under the previous trade.
+      const prev = current.trades.at(-1);
+      const textOnly = !/\d[\d.]*,\d/.test(text) && text.trim().length <= 30;
+      const inSpecCol = specX === undefined || l.items.every((it) => it.x >= specX! - 5 && (!obsRange || it.x < obsRange[0]));
+      if (prev && prev.lineIndex === i - 1 - (prev.wrapped ?? 0) && textOnly && inSpecCol && !looksLikeTrade(text)) {
+        prev.spec = `${prev.spec} ${text.trim().replace(/\s+/g, ' ')}`;
+        prev.wrapped = (prev.wrapped ?? 0) + 1;
+        continue;
+      }
+      if (looksLikeTrade(text) || /\d[\d.]*,\d{2}\s*[DC]?\s*$/.test(text.trim())) current.unparsed.push({ lineIndex: i, text: text.trim() });
       continue;
     }
     for (const { key, value } of labelValues(text)) current.fees.set(key, value);
@@ -372,8 +403,21 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
   const notes = parseSinacor(doc);
   if (!notes.length) ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: '?' }));
   for (const note of notes) {
+    // Unreadable trade lines are never dropped silently (I35): an error row with the raw text.
+    for (const u of note.unparsed) {
+      const row = ctx.newRow(u.lineIndex);
+      row.sheet = `pág. ${doc.lines[u.lineIndex]?.page ?? 1}`;
+      row.raw = [u.text];
+      const params: Record<string, string> = { nota: note.number, text: u.text.slice(0, 120) };
+      // Typical OCR confusions in the numeric columns (O→0, l/I→1, S→5): offer the reading, never apply it.
+      const fixed = u.text.replace(/\S+/g, (tok) => (/\d/.test(tok) && /^[\dOolI.,]+$/.test(tok) ? tok.replace(/[Oo]/g, '0').replace(/[lI]/g, '1') : tok));
+      const reading = fixed !== u.text ? parseTradeLine(fixed, u.lineIndex) : undefined;
+      if (reading) params.reading = `${reading.side} ${reading.spec} ${reading.quantity} × ${reading.price}`;
+      row.issues.push(ctx.issue('UNPARSED_LINE', 'error', params, row.line));
+      rows.push(row);
+    }
     if (!note.trades.length) {
-      ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: note.number }));
+      if (!note.unparsed.length) ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: note.number }));
       continue;
     }
     type Item = { row: ParsedRow; tr: SinacorTrade; d?: DraftTransaction; derivative: boolean };
@@ -406,6 +450,15 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
         continue;
       }
       if (mapped && learned.get(specKey) === mapped && !map.has(specKey)) row.issues.push(ctx.issue('SECURITY_LEARNED', 'info', { spec: tr.spec, id: mapped }, row.line));
+      // The table is certain, but the user's earlier imports put this specification elsewhere (I39).
+      const prevAnswer = learned.get(specKey);
+      if (ticker && prevAnswer) {
+        const canon = (id: string) => TICKER_RENAMES[id] ?? id;
+        const tableId = canon(`BVMF:${ticker}`);
+        if (canon(prevAnswer.includes(':') ? prevAnswer : `BVMF:${prevAnswer}`) !== tableId) {
+          row.issues.push(ctx.issue('SECURITY_ANSWER_CONFLICT', 'warning', { spec: tr.spec, learned: prevAnswer, table: tableId }, row.line));
+        }
+      }
       const d: DraftTransaction = {
         date: note.date,
         type: tr.side === 'C' ? 'BUY' : 'SELL',
@@ -425,11 +478,40 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
       item.d = d;
       if (tr.dayTrade) row.issues.push(ctx.issue('DAY_TRADE', 'info', undefined, row.line));
     }
+    // Consistency check against "Líquido para" over every trade of the note.
+    const sells = items.filter((x) => x.tr.side === 'V').reduce((a, x) => a + x.tr.value, 0);
+    const buys = items.filter((x) => x.tr.side === 'C').reduce((a, x) => a + x.tr.value, 0);
+    const termo = note.fees.get('termo') ?? 0;
+    const general = [...note.fees.entries()].filter(([k]) => k !== 'termo').reduce((a, [, v]) => a + v, 0);
+    const expected = round(sells - buys - general - termo - note.irrf - note.irrfDayTrade, 2);
+    const mismatch = note.net !== undefined && Math.abs(expected - note.net) > 0.05;
+    const firstKept = items.find((x) => x.d);
+    if (mismatch) {
+      const x = firstKept ?? items[0]!;
+      x.row.issues.push(ctx.issue('NOTA_TOTALS_MISMATCH', 'warning', { nota: note.number, expected, actual: note.net! }, x.row.line));
+    }
+    // A note that does not add up (or has unreadable lines) is NOT imported as-is (I35): its costs would
+    // be spread over the wrong trades. Its rows wait for the user: fix the lines / answer, or accept the
+    // note with `acceptNotes: [number]`.
+    const accepted = (ctx.options.acceptNotes ?? []).includes(note.number);
+    if ((mismatch || note.unparsed.length) && !accepted) {
+      for (const x of items) if (x.d) x.row.pending = true;
+      if (firstKept) firstKept.row.issues.push(ctx.issue('NOTE_REVIEW_REQUIRED', 'warning', { nota: note.number }, firstKept.row.line));
+      else if (items[0]) items[0].row.issues.push(ctx.issue('NOTE_REVIEW_REQUIRED', 'warning', { nota: note.number }, items[0].row.line));
+      ctx.noteChecks.push({
+        nota: note.number,
+        ...(note.date ? { date: note.date } : {}),
+        ...(note.net !== undefined ? { actualNet: note.net } : {}),
+        expectedNet: expected,
+        unparsedLines: note.unparsed.map((u) => ctx.table.lines[u.lineIndex] ?? u.lineIndex + 1),
+        lines: items.map((x) => x.row.line),
+        costs: round(general + termo, 2),
+      });
+      continue;
+    }
     // Costs: every cost is spread over ALL trades of the note by value (options included, so their
     // share is not loaded onto the spot trades); Taxa de termo/opções only over options/termo trades.
     // Credited costs ("C") are negative. The shares of skipped trades are dropped (info).
-    const termo = note.fees.get('termo') ?? 0;
-    const general = [...note.fees.entries()].filter(([k]) => k !== 'termo').reduce((a, [, v]) => a + v, 0);
     const gen = allocate(general, items.map((x) => x.tr.value));
     const ter = allocate(termo, items.map((x) => (x.derivative ? x.tr.value : 0)));
     // IRRF: s/ operações → swing-trade sales; day trade → day-trade sales.
@@ -438,9 +520,9 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
     const irrfSwing = allocate(note.irrf, swingSells.some(Boolean) ? swingSells : items.map((x) => (x.tr.side === 'V' ? x.tr.value : 0)));
     const irrfDt = allocate(note.irrfDayTrade, dtSells.some(Boolean) ? dtSells : items.map((x) => (x.tr.side === 'V' ? x.tr.value : 0)));
     let dropped = 0;
-    items.forEach((x, i) => {
-      const fee = round(gen[i]! + ter[i]!, 8);
-      const tax = round(irrfSwing[i]! + irrfDt[i]!, 8);
+    items.forEach((x, k) => {
+      const fee = round(gen[k]! + ter[k]!, 8);
+      const tax = round(irrfSwing[k]! + irrfDt[k]!, 8);
       if (!x.d) {
         dropped += fee;
         return;
@@ -448,21 +530,11 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
       if (fee) x.d.fees = fee;
       if (tax) x.d.taxes = tax;
     });
-    const firstKept = items.find((x) => x.d);
     if (firstKept && (general || termo || note.irrf || note.irrfDayTrade)) {
       firstKept.row.issues.push(ctx.issue('FEES_ALLOCATED', 'info', { nota: note.number }, firstKept.row.line));
       if (dropped) firstKept.row.issues.push(ctx.issue('FEES_OF_SKIPPED', 'info', { amount: round(dropped, 2) }, firstKept.row.line));
     }
-    // Consistency check against "Líquido para" over every trade of the note.
-    if (note.net !== undefined) {
-      const sells = items.filter((x) => x.tr.side === 'V').reduce((a, x) => a + x.tr.value, 0);
-      const buys = items.filter((x) => x.tr.side === 'C').reduce((a, x) => a + x.tr.value, 0);
-      const expected = round(sells - buys - general - termo - note.irrf - note.irrfDayTrade, 2);
-      if (Math.abs(expected - note.net) > 0.05) {
-        const x = items.find((y) => y.d) ?? items[0]!;
-        x.row.issues.push(ctx.issue('NOTA_TOTALS_MISMATCH', 'warning', { nota: note.number, expected, actual: note.net }, x.row.line));
-      }
-    }
   }
+  rows.sort((a, b) => a.line - b.line);
   return rows;
 }

@@ -60,3 +60,5 @@ export type { TransactionBatch } from './sync/inbox';
 export { parseIbkrCorporate, proposeCorporateActions } from './corporate';
 export { importEmail, parseEmail, decodeMimeWords } from './email';
 export type { EmailImportResult, EmailImportOptions, EmailMessage, MimePart, EmailAttachmentResult } from './email';
+export { createEmailInboxHandler } from './sync/email-inbox';
+export type { EmailInboxHandlerOptions, InboxTarget } from './sync/email-inbox';

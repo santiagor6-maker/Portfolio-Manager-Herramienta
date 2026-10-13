@@ -776,7 +776,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   stats.currencies = [...currencies].sort();
 
-  const reconciliation = ctx.reported ? reconcileBestFit(ctx, resolver, existingTx, source, transactions) : undefined;
+  const reconciliation = ctx.reported ? reconcileAccounts(ctx, resolver, existingTx, source, transactions) : undefined;
   const allIssues = [...ctx.fileIssues, ...parsed.flatMap((r) => r.issues)];
   const errors = allIssues.filter((i) => i.severity === 'error');
   const warnings = allIssues.filter((i) => i.severity !== 'error');
@@ -801,6 +801,7 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   if (instrumentUpdates.length) result.instrumentUpdates = instrumentUpdates;
   if (ctx.corporateActions.length) result.corporateActions = ctx.corporateActions;
   if (ctx.unknownSecurities.length) result.unknownSecurities = ctx.unknownSecurities;
+  if (ctx.noteChecks.length) result.noteChecks = ctx.noteChecks;
   if (reconciliation) result.reconciliation = reconciliation;
   return result;
 }
@@ -862,6 +863,38 @@ function reconcileBestFit(ctx: ParseContext, resolver: InstrumentResolver, exist
       rec.unassignedTransactions = unassigned.length;
       ctx.fileIssues.push(ctx.issue('RECONCILIATION_UNASSIGNED', 'info', { count: unassigned.length, used: otherAccounts ? 'no' : 'sí' }));
     }
+  }
+  return rec;
+}
+
+/**
+ * Consolidated statements (several linked IBKR accounts in one file, I34): each account's positions and
+ * cash are compared with that account's transactions only; the result lists every account.
+ */
+function reconcileAccounts(ctx: ParseContext, resolver: InstrumentResolver, existing: Transaction[], source: string, imported: Transaction[]): Reconciliation {
+  const rep = ctx.reported!;
+  const accts = [...new Set([...rep.positions.map((p) => p.account), ...rep.cash.map((c) => c.account)].filter((a): a is string => !!a))];
+  let rec: Reconciliation;
+  if (accts.length < 2) rec = reconcileBestFit(ctx, resolver, existing, source, imported);
+  else {
+    rec = { source: rep.source, positions: [], cash: [], positionDifferences: [], cashDifferences: [], accounts: accts };
+    if (rep.asOf) rec.asOf = rep.asOf;
+    for (const a of accts) {
+      ctx.reported = {
+        ...rep,
+        accountIds: [a],
+        positions: rep.positions.filter((p) => p.account === a),
+        cash: rep.cash.filter((c) => c.account === a),
+      };
+      const mine = imported.filter((t) => !t.account || accountsCompatible(t.account, a));
+      const r = reconcileBestFit(ctx, resolver, existing, source, mine);
+      rec.positions.push(...r.positions.map((p) => ({ ...p, account: a })));
+      rec.cash.push(...r.cash.map((c) => ({ ...c, account: a })));
+      rec.positionDifferences.push(...r.positionDifferences.map((d) => ({ ...d, account: a })));
+      rec.cashDifferences.push(...r.cashDifferences.map((d) => ({ ...d, account: a })));
+      if (r.unassignedTransactions) rec.unassignedTransactions = (rec.unassignedTransactions ?? 0) + r.unassignedTransactions;
+    }
+    ctx.reported = rep;
   }
   if (rec.positionDifferences.length || rec.cashDifferences.length) {
     ctx.fileIssues.push(ctx.issue('RECONCILIATION_DIFF', 'warning', { count: rec.positionDifferences.length + rec.cashDifferences.length }));

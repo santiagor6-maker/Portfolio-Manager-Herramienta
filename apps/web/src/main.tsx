@@ -23,6 +23,13 @@ async function start() {
       <App />
     </StrictMode>,
   );
+  // A shared read-only link must not seed or touch the viewer's own data (W10).
+  if (location.pathname.startsWith('/compartido')) {
+    const nav = navigator.language.slice(0, 2);
+    await setLanguage(['es', 'pt', 'en'].includes(nav) ? nav : 'es');
+    useApp.getState().setReady(useApp.getState().settings);
+    return;
+  }
   try {
     const settings = await bootstrap();
     await setLanguage(settings.language);

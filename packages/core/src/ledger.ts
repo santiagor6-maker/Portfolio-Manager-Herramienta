@@ -24,7 +24,7 @@ import type { EngineInput, EngineOptions } from './api';
 import { dayToIso, days360, isStrictIsoDate, isoToDay } from './dates';
 import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
-import { accrualFactor, accruedLotValues, priceInfo } from './pricing';
+import { accrualFactor, accruedLotValues, payableFactor, priceInfo } from './pricing';
 import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
 import { fixedIncomeTax, irRate, residenceOf, taxRegimeFor } from './fitax';
 
@@ -1278,7 +1278,13 @@ export class Ledger {
     const conv = this.convert(tx, day, tx.currency, inst.currency);
     const coupon = amountTx * conv;
     const { values, principal, anchors } = accruedLotValues(this.ctx, inst, b.lots, day);
-    const since = values.map((v, i) => Math.max(0, v - (principal[i] ?? v)));
+    // C49: for inflation-indexed instruments only the spread part is payable interest
+    const capitalized = inst.accrual?.kind === 'indexed' && !!inst.accrual.index && !!this.ctx.market.index(inst.accrual.index)?.capitalized;
+    const since = values.map((v, i) => {
+      if (!capitalized) return Math.max(0, v - (principal[i] ?? v));
+      const f = payableFactor(this.ctx, inst, anchors[i] as number, day) ?? 1;
+      return f > 1 ? v * (1 - 1 / f) : 0;
+    });
     const lots = b.lots;
     const ent = lots.map((l) => l.quantity);
     // per-unit interest of the lot that accrued the longest since its anchor
@@ -1376,7 +1382,7 @@ export class Ledger {
     const spec = inst.accrual;
     const issue = spec?.issueDate && isStrictIsoDate(spec.issueDate) ? isoToDay(spec.issueDate) : -Infinity;
     const periodStart = Math.max(this.lastCoupon.get(inst.id) ?? -Infinity, issue, day - 366);
-    const fPeriod = accrualFactor(this.ctx, inst, periodStart, day) ?? 1;
+    const fPeriod = payableFactor(this.ctx, inst, periodStart, day) ?? 1;
     let excess = 0;
     b.lots.forEach((l, i) => {
       const e = plan.ent[i] ?? 0;

@@ -6,7 +6,7 @@ import { addBusinessDays, addWeekdays, addYears, colombiaHolidays, daysBetween, 
 import { TAX_DISCLAIMER } from '../common/disclaimer';
 import type { LocalizedText, ParamMeta, TaxInput, TaxIssue } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions, sum } from '../common/util';
-import { art241TaxCop, colombiaConfig, type ColombiaTaxYearConfig } from './config';
+import { art241TaxCop, COLOMBIA_INTEREST_WITHHOLDING_RATE, colombiaConfig, type ColombiaTaxYearConfig } from './config';
 
 const COP = 'COP';
 
@@ -131,6 +131,12 @@ export interface CoIncomeRow {
   componenteInflacionarioCop?: number;
   /** National dividends: part certified as gravado (Art. 49 par. 2 ET, 2a subcédula). */
   gravadoCop?: number;
+  /**
+   * Amount recorded NET (`amountIsNet`) without `taxes` (T67): gross estimated with the regime's
+   * withholding rate; this estimated withholding is NOT credited (not in `withheldCop`) until the
+   * certificate confirms it.
+   */
+  withholdingEstimatedCop?: number;
 }
 
 export interface CoFxRow {
@@ -691,13 +697,38 @@ export function buildColombiaTaxReport(input: TaxInput, opts: ColombiaReportOpti
       }
       case 'DIVIDEND':
       case 'INTEREST': {
-        const gross = grossAmount(tx);
+        // T67: `amountIsNet` = the amount is what was received, net of withholding.
+        const recorded = grossAmount(tx);
+        let gross = tx.amountIsNet ? recorded + taxes : recorded;
+        let estimated = 0;
         const rate = trm(ccy, tx.date);
+        if (tx.amountIsNet && tx.taxes === undefined) {
+          const national = inst ? inst.country === 'CO' : ccy === COP;
+          if (tx.type === 'INTEREST' && national) {
+            // Retención en la fuente on rendimientos financieros (core CO_RETENCION: instrument rate, else 4%).
+            const r = inst?.accrual?.withholdingRate ?? COLOMBIA_INTEREST_WITHHOLDING_RATE;
+            gross = recorded / (1 - r);
+            estimated = gross - recorded;
+          }
+          if (inYear(tx)) {
+            issues.push({
+              level: 'warning',
+              code: 'INCOME_RECORDED_NET',
+              transactionId: tx.id,
+              instrumentId: tx.instrumentId,
+              message:
+                estimated > 0
+                  ? `${tx.type === 'INTEREST' ? 'Interés' : 'Dividendo'} de ${displaySymbol(id, inst)} registrado NETO (${recorded.toFixed(2)} ${ccy}): ingreso bruto estimado ${gross.toFixed(2)} con retención ESTIMADA de ${estimated.toFixed(2)}, que NO se descuenta como retención hasta tener el certificado. Registre la retención certificada (taxes).`
+                  : `${tx.type === 'INTEREST' ? 'Interés' : 'Dividendo'} de ${displaySymbol(id, inst)} registrado NETO sin retención: el bruto no se puede inferir con seguridad (tarifa ambigua); se declara el valor registrado. Pida el certificado de retención y registre el bruto y la retención.`,
+            });
+          }
+        }
         if (inYear(tx)) {
           const row = incomeRow(tx, inst, tx.type === 'DIVIDEND' ? 'dividendo' : 'interes', gross, taxes, rate);
+          if (estimated > 0) row.withholdingEstimatedCop = estimated * rate;
           (tx.type === 'DIVIDEND' ? dividends : interest).push(row);
         }
-        cashIn(tx, ccy, gross - taxes);
+        cashIn(tx, ccy, gross - taxes - estimated);
         break;
       }
     }

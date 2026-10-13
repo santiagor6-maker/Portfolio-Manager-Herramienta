@@ -1,4 +1,5 @@
 import type { ISODate, Transaction, YearMonth } from '@pm/core';
+import { mergerCashCostFraction, restructureIssues, restructureOf } from '../common/corporate';
 import { b3Root, basisTotalCost, resolveTransferBasis, snapRatio, type TransferBasisMap } from '../common/basis';
 import { daysInMonth, monthOf, thirdFriday } from '../common/dates';
 import type { TaxInput, TaxIssue } from '../common/types';
@@ -205,8 +206,15 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
   // Process by date; options before other assets of the same day so exercise premiums reach the
   // underlying trade.
   const keys = [...byDay.keys()]
-    .map((k, i) => ({ k, i, date: k.slice(0, 10), opt: cat(k.slice(11)) === 'OPCAO' ? 0 : 1 }))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.opt - b.opt || a.i - b.i)
+    .map((k, i) => ({
+      k,
+      i,
+      date: k.slice(0, 10),
+      // Restructurings (T64) first: the target receives the lots before its same-day trades.
+      rs: byDay.get(k)!.some((t) => restructureOf(t)) ? 0 : 1,
+      opt: cat(k.slice(11)) === 'OPCAO' ? 0 : 1,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.rs - b.rs || a.opt - b.opt || a.i - b.i)
     .map((x) => x.k);
   /** Premium adjustments from option exercise, applied to same-day trades of the underlying (by B3 root). */
   const exerciseAdj = new Map<string, { buyAdj: number; sellAdj: number; used: boolean; optionId: string }>();
@@ -224,6 +232,56 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     for (const t of dayTxs) {
       switch (t.type) {
         case 'SPLIT': {
+          const rs = restructureOf(t);
+          if (rs) {
+            // T64/T65: incorporação, mudança de ticker, cisão — position and cost move to the target.
+            issues.push(...restructureIssues(t, rs, symbol));
+            if (!rs.target) break;
+            const tp: Pos = pos.get(rs.target) ?? { qty: 0, cost: 0, shortQty: 0, shortNet: 0, shortGross: 0, shortIrrf: 0, shortIrrfKnown: false, fracQty: 0, fracCost: 0 };
+            pos.set(rs.target, tp);
+            const parentQty = p.qty;
+            if (rs.cash > 0 && parentQty > 0) {
+              // Cash received in the merger: partial alienation of the parent (cost carved by value).
+              const f = mergerCashCostFraction(rs, parentQty, p.cost, input.market, date, rs.cash);
+              const carved = p.cost * f;
+              p.cost -= carved;
+              trades.push({
+                date,
+                month: monthOf(date),
+                instrumentId: id,
+                symbol,
+                category,
+                kind: 'swing',
+                quantity: 0,
+                grossSales: rs.cash,
+                netProceeds: rs.cash,
+                cost: carved,
+                result: rs.cash - carved,
+                transactionIds: [t.id],
+              });
+            }
+            const movedCost = p.cost * rs.costFraction;
+            let movedQty = parentQty * rs.ratio;
+            if (Math.abs(movedQty - Math.round(movedQty)) < 0.01) movedQty = Math.round(movedQty);
+            tp.qty += movedQty;
+            tp.cost += movedCost;
+            p.cost -= movedCost;
+            if (rs.kind !== 'SPINOFF') {
+              p.qty = 0;
+              p.cost = 0;
+            }
+            const tSym = displaySymbol(rs.target, instruments.get(rs.target));
+            issues.push({
+              level: 'info',
+              code: 'CORPORATE_ACTION_APPLIED',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `${rs.kind === 'SPINOFF' ? 'Cisão' : rs.kind === 'MERGER' ? 'Incorporação' : 'Mudança de ticker'} ${symbol} → ${tSym}: ` +
+                `${movedQty} ações com custo R$ ${movedCost.toFixed(2)} (preço médio e datas preservados; não é alienação).`,
+            });
+            break;
+          }
           const ratio = snapRatio(t.ratio ?? 1);
           p.qty *= ratio;
           p.shortQty *= ratio;

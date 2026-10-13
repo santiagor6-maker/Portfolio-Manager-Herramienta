@@ -26,6 +26,11 @@ export interface BrProventoRow {
   issuer?: string;
   /** Lei 15.270/2025 transition: profits up to 2025 approved by 31/12/2025 (no 10% IRRF). */
   lei15270Transition?: boolean;
+  /**
+   * The amount was recorded NET (`amountIsNet`) without the withholding: gross and IRRF are
+   * ESTIMATED with the year's rate (T67) — confirm with the informe de rendimentos.
+   */
+  irrfEstimated?: boolean;
 }
 
 export interface BrProventosReport {
@@ -92,11 +97,15 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
     const inst = tx.instrumentId ? instruments.get(tx.instrumentId) : undefined;
     const category = classifyForBrazil(inst, opts.categoryOverrides);
     if (category === 'FOREIGN' || (category === 'OTHER' && tx.currency !== 'BRL')) continue;
-    const gross = grossAmount(tx);
-    const irrf = tx.taxes ?? 0;
+    // amountIsNet with `taxes`: the amount is net, gross = amount + taxes (core contract).
+    let gross = grossAmount(tx) + (tx.amountIsNet ? (tx.taxes ?? 0) : 0);
+    let irrf = tx.taxes ?? 0;
     let type = opts.classify?.(tx);
     if (!type) {
-      if (ALUGUEL_RE.test(tx.note ?? '')) type = 'ALUGUEL';
+      // T66: the core subtype wins over every heuristic.
+      if (tx.subtype === 'JCP') type = 'JCP';
+      else if ((tx.subtype === 'ORDINARY' || tx.subtype === 'EXTRAORDINARY') && category === 'ACAO') type = 'DIVIDENDO';
+      else if (ALUGUEL_RE.test(tx.note ?? '')) type = 'ALUGUEL';
       else if (category === 'FII') type = 'RENDIMENTO_FII';
       else if (JCP_RE.test(`${tx.note ?? ''} ${tx.source ?? ''}`)) type = 'JCP';
       else if (gross > 0 && irrf > 0 && [0.15, 0.175, cfg.jcpRate].some((r) => Math.abs(irrf / gross - r) < 0.005)) type = 'JCP';
@@ -104,6 +113,31 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       else type = 'OUTRO';
     }
     const line = type === 'OUTRO' ? undefined : DIRPF_INCOME_LINES[type];
+    const jcpRateOf = () => {
+      const cy = jcpCreditYear(tx, opts.jcpCreditDates);
+      return cy !== undefined && cy < opts.year ? brazilConfig(cy).jcpRate : cfg.jcpRate;
+    };
+    let irrfEstimated: true | undefined;
+    if (tx.amountIsNet && tx.taxes === undefined) {
+      if (type === 'JCP') {
+        // T67: net JCP → gross-up at the JCP rate, withholding ESTIMATED (not certified).
+        const r = jcpRateOf();
+        const net = gross;
+        gross = net / (1 - r);
+        irrf = gross - net;
+        irrfEstimated = true;
+      }
+      issues.push({
+        level: 'warning',
+        code: 'INCOME_RECORDED_NET',
+        transactionId: tx.id,
+        instrumentId: tx.instrumentId,
+        message:
+          type === 'JCP'
+            ? `JCP de ${displaySymbol(tx.instrumentId ?? '', inst)} registrado LÍQUIDO (R$ ${grossAmount(tx).toFixed(2)}): bruto estimado R$ ${gross.toFixed(2)} e IRRF estimado R$ ${irrf.toFixed(2)}. Confirme com o informe de rendimentos e registre o IRRF.`
+            : `Provento de ${displaySymbol(tx.instrumentId ?? '', inst)} registrado LÍQUIDO sem a retenção: confira o valor bruto e o IR retido no informe de rendimentos.`,
+      });
+    }
     rows.push({
       transactionId: tx.id,
       date: tx.date,
@@ -117,9 +151,7 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
         type === 'ALUGUEL'
           ? gross * rendaFixaIrRate(Number(/(\d+)\s*dias/i.exec(tx.note ?? '')?.[1] ?? 0))
           : type === 'JCP'
-          ? gross * (jcpCreditYear(tx, opts.jcpCreditDates) !== undefined && jcpCreditYear(tx, opts.jcpCreditDates)! < opts.year
-              ? brazilConfig(jcpCreditYear(tx, opts.jcpCreditDates)!).jcpRate
-              : cfg.jcpRate)
+          ? gross * jcpRateOf()
           : 0,
       dirpf: line ? { ficha: line.ficha, linha: line.linha } : undefined,
       issuer: tx.instrumentId ? issuerKey(inst, tx.instrumentId, opts.issuers) : undefined,
@@ -127,7 +159,19 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
         type === 'DIVIDENDO' && ((opts.preLei15270Dividends ?? []).includes(tx.id) || TRANSITION_RE.test(tx.note ?? ''))
           ? true
           : undefined,
+      irrfEstimated,
     });
+    if (type === 'JCP' && irrf === 0 && gross > 0) {
+      issues.push({
+        level: 'warning',
+        code: 'JCP_IRRF_MISSING',
+        transactionId: tx.id,
+        instrumentId: tx.instrumentId,
+        message:
+          `JCP de ${displaySymbol(tx.instrumentId ?? '', inst)} em ${tx.date} sem IRRF registrado: o JCP tem tributação exclusiva na fonte ` +
+          `(${(jcpRateOf() * 100).toFixed(1)}%, esperado R$ ${(gross * jcpRateOf()).toFixed(2)}). Registre a retenção do informe; se o valor é líquido, marque amountIsNet.`,
+      });
+    }
     if ((category === 'BDR' || category === 'ETF') && type === 'OUTRO') {
       issues.push({
         level: 'warning',

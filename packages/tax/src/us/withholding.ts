@@ -1,3 +1,4 @@
+import { restructureOf } from '../common/corporate';
 import type { CountryCode, Instrument, ISODate, MarketData } from '@pm/core';
 import type { ParamMeta, TaxInput } from '../common/types';
 import { displaySymbol, grossAmount, instrumentMap, sortTransactions } from '../common/util';
@@ -103,9 +104,10 @@ export function checkUsDividendWithholding(
     if ((opts.from && tx.date < opts.from) || (opts.to && tx.date > opts.to)) continue;
     const inst = instruments.get(tx.instrumentId);
     if (!isUsSource(inst)) continue;
-    const gross = grossAmount(tx);
-    if (gross <= 0) continue;
     const withheld = tx.taxes ?? 0;
+    // amountIsNet: amount received net of the US withholding (core contract, T67).
+    const gross = grossAmount(tx) + (tx.amountIsNet ? withheld : 0);
+    if (gross <= 0) continue;
     const actualRate = withheld / gross;
     let status: UsWithholdingCheckRow['status'] = 'ok';
     if (withheld === 0) status = 'missing_withholding';
@@ -166,7 +168,15 @@ export function checkUsEstateTaxExposure(
     const q = qty.get(tx.instrumentId) ?? 0;
     if (tx.type === 'BUY' || tx.type === 'TRANSFER_IN' || tx.type === 'STOCK_DIVIDEND') qty.set(tx.instrumentId, q + (tx.quantity ?? q * (tx.ratio ?? 0)));
     else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') qty.set(tx.instrumentId, q - (tx.quantity ?? 0));
-    else if (tx.type === 'SPLIT') qty.set(tx.instrumentId, q * (tx.ratio ?? 1));
+    else if (tx.type === 'SPLIT') {
+      const rs = restructureOf(tx);
+      if (!rs) qty.set(tx.instrumentId, q * (tx.ratio ?? 1));
+      else if (rs.target) {
+        // T64: merger / ticker change / spin-off — the target receives ratio shares per share.
+        qty.set(rs.target, (qty.get(rs.target) ?? 0) + q * rs.ratio);
+        if (rs.kind !== 'SPINOFF') qty.set(tx.instrumentId, 0);
+      }
+    }
   }
   const holdings: UsEstateTaxCheck['holdings'] = [];
   const missing: string[] = [];

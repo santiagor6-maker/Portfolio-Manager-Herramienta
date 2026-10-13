@@ -2,6 +2,7 @@
  * Exchange metadata and broker-code → MIC tables used to build Instrument ids (`MIC:SYMBOL`),
  * Yahoo symbols and currencies.
  */
+import { tickerRenameMap } from '@pm/core';
 import type { AssetClass, CountryCode, CurrencyCode, ExchangeCode } from '@pm/core';
 
 export interface ExchangeInfo {
@@ -151,21 +152,11 @@ export const BR_UNITS = new Set([
 ]);
 
 /**
- * Same-security ticker renames (old id → current id). Mirrors the `kind: 'rename'` rows of
- * @pm/market-data `TICKER_ALIASES` (history is stitched there, so the current id is quotable for old
- * dates), plus ISA CTEEP → ISA Energia Brasil (TRPL → ISAE, 2024). Mergers and conversions (BRFS3 →
- * MBRF3, NTCO3 → NATU3, CPLE6 → CPLE3) are NOT renames: they stay separate instruments.
+ * Same-security ticker renames (old id → current id), derived from the shared table in @pm/core
+ * (`TICKER_EVENTS`, kind 'rename'), which @pm/market-data and @pm/tax use too (I36). Mergers and
+ * conversions (BRFS3 → MBRF3, NTCO3 → NATU3, CPLE6 → CPLE3) are NOT renames: separate instruments.
  */
-export const TICKER_RENAMES: Record<string, string> = {
-  'BVMF:ELET3': 'BVMF:AXIA3',
-  'BVMF:EMBR3': 'BVMF:EMBJ3',
-  'BVMF:CCRO3': 'BVMF:MOTV3',
-  'BVMF:MRFG3': 'BVMF:MBRF3',
-  'BVMF:TRPL3': 'BVMF:ISAE3',
-  'BVMF:TRPL4': 'BVMF:ISAE4',
-  'XBOG:PFBCOLOM': 'XBOG:PFCIBEST',
-  'XBOG:BCOLOMBIA': 'XBOG:CIBEST',
-};
+export const TICKER_RENAMES: Record<string, string> = tickerRenameMap();
 
 /** Popular ISIN → (symbol, exchange). Used when a file carries only the ISIN (DEGIRO). */
 export const ISIN_DIRECTORY: Record<string, { symbol: string; exchange: ExchangeCode; assetClass?: AssetClass }> = {

@@ -34,8 +34,10 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
       ['2023-01-02', 'SELL', 'BVMF:VALE3', 20, 88.1, 1762],
       ['2023-03-15', 'SELL', 'BVMF:PETR4', 50, 25.1, 1255],
       ['2023-03-15', 'BUY', 'BVMF:HGLG11', 10, 160.5, 1605],
-      ['2023-03-20', 'BUY', 'BVMF:BEEF3', 200, 10, 2000], // MINERVA ON NM is in the round-4 nome de pregão table
     ]);
+    // Note 99887766 does not add up to its "Líquido para" (printed wrong on purpose): held for review (I35).
+    expect(r.noteChecks).toEqual([expect.objectContaining({ nota: '99887766', unparsedLines: [] })]);
+    expect(r.rows.find((x) => x.transaction?.instrumentId === 'BVMF:BEEF3')!.status).toBe('pending');
   });
   it('allocates the Resumo Financeiro costs pro-rata and IRRF to sales', () => {
     const n1 = r.transactions.filter((t) => t.note?.startsWith('Nota 12345678 ·'));
@@ -50,9 +52,10 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
   it('skips options; an explicit securityMap answer still wins over the table', async () => {
     const opt = r.rows.find((x) => x.issues.some((i) => i.code === 'UNSUPPORTED_ASSET'))!;
     expect(opt).toMatchObject({ status: 'skipped', sheet: 'pág. 1' });
-    const other = await importFixture('nota-sinacor.pdf', { securityMap: { 'MINERVA ON NM': 'BVMF:BEEF11' } });
+    const other = await importFixture('nota-sinacor.pdf', { securityMap: { 'MINERVA ON NM': 'BVMF:BEEF11' }, acceptNotes: ['99887766'] });
     expect(other.transactions.some((t) => t.instrumentId === 'BVMF:BEEF11')).toBe(true);
-    const mapped = r;
+    // Accepting the note imports it with its costs (MINERVA ON NM is in the round-4 table).
+    const mapped = await importFixture('nota-sinacor.pdf', { acceptNotes: ['99887766'] });
     const beef = mapped.transactions.find((t) => t.instrumentId === 'BVMF:BEEF3')!;
     expect(beef).toMatchObject({ quantity: 200, fees: 0.6, account: 'RICO INVESTIMENTOS - GRUPO XP' });
     // The note's "Líquido para" was printed inconsistent on purpose → warning.
@@ -71,7 +74,7 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
   });
   it('re-importing the same PDF is fully de-duplicated', async () => {
     const again = await importFixture('nota-sinacor.pdf', { existingTransactions: r.transactions });
-    expect(again.stats).toMatchObject({ imported: 0, duplicates: 6 });
+    expect(again.stats).toMatchObject({ imported: 0, duplicates: 5, pending: 1 });
   });
 });
 

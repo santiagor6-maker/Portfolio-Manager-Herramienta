@@ -65,11 +65,14 @@ function mergeWithholding(
   ctx: ParseContext,
   dividends: { row: ParsedRow; d: DraftTransaction }[],
   taxes: { row: ParsedRow; d: DraftTransaction }[],
+  accountOf: (row: ParsedRow) => string | undefined = () => undefined,
 ): void {
   for (const t of taxes) {
     const key = (x: DraftTransaction) => `${x.date}|${x.instrument?.symbol ?? x.instrument?.isin ?? ''}|${x.currency}`;
-    const div = dividends.find((x) => key(x.d) === key(t.d)) ??
-      dividends.find((x) => x.d.currency === t.d.currency && (x.d.instrument?.symbol ?? '') === (t.d.instrument?.symbol ?? '') && Math.abs(Date.parse(x.d.date) - Date.parse(t.d.date)) <= 7 * 86400000);
+    // Consolidated statements: a withholding belongs to the dividend of the same account.
+    const same = dividends.filter((x) => accountOf(x.row) === accountOf(t.row));
+    const div = same.find((x) => key(x.d) === key(t.d)) ??
+      same.find((x) => x.d.currency === t.d.currency && (x.d.instrument?.symbol ?? '') === (t.d.instrument?.symbol ?? '') && Math.abs(Date.parse(x.d.date) - Date.parse(t.d.date)) <= 7 * 86400000);
     if (div && t.d.amount !== undefined && t.d.amount > 0) {
       div.d.taxes = (div.d.taxes ?? 0) + t.d.amount;
       t.row.draft = undefined;
@@ -167,6 +170,7 @@ export const ibkrActivityPreset: PresetDefinition = {
     const splitsSeen = new Set<string>();
     const unhandled = new Map<string, number>();
     const reported: NonNullable<ParseContext['reported']> = { source: 'ibkr-activity', positions: [], cash: [] };
+    const activityRowAccount = new Map<ParsedRow, string>();
 
     table.rows.forEach((r, idx) => {
       const section = cellToString(r[0]);
@@ -186,6 +190,10 @@ export const ibkrActivityPreset: PresetDefinition = {
       const getS = (...names: string[]) => cellToString(get(...names));
       const currency = getS('Currency');
       if (/^total/i.test(currency) || /^total/i.test(getS('Asset Category')) || /^total/i.test(getS('Subtitle'))) return;
+      // Consolidated statements of linked accounts carry an "Account" column in every section (I34).
+      const acctCell = getS('Account').toUpperCase();
+      const rowAcct = IBKR_ACCOUNT_RE.test(acctCell) ? acctCell : undefined;
+      if (rowAcct) accountIds.push(rowAcct);
       if (section === 'Open Positions') {
         if (getS('DataDiscriminator') && getS('DataDiscriminator') !== 'Summary') return;
         const sym = ibkrSymbol(getS('Symbol'));
@@ -198,6 +206,7 @@ export const ibkrActivityPreset: PresetDefinition = {
         if (cost !== undefined) pos.costBasis = cost;
         if (value !== undefined) pos.marketValue = value;
         if (close !== undefined) pos.price = close;
+        if (rowAcct) pos.account = rowAcct;
         reported.positions.push(pos);
         if (ctx.options.positionsMode === 'opening') {
           const row = ctx.newRow(idx, r);
@@ -221,7 +230,7 @@ export const ibkrActivityPreset: PresetDefinition = {
         const kindRow = normalizeText(cellToString(f[0] ?? null));
         if (kindRow === 'ending cash' && /^[A-Z]{3}$/.test(currency)) {
           const total = ctx.num(get('Total'), { line: 0, issues: [] }, 'amount');
-          if (total !== undefined) reported.cash.push({ currency, amount: total });
+          if (total !== undefined) reported.cash.push({ currency, amount: total, ...(rowAcct ? { account: rowAcct } : {}) });
         }
         return;
       }
@@ -232,6 +241,7 @@ export const ibkrActivityPreset: PresetDefinition = {
       }
       const row = ctx.newRow(idx, r);
       rows.push(row);
+      if (rowAcct) activityRowAccount.set(row, rowAcct);
 
       if (section === 'Trades') {
         const disc = getS('DataDiscriminator');
@@ -416,7 +426,7 @@ export const ibkrActivityPreset: PresetDefinition = {
     // Net dividend reversals (IBKR re-posts corrected dividends as -X / +Y).
     const groups = new Map<string, { row: ParsedRow; d: DraftTransaction }[]>();
     for (const x of dividends) {
-      const k = `${x.d.date}|${x.d.instrument?.symbol ?? ''}|${x.d.currency}`;
+      const k = `${x.d.date}|${x.d.instrument?.symbol ?? ''}|${x.d.currency}|${activityRowAccount.get(x.row) ?? ''}`;
       groups.set(k, [...(groups.get(k) ?? []), x]);
     }
     const keptDividends: { row: ParsedRow; d: DraftTransaction }[] = [];
@@ -439,7 +449,7 @@ export const ibkrActivityPreset: PresetDefinition = {
         }
       }
     }
-    mergeWithholding(ctx, keptDividends, taxes);
+    mergeWithholding(ctx, keptDividends, taxes, (row) => activityRowAccount.get(row));
     for (const [section, count] of unhandled) ctx.fileIssues.push(ctx.issue('UNHANDLED_SECTION', 'warning', { section, count }));
     if (reported.positions.length || reported.cash.length) {
       const asOf = ctx.options.asOfDate ?? periodEnd;
@@ -447,8 +457,14 @@ export const ibkrActivityPreset: PresetDefinition = {
       ctx.reported = reported;
     }
     // I20: the account number (U1234567) identifies the account for dedup and reconciliation.
-    const numbers = accountIds.filter((a) => IBKR_ACCOUNT_RE.test(a));
+    const numbers = [...new Set(accountIds.filter((a) => IBKR_ACCOUNT_RE.test(a)).map((a) => a.toUpperCase()))];
     if (reported.positions.length || reported.cash.length) reported.accountIds = numbers.length ? numbers : accountIds.filter(Boolean);
+    if (!ctx.options.account) {
+      for (const row of rows) {
+        const a = activityRowAccount.get(row);
+        if (a) for (const d of [row.draft, ...(row.extra ?? [])]) if (d && !d.account) d.account = a;
+      }
+    }
     if (numbers.length === 1) labelAccount(rows, numbers[0]!, ctx);
     return rows;
   },
@@ -727,7 +743,7 @@ export const ibkrFlexPreset: PresetDefinition = {
       if (ref) d.brokerRef = ref;
       row.draft = d;
     });
-    mergeWithholding(ctx, dividends, taxes);
+    mergeWithholding(ctx, dividends, taxes, (row) => rowAccount.get(row));
     if (flexReported.positions.length) {
       if (ctx.options.asOfDate) flexReported.asOf = ctx.options.asOfDate;
       const ids = new Set(rowAccount.values());

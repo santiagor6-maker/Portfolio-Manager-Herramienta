@@ -87,3 +87,54 @@ test('W22: the initial deposit keeps its date; buys before it are flagged as imp
   await page.getByTestId('create-deposit').first().click();
   await expect(page.getByTestId('implicit-funding')).toHaveCount(0, { timeout: 20_000 });
 });
+
+test('W20: the Resumen paints its figures before the charting library loads', async ({ page }) => {
+  const js: { url: string; size: number }[] = [];
+  page.on('response', async (r) => {
+    if (r.url().endsWith('.js')) js.push({ url: r.url(), size: (await r.body().catch(() => Buffer.alloc(0))).length });
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('kpis').locator('.skeleton')).toHaveCount(0, { timeout: 30_000 });
+  const before = js.reduce((s, x) => s + x.size, 0);
+  // ECharts (~570 kB) is requested only once the page is idle (it used to be ~1.25 MB before the KPIs).
+  expect(js.some((x) => /EChartsView/.test(x.url))).toBe(false);
+  expect(before).toBeLessThan(900 * 1024);
+  await expect.poll(() => js.some((x) => /EChartsView/.test(x.url)), { timeout: 10_000 }).toBe(true);
+  await expect(page.locator('canvas').first()).toBeVisible();
+});
+
+test('W10: read-only share link (data in the URL fragment), optionally encrypted', async ({ page, browser }) => {
+  await page.goto('/informe');
+  await expect(page.getByTestId('report')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('report-share').click();
+  await page.getByTestId('share-create').click();
+  const url = await page.getByTestId('share-url').inputValue();
+  expect(url).toMatch(/\/compartido#p1\./);
+  expect(url.length).toBeLessThan(40_000);
+  await page.screenshot({ path: `${SHOTS}/share-link.png` });
+
+  // A different person (fresh browser profile) opens it: read-only report, nothing seeded.
+  const ctx = await browser.newContext();
+  const viewer = await ctx.newPage();
+  await viewer.goto(url);
+  const frame = viewer.frameLocator('[data-testid=shared-frame]');
+  await expect(frame.getByText('Informe de portafolio')).toBeVisible();
+  await expect(frame.locator('script')).toHaveCount(0);
+  await expect(viewer.getByTestId('demo-banner')).toHaveCount(0);
+  await viewer.screenshot({ path: `${SHOTS}/share-view.png` });
+
+  // Encrypted link: asks for the passphrase.
+  await page.getByLabel('Contraseña (opcional)').fill('secreto-123');
+  await page.getByTestId('share-create').click();
+  await expect(page.getByTestId('share-url')).toHaveValue(/#e1\./);
+  const enc = await page.getByTestId('share-url').inputValue();
+  const v2 = await ctx.newPage();
+  await v2.goto(enc);
+  await v2.getByLabel('Contraseña').fill('mala');
+  await v2.getByRole('button', { name: 'Abrir' }).click();
+  await expect(v2.getByText('Contraseña incorrecta.')).toBeVisible();
+  await v2.getByLabel('Contraseña').fill('secreto-123');
+  await v2.getByRole('button', { name: 'Abrir' }).click();
+  await expect(v2.frameLocator('[data-testid=shared-frame]').getByText('Informe de portafolio')).toBeVisible();
+  await ctx.close();
+});

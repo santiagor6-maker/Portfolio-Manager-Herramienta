@@ -124,7 +124,8 @@ describe('I23 — SINACOR name → ticker by exact nome de pregão', () => {
   it('unknown specifications come back as questions for the UI', async () => {
     const r = await importFile({ data: notePdf([['C', 'VISTA', 'EMPRESA NOVA ON NM', '', '10', '5,00', '50,00', 'D']]) }, O);
     expect(r.unknownSecurities).toEqual([{ key: 'EMPRESA NOVA ON NM', lines: [expect.any(Number)], suggestions: [] }]);
-    const answered = await importFile({ data: notePdf([['C', 'VISTA', 'EMPRESA NOVA ON NM', '', '10', '5,00', '50,00', 'D']]) }, { ...O, securityMap: { 'EMPRESA NOVA ON NM': 'NOVA3' } });
+    // (The default summary's "Líquido para" belongs to another note, so it is accepted explicitly.)
+    const answered = await importFile({ data: notePdf([['C', 'VISTA', 'EMPRESA NOVA ON NM', '', '10', '5,00', '50,00', 'D']]) }, { ...O, securityMap: { 'EMPRESA NOVA ON NM': 'NOVA3' }, acceptNotes: ['55443322'] });
     expect(txs(answered)[0]!.instrumentId).toBe('BVMF:NOVA3');
   });
 });

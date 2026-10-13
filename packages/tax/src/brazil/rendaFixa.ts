@@ -53,6 +53,8 @@ export interface RendaFixaRow {
   irRate: number;
   expectedIrrf: number;
   irrfReported: number;
+  /** Coupon recorded NET (`amountIsNet`) without `taxes`: IR estimated by the regressive table (T67), not certified. */
+  irrfEstimated?: number;
 }
 
 export interface RendaFixaPosition {
@@ -179,9 +181,25 @@ export function brazilRendaFixaReport(input: TaxInput, opts: RendaFixaOptions): 
     } else if (tx.type === 'INTEREST' && inYear) {
       const first = list[0];
       const days = first ? daysBetween(first.openDate, tx.date) : 0;
-      const gross = grossAmount(tx);
       const ex = exempt(id);
       const rate = rendaFixaIrRate(days);
+      const recorded = grossAmount(tx);
+      let gross = tx.amountIsNet ? recorded + (tx.taxes ?? 0) : recorded;
+      let irrfEstimated: number | undefined;
+      if (tx.amountIsNet && tx.taxes === undefined && !ex) {
+        // T67: net coupon → gross-up with the regressive table (core BR_IR_REGRESSIVE); IR estimated.
+        gross = recorded / (1 - rate);
+        irrfEstimated = gross - recorded;
+        issues.push({
+          level: 'warning',
+          code: 'INCOME_RECORDED_NET',
+          transactionId: tx.id,
+          instrumentId: id,
+          message:
+            `Cupom de ${name} registrado LÍQUIDO (R$ ${recorded.toFixed(2)}): bruto estimado R$ ${gross.toFixed(2)} com IR estimado de ` +
+            `R$ ${irrfEstimated.toFixed(2)} (${(rate * 100).toFixed(1)}% após ${days} dias). Confirme com o informe de rendimentos e registre o IR retido.`,
+        });
+      }
       rows.push({
         transactionId: tx.id,
         date: tx.date,
@@ -198,11 +216,13 @@ export function brazilRendaFixaReport(input: TaxInput, opts: RendaFixaOptions): 
         irRate: ex ? 0 : rate,
         expectedIrrf: ex ? 0 : gross * rate,
         irrfReported: tx.taxes ?? 0,
+        irrfEstimated,
       });
     }
   }
   if (!tookPrev) prevSnap = snap();
   for (const r of rows) {
+    if (r.irrfEstimated !== undefined) continue;
     if (Math.abs(r.irrfReported - r.expectedIrrf) > Math.max(0.05, r.expectedIrrf * 0.02)) {
       issues.push({
         level: 'info',

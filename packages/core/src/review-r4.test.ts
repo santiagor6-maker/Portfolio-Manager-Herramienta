@@ -36,10 +36,11 @@ describe('C44 — unconfirmed trade prices have a hard band and reach rows and s
     expect(s.endValueBase).toBeCloseTo(101_000, 6);
     expect(s.twr).toBeGreaterThan(-0.1);
     expect(s.twr).toBeLessThan(0);
-    expect(s.warnings).toContain('TRADE_PRICE_OUTLIER:X');
-    expect(tradeCodes(inp)).toEqual(['TRADE_PRICE_OUTLIER']);
+    // round 7 (C48): a x10 factor is reported as a likely unit/format error
+    expect(s.warnings).toContain('TRADE_PRICE_UNIT_SUSPECT:X');
+    expect(tradeCodes(inp)).toEqual(['TRADE_PRICE_UNIT_SUSPECT']);
     const feb = monthlyPerformance(inp, { asOf: '2024-02-20' }).find((r) => r.month === '2024-02')!;
-    expect(feb.warnings).toContain('TRADE_PRICE_OUTLIER:X');
+    expect(feb.warnings).toContain('TRADE_PRICE_UNIT_SUSPECT:X');
   });
 
   it('T1b: priceConfirmed accepts the print without diagnostics', () => {
@@ -71,7 +72,7 @@ describe('C44 — unconfirmed trade prices have a hard band and reach rows and s
       options: { asOf: '2024-03-31' },
     };
     expect(valuePortfolio(inp, '2024-03-31').totalMarketValueBase).toBeCloseTo(100_100, 6);
-    expect(tradeCodes(inp)).toEqual(['TRADE_PRICE_OUTLIER']);
+    expect(tradeCodes(inp)).toEqual(['TRADE_PRICE_UNIT_SUSPECT']);
   });
 
   it('T4: a genuine -52 % gap confirmed by the next close is not flagged', () => {

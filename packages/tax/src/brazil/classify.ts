@@ -1,5 +1,6 @@
 import type { Instrument, Transaction } from '@pm/core';
 import { basisTotalCost, resolveTransferBasis, type TransferBasisMap } from '../common/basis';
+import { restructureIssues, restructureOf } from '../common/corporate';
 import { daysBetween } from '../common/dates';
 import type { ParamMeta, TaxInput, TaxIssue } from '../common/types';
 
@@ -211,6 +212,12 @@ export interface CryptoRoutingOptions {
    * `transferMaxLateDays` and preferred over any other candidate (confirms TRANSFER_MATCH_PROPOSED).
    */
   confirmedTransfers?: Record<string, string>;
+  /**
+   * User decision on a TRANSFER_OUT left without arrival (key: TRANSFER_OUT id), see Bens e Direitos
+   * (T63). 'mantido' + a later compatible deposit → that deposit is paired with the OUT (T70);
+   * 'alienado' → the OUT is never proposed for a later deposit.
+   */
+  transitResolution?: Record<string, 'alienado' | 'mantido'>;
 }
 
 /**
@@ -294,9 +301,30 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
   const inferred = new Map<string, Transaction>(); // sale/out id -> synthetic TRANSFER_IN
   const BUCKETS: CryptoCustody[] = ['brasil', 'exterior', 'desconhecida'];
 
-  for (const [id, inst] of cryptos) {
+  // T64: restructurings (MATIC → POL, forks) move units and cost to the target. Parents are
+  // processed before their targets; the target receives synthetic per-custody arrivals ("seeds").
+  const seeds = new Map<string, { t: Transaction; i: number }[]>();
+  const seedInfo = new Map<string, { b: CryptoCustody; fx: number; br: number; pv: number; pd: number }>();
+  const parentsOf = new Map<string, Set<string>>();
+  for (const t of input.transactions) {
+    const rs = restructureOf(t);
+    if (rs?.target && t.instrumentId && cryptos.has(t.instrumentId) && cryptos.has(rs.target)) {
+      parentsOf.set(rs.target, (parentsOf.get(rs.target) ?? new Set()).add(t.instrumentId));
+    }
+  }
+  const ordered: string[] = [];
+  const visit = (id: string, stack = new Set<string>()) => {
+    if (ordered.includes(id) || stack.has(id)) return;
+    stack.add(id);
+    for (const p of parentsOf.get(id) ?? []) visit(p, stack);
+    ordered.push(id);
+  };
+  for (const id of cryptos.keys()) visit(id);
+
+  for (const id of ordered) {
+    const inst = cryptos.get(id)!;
     const forced = opts.cryptoCustody?.[id];
-    const txs = all
+    const txs = [...all, ...(seeds.get(id) ?? [])]
       .filter(({ t }) => t.instrumentId === id)
       .sort((a, b) => a.t.date.localeCompare(b.t.date) || dayOrder(a.t) - dayOrder(b.t) || a.i - b.i)
       .map(({ t }) => t);
@@ -349,7 +377,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
       D: CryptoCustody,
       d: string,
       txId: string,
-      o: { futureIns?: number[]; ownValue?: number; link?: string; quiet?: boolean; uncapped?: boolean } = {},
+      o: { futureIns?: number[]; ownValue?: number; link?: string; quiet?: boolean; uncapped?: boolean; softLink?: boolean } = {},
     ) => {
       const futureIns = o.futureIns ?? [];
       const ownValue = o.ownValue ?? 0;
@@ -424,7 +452,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         const cfx = remFx * share;
         const cbr = remBr * share;
         // Inferred arrival beyond the cap: the carried cost is only a proposal → provisional (T58).
-        pv += daysBetween(p.outDate, d) > maxLate && !linked(p) ? u : (p.provisional ?? 0) * share;
+        pv += daysBetween(p.outDate, d) > maxLate && (!linked(p) || o.softLink) ? u : (p.provisional ?? 0) * share;
         pd += (p.pending ?? 0) * share;
         p.consumptions.push({ date: d, units: u, fx: cfx, brl: cbr });
         fx += cfx;
@@ -434,8 +462,11 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
       return { fx, br, pv, pd, matched: q - Math.max(0, need) };
     };
     /** Pending OUT pieces older than the late-match cap (proposals only, T58). */
+    const resolutionOf = (p: CryptoTransitPiece) => opts.transitResolution?.[p.outTxId.split('~')[0]!];
     const tooLate = (d: string) =>
-      pool.filter((p) => p.outDate <= d && daysBetween(p.outDate, d) > maxLate && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12);
+      pool.filter(
+        (p) => p.outDate <= d && daysBetween(p.outDate, d) > maxLate && resolutionOf(p) !== 'alienado' && p.units - p.consumptions.reduce((a, c) => a + c.units, 0) > 1e-12,
+      );
     /** Consumes q units starting from `first`, then CRYPTO_CONSUMPTION_ORDER. */
     const consume = (q: number, first: CryptoCustody | undefined) => {
       const order = [...(first ? [first] : []), ...CRYPTO_CONSUMPTION_ORDER.filter((b) => b !== first)];
@@ -469,7 +500,63 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     for (const t of txs) {
       const q = t.quantity ?? 0;
       const named = label(t);
-      if (t.type === 'BUY' || t.type === 'STOCK_DIVIDEND') {
+      const si = seedInfo.get(t.id);
+      const rs = restructureOf(t);
+      if (si) {
+        // Arrival from a restructuring of another asset: same custody, carried cost (T64).
+        add(si.b, q, si.fx, si.br, cryptoVenueKey(t.account ?? inst.exchange), si.pv, si.pd);
+        transferBasis[t.id] = { openDate: t.date, totalCost: si.fx, fxRate: si.fx > 0 ? si.br / si.fx : brl(t.currency, t.date) };
+        pieceBucket.set(t.id, si.b);
+      } else if (rs) {
+        issues.push(...restructureIssues(t, rs, inst.symbol));
+        const pieces: Transaction[] = [];
+        if (rs.target && cryptos.has(rs.target)) {
+          const list: { t: Transaction; i: number }[] = seeds.get(rs.target) ?? [];
+          let n = 0;
+          for (const b of BUCKETS) {
+            if (units[b] <= 1e-12) continue;
+            const u = units[b];
+            let c: { fx: number; br: number; pv: number; pd: number };
+            if (rs.kind === 'SPINOFF') {
+              c = { fx: costFx[b] * rs.costFraction, br: costBrl[b] * rs.costFraction, pv: prov[b], pd: pend[b] };
+              costFx[b] -= c.fx;
+              costBrl[b] -= c.br;
+              pieces.push({ ...t, id: n === 0 ? t.id : `${t.id}~${n}`, quantity: u });
+            } else {
+              c = take(b, u);
+              pieces.push({ ...t, id: n === 0 ? t.id : `${t.id}~${n}`, type: 'TRANSFER_OUT', subtype: undefined, quantity: u, amount: undefined, note: `${rs.kind} → ${rs.target}` });
+            }
+            pieceBucket.set(pieces[pieces.length - 1]!.id, b);
+            const seed: Transaction = {
+              id: `${t.id}~to${n}`,
+              portfolioId: t.portfolioId,
+              date: t.date,
+              type: 'TRANSFER_IN',
+              instrumentId: rs.target,
+              quantity: u * rs.ratio,
+              currency: t.currency,
+              account: lastVenue[b] ?? t.account,
+              note: `${rs.kind} de ${inst.symbol}`,
+            };
+            seedInfo.set(seed.id, { b, fx: c.fx, br: c.br, pv: c.pv * rs.ratio, pd: c.pd * rs.ratio });
+            list.push({ t: seed, i: all.length + list.length });
+            pieces.push(seed);
+            n++;
+          }
+          seeds.set(rs.target, list);
+          if (rs.cash > 0) {
+            issues.push({
+              level: 'warning',
+              code: 'CRYPTO_RESTRUCTURE_CASH',
+              transactionId: t.id,
+              instrumentId: id,
+              message: `Valor em dinheiro na reestruturação de ${inst.symbol} não apurado automaticamente: registre-o como venda parcial.`,
+            });
+          }
+        }
+        rewritten.set(t.id, pieces.length ? pieces : [t]);
+        if (!pieces.length) pieceBucket.set(t.id, named ?? 'desconhecida');
+      } else if (t.type === 'BUY' || t.type === 'STOCK_DIVIDEND') {
         const b = named ?? 'desconhecida';
         if (!forced && t.account && !cryptoCustodyForVenue(t.account, opts.accountCustody)) {
           issues.push({
@@ -491,7 +578,30 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
         const futureIns = txs.filter((x) => x.type === 'TRANSFER_IN' && x !== t && txs.indexOf(x) > txs.indexOf(t)).map((x) => x.quantity ?? 0);
         const userBasis = resolveTransferBasis(t, opts.transferBasis, opts.acceptNoteProposals).basis;
         const userCost = userBasis ? basisTotalCost(userBasis, q) : undefined;
-        const a = arrive(q, D, t.date, t.id, { futureIns, ownValue, link: opts.confirmedTransfers?.[t.id], quiet: userCost !== undefined });
+        // T70: an OUT the user declared still owned ("mantido") is paired with a later compatible
+        // deposit (quantity within the fee tolerance) instead of being counted twice.
+        let link = opts.confirmedTransfers?.[t.id];
+        let softLink = false;
+        if (!link && userCost === undefined) {
+          const remOf = (p: CryptoTransitPiece) => p.units - p.consumptions.reduce((x, c) => x + c.units, 0);
+          const kept = tooLate(t.date)
+            .filter((p) => resolutionOf(p) === 'mantido' && q <= remOf(p) * 1.02 + 1e-9 && q >= remOf(p) * (1 - maxFee) - 1e-9)
+            .sort((x, y) => Math.abs(remOf(x) - q) - Math.abs(remOf(y) - q))[0];
+          if (kept) {
+            link = kept.outTxId.split('~')[0]!;
+            softLink = true;
+            issues.push({
+              level: 'warning',
+              code: 'TRANSFER_MATCH_APPLIED_MANTIDO',
+              transactionId: t.id,
+              instrumentId: id,
+              message:
+                `Entrada de ${q} ${inst.symbol} em ${t.date} vinculada à saída de ${kept.outDate} marcada como "mantido" (custo de origem R$ ${kept.brl.toFixed(2)}): ` +
+                'o patrimônio não é contado duas vezes. Confirme com confirmedTransfers (ou desmarque "mantido" se for outra unidade).',
+            });
+          }
+        }
+        const a = arrive(q, D, t.date, t.id, { futureIns, ownValue, link, softLink, quiet: userCost !== undefined });
         let fx = a.fx;
         let br = a.br;
         let provisional = a.pv;
@@ -681,7 +791,7 @@ export function routeCryptoByCustody(input: TaxInput, opts: CryptoRoutingOptions
     }
     for (const p of pool) {
       const left = p.units - p.consumptions.reduce((a, c) => a + c.units, 0);
-      if (left > 1e-9) {
+      if (left > 1e-9 && !resolutionOf(p)) {
         issues.push({
           level: 'warning',
           code: 'TRANSFER_OUT_UNMATCHED',

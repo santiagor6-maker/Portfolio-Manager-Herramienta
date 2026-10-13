@@ -13,6 +13,7 @@ import type {
   InstrumentHint,
   ReportedPosition,
   UnknownSecurity,
+  NoteCheck,
   ImportIssue,
   ImportOptions,
   Locale,
@@ -48,10 +49,11 @@ export class ParseContext {
     /** Broker account ids of the statement (IBKR U1234567...), to reconcile per account. */
     accountIds?: string[];
     positions: (ReportedPosition & { hint?: InstrumentHint })[];
-    cash: { currency: string; amount: number }[];
+    cash: { currency: string; amount: number; account?: string }[];
   };
   readonly corporateActions: CorporateActionSuggestion[] = [];
   readonly unknownSecurities: UnknownSecurity[] = [];
+  readonly noteChecks: NoteCheck[] = [];
 
   /** Record a security the user must identify (merged by key). */
   askSecurity(key: string, line: number, suggestions: string[] = []): void {

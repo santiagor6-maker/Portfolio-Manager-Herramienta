@@ -24,6 +24,7 @@ const PerformancePage = lazy(() => import('./pages/Performance'));
 const TaxesPage = lazy(() => import('./pages/Taxes'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const NotFoundPage = lazy(() => import('./pages/NotFound'));
+const SharedPage = lazy(() => import('./pages/Shared'));
 
 function PageFallback() {
   return (
@@ -56,6 +57,8 @@ export function App() {
       <Effects />
       <Suspense fallback={null}>
         <Routes>
+          {/* W10: read-only shared report, outside the app layout. */}
+          <Route path="compartido" element={<Lazy el={<SharedPage />} />} />
           <Route element={<Layout />}>
             <Route index element={<Lazy el={<DashboardPage />} />} />
             <Route path="informe" element={<Lazy el={<ReportPage />} />} />

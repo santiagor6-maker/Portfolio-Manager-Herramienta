@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 232 pruebas
+npx vitest run packages/core        # 244 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -134,6 +134,10 @@ Rondas 5 y 6:
 - **Pago menor que lo causado.** Un pago entre el 70 % y el 98 % del interés causado en el periodo lo salda
   completo: el lote vuelve a su valor ancla. La diferencia es retención o la base de días del emisor, nunca
   interés pendiente (`INTEREST_BELOW_ACCRUED`, informativo). Dentro de ±2 % se resta el cupón mismo.
+- **Bonos indexados a inflación (ronda 7).** En un instrumento indexado a IPCA, UVR o IPC (series de nivel o
+  de variación mensual), el cupón solo paga el spread sobre el principal actualizado. La actualización por el
+  índice (VNA) se capitaliza y ningún cupón la salda; las bandas anteriores se aplican solo a la parte de
+  spread. Los índices de tasa (CDI, SELIC, IBR) siguen pagando todo el devengo.
 - **Pago mayor que lo causado.** La reducción se limita al interés causado (desde el ancla o en el periodo del
   cupón, máximo un año, lo que cubre el interés comprado a precio sucio). El exceso es ingreso, el principal no
   se toca y se avisa `COUPON_EXCEEDS_ACCRUED_INTEREST`.
@@ -239,10 +243,19 @@ Precios de operación atípicos (rondas 3 a 5):
   `TRADE_PRICE_UNCONFIRMED` para que la UI pida confirmación. Así un fondo que sube 40 % o BTC +45 % se valoran
   bien.
 - Ambos avisos llegan también a `MonthlyRow.warnings` y `PerformanceSummary.warnings` (`CODIGO:<ids>`).
-- Ronda 6: dos o más precios rechazados consecutivos que concuerdan entre sí, sin un cierre que los contradiga,
-  confirman el nuevo nivel. Se re-aceptan todos y se informa `TRADE_PRICE_CONFIRMED_BY_RUN`. Un precio sin
-  confirmar seguido de uno consistente deja de estar marcado. Un precio con `priceConfirmed` se vuelve la
-  referencia de los siguientes.
+- Rondas 6 y 7: dos o más precios rechazados **de días distintos** que concuerdan entre sí, sin un cierre que
+  los contradiga, confirman el nuevo nivel. Varias ejecuciones del mismo día cuentan como una sola evidencia.
+  Se re-aceptan todos y se informa `TRADE_PRICE_CONFIRMED_BY_RUN`, un aviso que llega a las filas y al
+  resumen. Un precio sin confirmar seguido de uno consistente de otro día deja de estar marcado. Un precio con
+  `priceConfirmed` se vuelve la referencia de los siguientes.
+- Ronda 7: un factor cercano a una potencia de 10 frente a la referencia (×8 o más, ÷8 o menos, o a menos de
+  10 % de ×10, ×100, ÷1.000...) parece un error de unidad o de formato. Ejemplos: separador de miles leído
+  como decimal, peniques por libras, precio por lote. Se informa `TRADE_PRICE_UNIT_SUSPECT` y **nunca** se
+  confirma automáticamente: exige `priceConfirmed`.
+- Ronda 7: un salto entre dos precios consecutivos (cierres o precios de operación aceptados) cercano a una
+  razón de split común (2, 3, 4, 5, 8, 10, 20, 25, 50, 100 o sus inversos), mientras se tiene la posición y
+  sin un `SPLIT` registrado alrededor, se informa `POSSIBLE_UNRECORDED_SPLIT`. Es un aviso en filas y
+  resumen. Las razones 2 y 3 solo se evalúan con saltos de 10 días o menos.
 - Tampoco se usan las operaciones de menos del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
@@ -404,8 +417,10 @@ Caché segura (ronda 3):
 - Cuando cambian los precios hay que pasar un nuevo `MarketData`; los de `createMarketData` son inmutables.
   Un `MarketData` propio que cambia en sitio debe incrementar `revision` (ronda 4). Sin `revision`, nunca se
   usa la caché para él.
-- El hash es incremental: cada fila guarda sus valores y solo se re-hashean las que cambiaron. Con 30.000
-  movimientos cuesta ~5 ms por llamada.
+- El hash es incremental y cubre todos los campos de cada movimiento. Para cada arreglo de movimientos se
+  guardan las filas, sus valores en un arreglo plano y sus hashes (ronda 7). Una llamada con el mismo arreglo
+  compara cada fila en sitio y re-hashea solo las que cambiaron. Si nada cambió, reutiliza el hash
+  combinado. Con 30.000 movimientos cuesta ~1 ms por llamada.
 - **Para la web se recomienda un `createEngine(input)` explícito**: ~0,5 ms por resumen, sin hash.
 
 Con 30.000 movimientos y 150 instrumentos (escenario S6), los 11 resúmenes tardan ~0,7 s, incluido el hash
@@ -609,3 +624,24 @@ Cambios aditivos al contrato:
   `INTEREST_BELOW_ACCRUED`.
 - Cambio de comportamiento: J6 (CDT con interés neto del 4 % sin `taxes`) ya no infiere la retención. El valor
   sigue exacto (10.000.000), pero la retención solo aparece con `amountIsNet` o `taxes`.
+
+## Respuesta a la revisión ronda 6
+
+Revisión: `reviews/core-r6.md`; estos cambios forman la **ronda 7** del motor. Los escenarios del revisor
+(`r6-a`) quedaron como pruebas en `src/review-r6.test.ts`. Total: **244 pruebas**, que pasan también con
+`TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. Los 19 scripts del revisor (rondas 1–6) pasan, salvo los ya
+aceptados (F1, F4, S2a, S2b). El portafolio de ejemplo no genera avisos nuevos.
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C48 La racha confirmaba errores sistemáticos | Alta | (1) Solo cuentan como racha precios de **días distintos**; varias ejecuciones del mismo día son una sola evidencia. (2) Un factor cercano a una potencia de 10 frente a la referencia (×8 o más, ÷8 o menos, o a menos de 10 % de ×10ᵏ) nunca se confirma automáticamente. Se informa `TRADE_PRICE_UNIT_SUSPECT` y exige `priceConfirmed`. (3) `TRADE_PRICE_CONFIRMED_BY_RUN` es ahora `warning` y llega a `MonthlyRow.warnings` y `PerformanceSummary.warnings`. R1 (dos ejecuciones ×10 el mismo día): MTD −8,2 % y valor 101.000 con aviso (antes +900 %). R2 ("4.200" → 4,2): valor 492.000 y marzo +10 % con aviso (antes 510 y −99,9 %). R3 (peniques por libras): MTD −99 % con aviso (antes +10.186 %). El valor queda bien; la pérdida refleja el efectivo, que también se importó ×100. En R2 y R3 el monto pagado sigue errado, así que el aviso es la pista para corregir la fila. V2 (1 → 3,5 → 4 → 4,2) sigue en 4.326 y R4 (cripto ×6 con dos precios) en +525 %, ahora con aviso. |
+| C49 El cupón borraba la actualización por inflación | Media | En instrumentos indexados a un índice de inflación (nivel, como UVR, o variación mensual, como IPCA/IPC), lo pagable por cupón es solo el spread sobre el principal actualizado (`payableFactor`). La regla 70–98 % y el tope se aplican a esa parte, y el VNA nunca se salda. I1 (NTN-B, IPCA 0,12 %/mes): 4.028,80 frente al VNA 4.028,89 (antes 4.000), y un año después 4.173 frente a ≈ 4.178 (antes 4.143). J5 (IPCA 0,4 %) e I2 (TES UVR) siguen correctos. |
+| C50 Split no registrado sin pista | Baja | Nuevo aviso `POSSIBLE_UNRECORDED_SPLIT`, en diagnósticos, filas y resumen. Se emite con un salto entre precios consecutivos cercano a una razón de split común mientras se tiene la posición, sin `SPLIT` registrado alrededor. R5 (NVDA 1.100 → 120): junio sigue en −89 %, pero con el aviso. Con el split registrado no hay aviso. |
+| C51 Hash 3× más caro | Baja | Caché por arreglo de movimientos: filas, valores en un arreglo plano, hashes por fila y hash combinado. Sin búsquedas en `WeakMap` por fila, y se reutiliza el combinado cuando nada cambió. Se siguen detectando ediciones en sitio, reemplazos y filas agregadas, sobre todos los campos. 30.000 movimientos: ~1 ms por hash (antes ~5–22 ms), y un `performanceSummary` en caché por el API pasa de 37 ms a ~1,7 ms. |
+
+Cambios aditivos al contrato:
+- Diagnósticos nuevos: `TRADE_PRICE_UNIT_SUSPECT` (warning) y `POSSIBLE_UNRECORDED_SPLIT` (warning).
+  `TRADE_PRICE_CONFIRMED_BY_RUN` pasa de `info` a `warning`.
+- Avisos nuevos en filas y resúmenes: `TRADE_PRICE_UNIT_SUSPECT:<ids>`, `TRADE_PRICE_CONFIRMED_BY_RUN:<ids>`
+  y `POSSIBLE_UNRECORDED_SPLIT:<ids>`.
+- `IndexData.capitalized` es interno y marca los índices de inflación.

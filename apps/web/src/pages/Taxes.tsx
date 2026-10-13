@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db/schema';
+import { saveTransaction } from '../db/repo';
+import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
 import { Banner, Card, Kpi, PageHeader, Segmented, Skeleton } from '../components/ui';
@@ -20,6 +24,8 @@ export default function TaxesPage() {
   const [year, setYear] = useState(thisYear - 1);
   const [reports, setReports] = useState<TaxReports>();
   const [loading, setLoading] = useState(true);
+  const txVersion = useLiveQuery(() => db.transactions.count(), [], 0);
+  const [bump, setBump] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,7 +37,7 @@ export default function TaxesPage() {
     return () => {
       cancelled = true;
     };
-  }, [country, year, pid]);
+  }, [country, year, pid, txVersion, bump]);
 
   const disclaimer = TAX_DISCLAIMER[f.language as Lang] ?? TAX_DISCLAIMER.es;
   const years = Array.from({ length: 6 }, (_, i) => thisYear - i);
@@ -89,9 +95,27 @@ export default function TaxesPage() {
           <Skeleton className="h-64" />
         </div>
       ) : country === 'CO' && reports?.colombia ? (
-        <ColombiaView r={reports.colombia} money={money} />
+        <>
+          <ColombiaView r={reports.colombia} money={money} />
+          {reports.coPack && (
+            <>
+              <TaxExports files={reports.coPack.files} xlsx={reports.coPack.xlsx} name={`colombia-${year}`} onPrint={() => printTaxDocument(reports.coPack!.document, 'es-CO')} />
+              <TaxDocumentView doc={reports.coPack.document} />
+            </>
+          )}
+        </>
       ) : country === 'BR' && reports?.brazil ? (
-        <BrazilView r={reports} money={money} />
+        <>
+          <BrazilView r={reports} money={money} portfolioId={pid} />
+          {reports.brPack && (
+            <>
+              <BensDireitosView report={reports.brPack.bensDireitos} money={money} onChanged={() => setBump((b) => b + 1)} />
+              <CryptoView report={reports.brPack.cripto} money={money} />
+              <TaxExports files={reports.brPack.files} xlsx={reports.brPack.xlsx} name={`brasil-${year}`} onPrint={() => printTaxDocument(reports.brPack!.document, 'pt-BR')} />
+              <TaxDocumentView doc={reports.brPack.document} />
+            </>
+          )}
+        </>
       ) : null}
     </div>
   );
@@ -219,7 +243,7 @@ function ColombiaView({ r, money }: { r: NonNullable<TaxReports['colombia']>; mo
   );
 }
 
-function BrazilView({ r, money }: { r: TaxReports; money: MoneyFn }) {
+function BrazilView({ r, money, portfolioId }: { r: TaxReports; money: MoneyFn; portfolioId: string }) {
   const { t } = useTranslation();
   const f = useFmt();
   const a = r.brazil!;
@@ -259,7 +283,27 @@ function BrazilView({ r, money }: { r: TaxReports; money: MoneyFn }) {
                   <td className="r num">{money(m.fii.result, 'BRL')}</td>
                   <td className="r num">{money(m.taxAfterIrrf, 'BRL')}</td>
                   <td className="r num font-semibold">{m.darf ? money(m.darf.amount, 'BRL') : '—'}</td>
-                  <td className="text-xs">{m.darf ? formatDate(m.darf.dueDate, f.locale, 'short') : ''}</td>
+                  <td className="text-xs">
+                    {m.darf && (
+                      <DarfStatusCell
+                        darf={m.darf}
+                        money={money}
+                        onPay={
+                          portfolioId !== 'all' && (m.darf.status === 'pendente' || m.darf.status === 'vencida')
+                            ? () =>
+                                void saveTransaction({
+                                  portfolioId,
+                                  date: new Date().toISOString().slice(0, 10),
+                                  type: 'TAX',
+                                  currency: 'BRL',
+                                  amount: m.darf!.late?.total ?? m.darf!.amount,
+                                  note: `DARF ${m.darf!.code} ${m.darf!.month}`,
+                                })
+                            : undefined
+                        }
+                      />
+                    )}
+                  </td>
                 </tr>
               ))}
               {!a.months.length && (
@@ -273,7 +317,41 @@ function BrazilView({ r, money }: { r: TaxReports; money: MoneyFn }) {
           </table>
         </div>
       </Card>
-      <Issues issues={[...a.issues, ...(p?.issues ?? [])]} />
+      <Issues issues={[...a.issues, ...(p?.issues ?? []), ...(r.brPack ? [...r.brPack.cripto.issues, ...r.brPack.bensDireitos.issues.filter((i) => i.code !== 'CRYPTO_TRANSIT_STALE'), ...r.brPack.exterior.issues] : [])]} />
     </>
+  );
+}
+
+type Darf = NonNullable<NonNullable<TaxReports['brazil']>['darfs']>[number];
+
+/** Tax R8: DARF status (paga / paga em atraso / vencida / pendente) with multa + Selic. */
+function DarfStatusCell({ darf, money, onPay }: { darf: Darf; money: MoneyFn; onPay?: () => void }) {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const tone =
+    darf.status === 'paga' ? '!text-pos !border-pos/30' : darf.status === 'vencida' ? '!text-neg !border-neg/30' : darf.status === 'paga_em_atraso' ? '!text-warn !border-warn/30' : '';
+  const late = darf.late;
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="darf-status">
+      <span className="flex items-center gap-1.5 flex-wrap">
+        <span>{formatDate(darf.dueDate, f.locale, 'short')}</span>
+        <span className={`chip !h-5 !text-[10.5px] ${tone}`}>{t(`tax.br.darfStatus.${darf.status}`)}</span>
+      </span>
+      {late && late.daysLate > 0 && (
+        <span className="text-[11px] text-muted whitespace-normal">
+          {t('tax.br.lateCharges', {
+            days: late.daysLate,
+            multa: money(late.multa, 'BRL'),
+            juros: late.juros !== undefined ? money(late.juros, 'BRL') : '—',
+            total: late.total !== undefined ? money(late.total, 'BRL') : '—',
+          })}
+        </span>
+      )}
+      {onPay && (
+        <button className="btn btn-sm !h-6 !text-[11px] self-start" onClick={onPay} data-testid="darf-pay">
+          {t('tax.br.recordPayment')}
+        </button>
+      )}
+    </div>
   );
 }

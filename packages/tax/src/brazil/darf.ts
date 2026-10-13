@@ -3,7 +3,7 @@ import { daysBetween, lastBrazilBusinessDayOfMonth, lastDayOfMonth, monthOf, mon
 import { round2, sum } from '../common/util';
 import type { ParamMeta, TaxIssue } from '../common/types';
 
-export type DarfStatus = 'paga' | 'paga_em_atraso' | 'pendente' | 'vencida';
+export type DarfStatus = 'paga' | 'paga_em_atraso' | 'paga_parcial' | 'pendente' | 'vencida';
 
 /** Data to fill the DARF in Sicalc Web (Receita Federal), which issues the payable guide with barcode. */
 export interface SicalcData {
@@ -204,8 +204,17 @@ export interface DarfGuide {
   /** Months whose sub-R$10 tax was rolled into this DARF. */
   includesMonths: YearMonth[];
   status: DarfStatus;
+  /** First payment matched (kept for compatibility; see `payments`). */
   payment?: DarfPayment;
-  /** Late charges for the recorded payment, or for paying on `asOf` when overdue and unpaid. */
+  /** Every payment imputed to this DARF (principal + complementary DARF with charges...) — T68. */
+  payments?: DarfPayment[];
+  /** Sum of `payments`. */
+  paidTotal?: number;
+  /** Still owed (principal not paid + its charges up to `asOf`, or up to the last payment). */
+  balance?: number;
+  /** Paid above what was due (recoverable via PER/DCOMP). */
+  overpaid?: number;
+  /** Late charges for the recorded payment(s), or for paying on `asOf` when overdue and unpaid. */
   late?: DarfLateCharges;
   sicalc: SicalcData;
 }
@@ -255,34 +264,124 @@ export function accumulateDarfs(
 }
 
 /**
- * Payment status and late charges of DARFs (T61: shared by 6015, 4600 and 0190): matches the
- * payments by code and month, marks paga / paga_em_atraso / vencida, computes multa and Selic,
- * refreshes the Sicalc data with the payment date and warns when the payment is short.
+ * Payment status and late charges of DARFs (T61, shared by 6015, 4600 and 0190; T68/T69):
+ * - payments are matched by code and by month, the month of the payment being ANY month covered by
+ *   the DARF (`includesMonths`: an accumulated DARF paid with the note of its first month);
+ *   uncoded/unmonthed payments go to the first open DARF after its period with enough amount;
+ * - every payment of a DARF is summed (principal paid on time + complementary DARF with charges);
+ *   a payment after the due date covers principal and its multa/juros pro rata (Sicalc rule);
+ * - status: paga / paga_em_atraso (fully paid), paga_parcial (balance left), vencida / pendente;
+ *   warnings DARF_UNDERPAID (balance), DARF_OVERPAID (excess, PER/DCOMP) and
+ *   DARF_PAYMENT_UNMATCHED (payment not imputed to any DARF, when `reportUnmatched`).
  */
 export function settleDarfs(
   darfs: DarfGuide[],
   payments: DarfPayment[],
-  opts: { asOf?: ISODate; selicMonthly?: Record<YearMonth, number>; label?: string } = {},
+  opts: {
+    asOf?: ISODate;
+    selicMonthly?: Record<YearMonth, number>;
+    label?: string;
+    /** Which unmatched payments to report (default: none). */
+    reportUnmatched?: (p: DarfPayment) => boolean;
+  } = {},
 ): TaxIssue[] {
   const issues: TaxIssue[] = [];
   const label = opts.label ? `${opts.label} ` : '';
-  const matched = matchDarfPayments(darfs, payments);
-  for (const d of darfs) {
-    const p = matched.get(d);
+  const used = new Set<DarfPayment>();
+  const byDarf = new Map<DarfGuide, DarfPayment[]>();
+  const codeOk = (p: DarfPayment, d: DarfGuide) => !p.code || p.code === d.code;
+  const sorted = [...darfs].sort((a, b) => a.month.localeCompare(b.month));
+  for (const d of sorted) {
+    const covered = new Set([d.month, ...d.includesMonths]);
+    const ps = payments.filter((x) => !used.has(x) && codeOk(x, d) && x.month !== undefined && covered.has(x.month));
+    for (const p of ps) used.add(p);
+    if (ps.length) byDarf.set(d, ps);
+  }
+  for (const d of sorted) {
+    if (byDarf.has(d)) continue;
+    const p = payments
+      .filter((x) => !used.has(x) && codeOk(x, d) && !x.month && x.date > d.periodoApuracao && x.amount >= d.amount - 0.05)
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
     if (p) {
-      d.payment = p;
-      if (p.date > d.dueDate) {
-        d.status = 'paga_em_atraso';
-        d.late = darfLateCharges(d.amount, d.dueDate, p.date, opts.selicMonthly);
-        d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: p.date, charges: d.late });
-      } else d.status = 'paga';
-      const expected = d.late?.total ?? d.amount;
-      if (p.amount + 0.05 < expected) {
+      used.add(p);
+      byDarf.set(d, [p]);
+    }
+  }
+  for (const d of darfs) {
+    const ps = (byDarf.get(d) ?? []).sort((a, b) => a.date.localeCompare(b.date));
+    let principal = d.amount;
+    let multa = 0;
+    let juros: number | undefined = 0;
+    let lastLate: DarfLateCharges | undefined;
+    let excess = 0;
+    for (const p of ps) {
+      if (principal <= 0.005) {
+        excess += p.amount;
+        continue;
+      }
+      if (p.date <= d.dueDate) {
+        const c = Math.min(principal, p.amount);
+        principal -= c;
+        excess += p.amount - c;
+        continue;
+      }
+      const ch = darfLateCharges(principal, d.dueDate, p.date, opts.selicMonthly);
+      const rateTotal = 1 + ch.multaRate + (ch.jurosRate ?? 0);
+      const c = Math.min(principal, p.amount / rateTotal);
+      multa += c * ch.multaRate;
+      juros = juros === undefined || ch.jurosRate === undefined ? undefined : juros + c * ch.jurosRate;
+      principal -= c;
+      excess += Math.max(0, p.amount - c * rateTotal);
+      lastLate = ch;
+    }
+    const paid = round2(sum(ps.map((p) => p.amount)));
+    if (ps.length) {
+      d.payment = ps[0];
+      d.payments = ps;
+      d.paidTotal = paid;
+    }
+    if (lastLate) {
+      d.late = {
+        daysLate: lastLate.daysLate,
+        multa: round2(multa),
+        multaRate: lastLate.multaRate,
+        juros: juros === undefined ? undefined : round2(juros),
+        jurosRate: lastLate.jurosRate,
+        missingSelicMonths: lastLate.missingSelicMonths,
+        total: juros === undefined ? undefined : round2(d.amount + multa + juros),
+      };
+    }
+    const lastPay = ps[ps.length - 1];
+    if (principal <= 0.05) {
+      d.status = lastLate ? 'paga_em_atraso' : 'paga';
+      if (lastLate && lastPay) d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, d.amount, { paymentDate: lastPay.date, charges: d.late! });
+      if (excess > 0.05) {
+        d.overpaid = round2(excess);
         issues.push({
           level: 'warning',
-          code: 'DARF_UNDERPAID',
-          message: `DARF ${label}de ${d.month}: pago R$ ${p.amount.toFixed(2)} de R$ ${expected.toFixed(2)} devidos (com acréscimos, se houver).`,
+          code: 'DARF_OVERPAID',
+          message: `DARF ${label}de ${d.month}: pago R$ ${paid.toFixed(2)}, R$ ${excess.toFixed(2)} acima do devido (com acréscimos). O excesso pode ser compensado ou restituído via PER/DCOMP.`,
         });
+      }
+      continue;
+    }
+    // Principal still open: its charges up to asOf (or up to the last payment).
+    const ref = opts.asOf && opts.asOf > d.dueDate ? opts.asOf : lastPay && lastPay.date > d.dueDate ? lastPay.date : undefined;
+    const openCh = ref ? darfLateCharges(principal, d.dueDate, ref, opts.selicMonthly) : undefined;
+    const balance = round2(principal + (openCh ? openCh.multa + (openCh.juros ?? 0) : 0));
+    d.balance = balance;
+    if (ps.length) {
+      d.status = 'paga_parcial';
+      issues.push({
+        level: 'warning',
+        code: 'DARF_UNDERPAID',
+        message:
+          `DARF ${label}de ${d.month}: pago R$ ${paid.toFixed(2)}; falta R$ ${balance.toFixed(2)} ` +
+          `(principal R$ ${round2(principal).toFixed(2)}${openCh && openCh.daysLate > 0 ? ' + multa e juros' : ''}). Emita um DARF complementar no Sicalc.`,
+      });
+      if (openCh && ref) {
+        d.late = openCh;
+        d.sicalc = sicalcData(d.code, d.periodoApuracao, d.dueDate, round2(principal), { paymentDate: ref, charges: openCh });
       }
     } else if (opts.asOf && opts.asOf > d.dueDate) {
       d.status = 'vencida';
@@ -295,6 +394,19 @@ export function settleDarfs(
           message: `DARF ${label}vencido de ${d.month}: informe a Selic mensal de ${d.late.missingSelicMonths.join(', ')} para calcular os juros (ou use o Sicalc).`,
         });
       }
+    }
+  }
+  if (opts.reportUnmatched) {
+    for (const p of payments) {
+      if (used.has(p) || !opts.reportUnmatched(p)) continue;
+      issues.push({
+        level: 'warning',
+        code: 'DARF_PAYMENT_UNMATCHED',
+        transactionId: p.transactionId,
+        message:
+          `Pagamento de DARF ${p.code ?? ''} de R$ ${p.amount.toFixed(2)} em ${p.date}${p.month ? ` (período ${p.month})` : ''} não corresponde a nenhum DARF ${label}calculado. ` +
+          'Confira o código e o período de apuração na nota (ex.: "DARF 4600 2026-03"); se for de outro tributo, ignore.',
+      });
     }
   }
   return issues;

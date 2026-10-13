@@ -609,7 +609,7 @@ Revisión: `reviews/importers-r3.md` (7,5 frente a 8 de Sharesight). Las regresi
 
 ### I30 — Nomes de pregão
 
-- **Cambios de código.** `TICKER_RENAMES` (en `markets.ts`) refleja las filas `rename` de
+- **Cambios de código.** (Desde la ronda 5 la fuente es `@pm/core`, ver abajo.) `TICKER_RENAMES` (en `markets.ts`) refleja las filas `rename` de
   `TICKER_ALIASES` de `@pm/market-data` y agrega ISA CTEEP → ISA Energia (TRPL → ISAE):
   - ELET3 → AXIA3;
   - EMBR3 → EMBJ3;
@@ -779,4 +779,123 @@ La recepción del correo y la verificación del remitente (SPF/DKIM) son tarea d
   aprende.
 - **Fracción de costo de los spin-offs.** Cuando el emisor publica una fracción oficial distinta, debe
   ingresarse como respuesta: el valor de mercado del día ex es la aproximación por defecto.
-- **AXIA6.** `@pm/market-data` solo registra ELET3 → AXIA3, así que ELET6 (PNB) no se renombra.
+- **AXIA6.** Resuelto en la ronda 5: ELET6 → AXIA6 está en la tabla única de `@pm/core`.
+
+## Respuesta a la revisión ronda 4
+
+Revisión: `reviews/importers-r4.md` (8 frente a 8 de Sharesight: empate, no aprobado). Las regresiones
+están en `test/review-r4.test.ts`.
+
+**Línea base:**
+- Antes: 240 pruebas.
+- Ahora: **255 pruebas**, todas pasan.
+- `npx tsc -p packages/importers --noEmit` y `npx tsc -p packages/core --noEmit` terminan sin errores, y los archivos de prueba pasan el typecheck.
+- Las pruebas de `packages/core` y `apps/server` siguen pasando (294).
+
+### I35 — Líneas ilegibles en notas SINACOR
+
+- Toda línea de "Negócios realizados" que parece una operación y no se puede leer genera el error
+  `UNPARSED_LINE`. Cuenta como operación si empieza con `1-BOVESPA`, `B3 RV LISTADO` o C/V + mercado, o
+  si termina en un valor con D/C. Por ejemplo, una cantidad `1OO` leída por OCR.
+  - El error trae la nota y el texto crudo.
+  - Si corregir las confusiones típicas de OCR (O→0, l/I→1) produce una lectura válida, se propone en
+    `params.reading` ("C ITAUSA PN N1 100 × 10"), pero nunca se aplica sola.
+- Una nota con líneas ilegibles, o que no cuadra con "Líquido para" (`NOTA_TOTALS_MISMATCH`), **no se
+  importa tal cual**:
+  - sus operaciones quedan `pending`, **sin costos prorrateados**;
+  - se avisa `NOTE_REVIEW_REQUIRED`;
+  - `result.noteChecks` resume cada nota: neto impreso, neto calculado, costos, líneas ilegibles y líneas
+    leídas.
+
+  Cuando el usuario carga a mano la línea ilegible o revisa la nota, acepta con `acceptNotes: ['número']`
+  y entonces se prorratean los costos.
+- Una especificação partida en dos líneas ("ITAUUNIBANCO" / "PN EJ N1") se une si la segunda línea es
+  solo texto, está en la columna de especificação y va justo debajo.
+
+### I34 — Activity Statement consolidado de IBKR
+
+- La columna `Account` de cada sección (Trades, Deposits & Withdrawals, Dividends, Withholding Tax,
+  Interest, Fees, Open Positions, Cash Report…) se lee fila por fila. Cada movimiento lleva su U-número.
+- Dividendos y retenciones se agrupan por cuenta: una retención de U2222222 nunca va a un dividendo de
+  U1111111.
+- Conciliación por cuenta: las posiciones y la caja de cada cuenta se comparan solo con los movimientos
+  de esa cuenta. Las diferencias llevan `account`, y `reconciliation.accounts` lista las cuentas. Dos
+  compras iguales en cuentas distintas no se marcan como repetidas.
+
+### I36 — Una sola tabla de cambios de código, en `@pm/core`
+
+- Nuevo archivo `packages/core/src/tickerRenames.ts`, exportado desde `@pm/core` con una línea en
+  `index.ts`. Son datos puros y unas pocas búsquedas:
+  - `TICKER_EVENTS`, con todo lo de la tabla de importers y de `TICKER_ALIASES` de market-data:
+    - `rename`: misma acción;
+    - `merger` y `conversion`: con `ratio`, `cashPerShare`, `cashPayDate`, `components`, fechas
+      `effective` y `lastTradingDay`, símbolos de Yahoo e ISIN viejos;
+  - agrega TRPL3/TRPL4 → ISAE3/ISAE4, ELET6 → AXIA6 y la conversión NATU3 → NTCO3 (2019-12-18).
+- Funciones:
+  - `tickerEventsFrom(clave)`;
+  - `renamedTickerId(id)`, que sigue cadenas de cambios de código;
+  - `tickerRenameMap()`;
+  - `tickerIdOn(idInicial, fecha)`, que aplica los eventos con fecha en orden cronológico, cada uno una
+    sola vez. Así resuelve los códigos reutilizados, como NATU3.
+- Los importers ya la usan: `TICKER_RENAMES = tickerRenameMap()` y la lógica de "NATURA" por fecha usa
+  `tickerIdOn`. **Market-data y tax pueden cambiarse a ella** (`TICKER_ALIASES` tiene los mismos campos).
+
+### I37 — NATURA ON antes de diciembre de 2019
+
+`tickerIdOn('BVMF:NATU3', fecha)` da:
+- NATU3 (Natura Cosméticos) hasta el 17/12/2019;
+- NTCO3 desde el 18/12/2019;
+- NATU3 otra vez desde el 02/07/2025.
+
+Una nota del 10/06/2019 se importa como NATU3, el símbolo con historia en Yahoo. El canje NATU3 → NTCO3
+de 2019 está en la tabla para que el motor o market-data lo apliquen.
+
+### I38 — Retención en la segunda línea de un extracto
+
+En los extractos PDF, una línea sin fecha que sigue a un movimiento y menciona una retención (retención,
+retefuente, IRRF, GMF/4x1000) o un costo (comisión, IVA) se suma a ese movimiento como `taxes` o `fees`.
+Se avisa `CONTINUATION_MERGED`. Ya no queda como `NOT_A_MOVEMENT`.
+
+### I39 — Respuesta aprendida contra la tabla segura
+
+Si el usuario importó antes una especificação como otro activo ("GERDAU MET PN N1" → GGBR4) y la tabla
+dice otra cosa (GOAU4), gana la tabla y se avisa `SECURITY_ANSWER_CONFLICT` con ambos ids: la misma
+acción quedaría repartida en dos activos.
+
+### I2 — Receptor de correo
+
+`createEmailInboxHandler` (`src/sync/email-inbox.ts`) está listo para montar:
+
+```ts
+const inbox = createEmailInboxHandler({
+  secret: process.env.INBOX_SECRET!, // cabecera x-inbox-secret
+  resolveRecipient: (token) => portfolios.byInboxToken(token), // importar+TOKEN@dominio
+  save: (target, result) => drafts.add(target.portfolioId, result), // borrador a revisar
+  allowedSenders: [/@(xpi|btgpactual|nuinvest|bancointer)\.com\.br$/i],
+});
+app.post('/api/inbox/email', (c) => inbox(c.req.raw));
+```
+
+- Acepta el MIME crudo (Cloudflare Email Workers, SES), el JSON de Postmark (`RawEmail`) o el de Mailgun
+  (`body-mime`).
+- Verifica, en este orden:
+  - el secreto compartido, con comparación en tiempo constante;
+  - el remitente permitido;
+  - `spf=pass` o `dkim=pass` en `Authentication-Results`;
+  - el destinatario con token.
+- Corre `importEmail` con las contraseñas guardadas del usuario y entrega el resultado como borrador.
+- Respuestas: 401, 403, 404 o 413 según el caso.
+
+**Conexión con el servidor.** Falta montarlo en `apps/server` y que el proveedor de correo entrante lo
+llame (trabajo del coordinador). La conexión con la Área do Investidor de B3 y los agregadores siguen
+fuera de alcance: requieren contrato.
+
+### I31
+
+Las pruebas de I35 a I38 reproducen el ruido de documentos reales:
+- OCR con `1OO`;
+- especificação en dos líneas;
+- extracto consolidado;
+- retención en la línea siguiente.
+
+Sigue faltando al menos un documento real anonimizado por corredora.

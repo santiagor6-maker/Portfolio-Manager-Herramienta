@@ -53,11 +53,13 @@ export const B3_PREGAO_ROOTS: Record<string, string> = {
 };
 
 /**
- * Names whose ticker depends on the note's date (the same nome de pregão was reused by another listing).
- * Natura &Co Holding (NTCO3) was merged into Natura Cosméticos (NATU3) on 2025-07-02.
+ * Names whose ticker depends on the note's date because the listing changed code (or a code was
+ * reused): name → the listing's FIRST root. The code on a date comes from the shared event table in
+ * @pm/core (`tickerIdOn`): NATURA ON = NATU3 (Natura Cosméticos) until 2019-12-17, NTCO3 (Natura &Co)
+ * from 2019-12-18, NATU3 again from 2025-07-02 (I37).
  */
-export const B3_DATED_ROOTS: Record<string, { from: string; root: string }[]> = {
-  natura: [{ from: '0000-00-00', root: 'NTCO' }, { from: '2025-07-02', root: 'NATU' }],
+export const B3_DATED_ROOTS: Record<string, string> = {
+  natura: 'NATU',
 };
 
 /** ETFs (class CI) by nome de pregão → ticker. */

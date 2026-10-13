@@ -1,37 +1,34 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import ReactEChartsCoreModule from 'echarts-for-react/lib/core';
-import * as echarts from 'echarts/core';
-import { BarChart, HeatmapChart, LineChart, PieChart } from 'echarts/charts';
-import {
-  DataZoomComponent,
-  GridComponent,
-  LegendComponent,
-  MarkLineComponent,
-  TooltipComponent,
-  VisualMapComponent,
-} from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsOption } from 'echarts';
 import { useTheme } from '../hooks/useTheme';
 
-// The package ships CJS (`lib`) with `exports.default`; unwrap it for every bundler/interop mode.
-const ReactEChartsCore = ((ReactEChartsCoreModule as unknown as { default?: typeof ReactEChartsCoreModule }).default ??
-  ReactEChartsCoreModule) as typeof ReactEChartsCoreModule;
+// W20: ECharts (~600 kB) loads after the page's first paint, in its own chunk.
+const EChartsView = lazy(() => import('./EChartsView'));
 
-echarts.use([
-  LineChart,
-  BarChart,
-  PieChart,
-  HeatmapChart,
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  DataZoomComponent,
-  MarkLineComponent,
-  VisualMapComponent,
-  CanvasRenderer,
-]);
+/**
+ * True once the browser is idle after the first paint: the charting chunk is requested only then,
+ * so parsing it never delays the page's figures (KPIs, tables).
+ */
+let idleReached = false;
+function useAfterFirstPaint(): boolean {
+  const [ready, setReady] = useState(idleReached);
+  useEffect(() => {
+    if (ready) return;
+    const done = () => {
+      idleReached = true;
+      setReady(true);
+    };
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(done, { timeout: 1200 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(done, 150);
+    return () => window.clearTimeout(id);
+  }, [ready]);
+  return ready;
+}
 
 export interface ChartTokens {
   text: string;
@@ -115,18 +112,17 @@ export function Chart({
   const [tokens, setTokens] = useState(readTokens);
   useEffect(() => setTokens(readTokens()), [resolved]);
   const opt = useMemo(() => option(tokens), [option, tokens]);
+  const idle = useAfterFirstPaint();
   return (
     <div className={className}>
       <div role="img" aria-label={ariaLabel} aria-describedby={summary ? sid : undefined}>
-      <ReactEChartsCore
-        echarts={echarts}
-        option={opt}
-        notMerge
-        lazyUpdate
-        style={{ height, width: '100%' }}
-        opts={{ renderer: 'canvas' }}
-        onEvents={onEvents}
-      />
+      {idle ? (
+        <Suspense fallback={<div className="chart-placeholder rounded-lg bg-surface-2" style={{ height, width: '100%' }} />}>
+          <EChartsView option={opt} height={height} onEvents={onEvents} />
+        </Suspense>
+      ) : (
+        <div className="chart-placeholder rounded-lg bg-surface-2" style={{ height, width: '100%' }} />
+      )}
       </div>
       {summary && (
         <p id={sid} className="sr-only">

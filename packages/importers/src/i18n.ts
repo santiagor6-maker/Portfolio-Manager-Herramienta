@@ -436,6 +436,26 @@ const R3: Catalog = {
     pt: 'Linha de saldo ("{value}"): não é uma movimentação, ignorada.',
     en: 'Balance line ("{value}"): not a movement, skipped.',
   },
+  UNPARSED_LINE: {
+    es: 'Nota {nota}: no se pudo leer esta línea de operación ("{text}"). Corrígela o ingrésala a mano; la nota queda en revisión.',
+    pt: 'Nota {nota}: não foi possível ler esta linha de operação ("{text}"). Corrija ou lance manualmente; a nota fica em revisão.',
+    en: 'Note {nota}: this trade line could not be read ("{text}"). Fix it or enter it by hand; the note is held for review.',
+  },
+  NOTE_REVIEW_REQUIRED: {
+    es: 'La nota {nota} no cuadra con "Líquido para" o tiene líneas ilegibles: sus operaciones quedan en espera y sus costos no se reparten hasta que la revises o la aceptes.',
+    pt: 'A nota {nota} não fecha com o "Líquido para" ou tem linhas ilegíveis: as operações ficam em espera e os custos não são rateados até você revisar ou aceitar.',
+    en: 'Note {nota} does not match "Líquido para" or has unreadable lines: its trades wait and its costs are not allocated until you review or accept it.',
+  },
+  CONTINUATION_MERGED: {
+    es: 'Segunda línea del movimiento de la fila {line}: {field} de {amount} agregada a ese movimiento.',
+    pt: 'Segunda linha da movimentação da linha {line}: {field} de {amount} somado a essa movimentação.',
+    en: 'Second line of the movement on line {line}: {field} of {amount} added to it.',
+  },
+  SECURITY_ANSWER_CONFLICT: {
+    es: '"{spec}" se importó antes como {learned}, pero la tabla segura dice {table}: la misma acción quedaría en dos activos. Revisa la respuesta anterior.',
+    pt: '"{spec}" foi importado antes como {learned}, mas a tabela segura diz {table}: a mesma ação ficaria em dois ativos. Revise a resposta anterior.',
+    en: '"{spec}" was imported before as {learned}, but the built-in table says {table}: one security would be split across two assets. Review the earlier answer.',
+  },
   TICKER_RENAMED: {
     es: '{from} cambió de código: se usa {to} (misma acción).',
     pt: '{from} mudou de código: usa-se {to} (mesma ação).',

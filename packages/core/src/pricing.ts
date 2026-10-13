@@ -101,6 +101,22 @@ export function accrualFactor(ctx: EngineContext, inst: Instrument, a: number, b
   return g;
 }
 
+/**
+ * Round 7 (C49): growth that a coupon can pay between a and b. For an instrument indexed to an
+ * inflation-type index (IPCA, UVR, IPC: `capitalized`) only the spread is paid; the index growth
+ * updates the principal (VNA) and is never settled by a coupon. Otherwise the whole accrual.
+ */
+export function payableFactor(ctx: EngineContext, inst: Instrument, a: number, b: number): number | undefined {
+  const spec = inst.accrual;
+  if (!spec || spec.kind !== 'indexed' || !spec.index || !ctx.market.index(spec.index)?.capitalized) return accrualFactor(ctx, inst, a, b);
+  let start = a;
+  let end = b;
+  if (spec.issueDate) start = Math.max(start, isoToDay(spec.issueDate));
+  if (spec.maturity) end = Math.min(end, isoToDay(spec.maturity));
+  if (end <= start || !spec.spread) return 1;
+  return fixedGrowth(spec.spread, start, end, defaultDayCount(spec, inst), calendarForCurrency(inst.currency));
+}
+
 /** The accrual on `day` uses an index projected beyond its last published value (C4/C32). */
 export function accrualEstimated(ctx: EngineContext, inst: Instrument, day: number): boolean {
   const spec = inst.accrual;

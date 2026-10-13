@@ -32,6 +32,11 @@ export interface IndexData {
   lastDay: number;
   /** Growth factor between day a and day b (end of day). undefined when not covered. */
   factor(a: number, b: number, opts?: { percent?: number; extrapolate?: boolean }): number | undefined;
+  /**
+   * Round 7 (C49): an inflation-type index (level series such as UVR, or monthly variations such
+   * as IPCA / IPC) whose growth updates the principal and is not paid in coupons.
+   */
+  capitalized?: boolean;
   /** Accumulated level at day d (1 at the first point). */
   level(d: number, extrapolate?: boolean): number | undefined;
 }
@@ -230,7 +235,9 @@ export function buildIndex(s: IndexSeries): IndexData | undefined {
   if (s.kind === 'level') {
     const ok = uniq.filter((p) => p.value > 0);
     if (!ok.length) return undefined;
-    return levelData(s.id, 'level', ok.map((p) => p.day), ok.map((p) => p.value), 0);
+    const d = levelData(s.id, 'level', ok.map((p) => p.day), ok.map((p) => p.value), 0);
+    d.capitalized = true;
+    return d;
   }
   if (s.kind === 'periodRate' && (s.period ?? 'day') === 'month') {
     // Chain monthly variations into month-end levels; base 1 at the previous month end.
@@ -249,7 +256,9 @@ export function buildIndex(s: IndexSeries): IndexData | undefined {
       days.push(isoToDay(monthEnd(ym)));
       levels.push(acc);
     }
-    return levelData(s.id, 'periodRate', days, levels, 0);
+    const d = levelData(s.id, 'periodRate', days, levels, 0);
+    d.capitalized = true;
+    return d;
   }
   const cal: CalendarId = s.id === 'CDI' || s.id === 'SELIC' || s.currency === 'BRL' ? 'BR' : s.currency === 'COP' ? 'CO' : 'WEEKDAYS';
   if (s.kind === 'periodRate') {

@@ -138,6 +138,7 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
 
   const headerNorm = new Set((table.rows[headerRow] ?? []).map((x) => normalizeText(cellToString(x))).filter((x) => x !== ''));
   const out: ParsedRow[] = [];
+  let lastDraftRow: ParsedRow | undefined;
   for (let r = first; r < table.rows.length; r++) {
     const raw = table.rows[r]!;
     if (isBlankRow(raw)) continue;
@@ -162,6 +163,25 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
       continue;
     }
     if (gopts.statementLines && !(dateCell instanceof Date) && !parseDate(cellToString(dateCell), ctx.dateFormat) && !parseDate(cellToString(dateCell), 'YMD')) {
+      // A second line of the previous movement that carries its withholding / commission / IVA / GMF
+      // ("ABONO DIVIDENDOS ISA $ 125.400" + "Retención 7% $ 9.437"): attach it, don't drop it (I38).
+      const lineText = normalizeText(raw.map((x) => cellToString(x)).join(' '));
+      const kind = /\b(retencion|retefuente|rete fuente|withholding|irrf|imposto)\b/.test(lineText) ? 'taxes'
+        : /\b(gmf|4x1000|4 x 1000)\b/.test(lineText) ? 'taxes'
+        : /\b(comision|comisiones|iva|corretaje|tarifa)\b/.test(lineText) ? 'fees' : undefined;
+      const prev = lastDraftRow?.draft;
+      if (kind && prev && lastDraftRow!.line >= row.line - 2) {
+        const dummy = { line: row.line, issues: [] };
+        // The amount is the last number of the line (percentages excluded).
+        const nums = numericCols.map((i) => (i === undefined ? undefined : cellToString(cell(raw, i)))).filter((v): v is string => !!v && /\d/.test(v) && !/%/.test(v));
+        const textNums = raw.map((x) => cellToString(x)).join(' ').split(/\s{2,}|\s(?=\$)|\s(?=-\$)/).filter((t) => /\d/.test(t) && !/%/.test(t));
+        const v = ctx.num(nums.at(-1) ?? textNums.at(-1) ?? '', dummy, 'amount');
+        if (v !== undefined && v !== 0) {
+          prev[kind] = (prev[kind] ?? 0) + Math.abs(v);
+          ctx.skip(row, 'CONTINUATION_MERGED', { field: kind === 'taxes' ? 'retención' : 'comisión', amount: Math.abs(v), line: lastDraftRow!.line });
+          continue;
+        }
+      }
       ctx.skip(row, 'NOT_A_MOVEMENT', { value: raw.map((x) => cellToString(x)).filter(Boolean).join(' ').slice(0, 60) });
       continue;
     }
@@ -322,6 +342,7 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const account = str(raw, c.account) || gopts.account;
     if (account) draft.account = account;
     row.draft = draft;
+    lastDraftRow = row;
   }
   ctx.numberFormat = fileFormat;
   if (rowAmbiguous.length) {
