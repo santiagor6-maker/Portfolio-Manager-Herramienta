@@ -25,9 +25,28 @@ export function getMarketClient(): MarketClient {
   return createHttpMarketClient(serverUrl, undefined, apiToken);
 }
 
-function providerSymbol(i: Instrument): string {
-  return i.providerSymbols?.yahoo ?? i.id;
+/**
+ * M37: prices are requested by instrument id (`XNYS:DTE`, `XBOG:ISA`, `INDEX:^BVSP`) so the server
+ * resolves the right listing; a bare provider symbol could hit another market (DTE in NYSE vs Xetra).
+ * Ids that are not exchange-qualified fall back to the provider symbol.
+ */
+export function requestSymbol(i: Instrument): string {
+  return /^(?:[A-Z]{4}|INDEX):\S+$/.test(i.id) ? i.id : (i.providerSymbols?.yahoo ?? i.id);
 }
+
+/**
+ * Rejects a response for another instrument or currency (US/EU symbol mix-ups): the instrument id or
+ * symbol must match, and the currency must be the instrument's (case-insensitive: GBp/GBP is a unit
+ * question handled by the engine, not a mismatch).
+ */
+export function responseMatches(inst: Instrument, got: { id?: string; symbol?: string; currency?: string }): boolean {
+  const ccyOk = !got.currency || !inst.currency || got.currency.toUpperCase() === inst.currency.toUpperCase();
+  const sym = (s?: string) => (s ?? '').split(':').pop()!.replace(/\.[A-Z]{1,3}$/, '').toUpperCase();
+  const idOk = !got.id || got.id === inst.id || sym(got.id) === sym(inst.id) || (!!got.symbol && sym(got.symbol) === sym(inst.symbol));
+  return ccyOk && idOk;
+}
+
+const providerSymbol = requestSymbol;
 
 interface Plan {
   histories: HistoryRequest[];
@@ -154,6 +173,7 @@ async function doRefresh(): Promise<void> {
     return;
   }
   const plan = await buildPlan();
+  const byIdAll = new Map<string, Instrument>([...BENCHMARKS, ...(await db.instruments.toArray())].map((i) => [i.id, i]));
   if (!plan.histories.length && !plan.fx.length && !plan.indices.length) {
     // Only the frozen sample portfolio: nothing to refresh, server is fine.
     setMarket({ status: 'ok', failedSymbols: [] });
@@ -184,7 +204,11 @@ async function doRefresh(): Promise<void> {
       for (let k = 0; k < res.histories.length; k++) {
         const r = res.histories[k]!;
         const id = plan.ids[i + k]!;
-        if (r.ok) {
+        const inst = byIdAll.get(id);
+        if (r.ok && inst && !responseMatches(inst, { id: r.data.instrument?.id, symbol: r.data.instrument?.symbol, currency: r.data.series.currency })) {
+          failed.push(plan.histories[i + k]!.symbol);
+          bump('yahoo', false, `${id}: ${r.data.instrument?.id ?? '?'} ${r.data.series.currency ?? ''} (mismatch)`);
+        } else if (r.ok) {
           await mergePriceSeries({ ...r.data.series, instrumentId: id });
           if (r.data.actions?.length) await cacheCorporateActions(r.data.actions.map((a) => ({ ...a, instrumentId: id })));
           bump(r.data.series.source || 'yahoo', true);
@@ -205,8 +229,9 @@ async function doRefresh(): Promise<void> {
           bump(`idx_${r.data.series.id}`, true);
         } else bump(`idx_${plan.indices[i + k]?.id ?? 'unknown'}`, false, r.error.message); // W27: name the index
       }
-      const quotes = res.quotes.flatMap((q, k) =>
-        q.ok
+      const quotes = res.quotes.flatMap((q, k) => {
+        const inst = byIdAll.get(plan.quoteIds[i + k] ?? '');
+        return q.ok && (!inst || responseMatches(inst, { id: q.data.instrumentId, currency: q.data.currency }))
           ? [
               {
                 instrumentId: plan.quoteIds[i + k] ?? q.data.instrumentId,
@@ -217,8 +242,8 @@ async function doRefresh(): Promise<void> {
                 source: q.data.source,
               },
             ]
-          : [],
-      );
+          : [];
+      });
       await cacheQuotes(quotes);
       for (const q of quotes) await mergePriceSeries({ instrumentId: q.instrumentId, currency: q.currency, points: [{ date: q.date, close: q.price }], source: q.source });
     }

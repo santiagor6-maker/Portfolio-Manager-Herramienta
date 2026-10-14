@@ -1,110 +1,61 @@
 /**
- * Ticker renames, mergers and share-class conversions.
+ * Ticker renames, mergers and share-class conversions, read from the ONE shared table in
+ * `@pm/core` (`TICKER_EVENTS`, packages/core/src/tickerRenames.ts). This module only adapts it to
+ * market-data's lookups; it holds no data of its own.
  *
  * Two very different cases (review R2, M23):
- *  - 'rename': the SAME security under a new ticker (CCR -> Motiva, Eletrobras -> AXIA, Marfrig ->
- *    MBRF). History continues: the old ticker resolves to the new one, history is stitched.
+ *  - 'rename': the SAME security under a new ticker (CCR -> Motiva, Eletrobras -> AXIA, ISA CTEEP ->
+ *    ISA Energia). History continues: the old ticker resolves to the new one, history is stitched.
  *  - 'merger' / 'conversion': the old security ceased to exist; holders received `ratio` shares of
- *    another security (+ cash). BRFS3 -> 0.8521 MBRF3 (MBRF3's past is Marfrig's, not BRF's);
- *    CPLE6 -> 1 CPLE3 + R$0.7749. The new ticker's prices are never served as the old one's:
- *    history is cut at the last trading day and a MERGER action (plus a cash event) is emitted.
+ *    another security (+ cash). The new ticker's prices are never served as the old one's: history
+ *    is cut at the last trading day and a MERGER action (plus a cash event) is emitted.
  *
- * Every row is verified (sources in the README); unverified relations are not published.
- * Yahoo moved the old history to the new symbol for every rename below (old symbols answer 404).
+ * Reused codes: BVMF:NATU3 was Natura Cosméticos until 2019-12-17 (-> NTCO3), and the code came back
+ * on 2025-07-02 (NTCO3 -> NATU3). An event whose old code was later reused is HISTORICAL: it does not
+ * make the current code "delisted"; it is reported as an action of the current code's history when
+ * the requested range covers it (`historicalEventsFrom`).
  */
-import type { ISODate } from '@pm/core';
+import { TICKER_EVENTS, type TickerEvent } from '@pm/core';
+import { yahooSymbolFromId } from './symbols';
 import type { RenameInfo } from './types';
 
-export interface TickerAlias {
-  kind: 'rename' | 'merger' | 'conversion';
-  fromId: string;
-  fromYahoo: string;
-  toId: string;
-  toYahoo: string;
-  /** New shares per old share. */
-  ratio: number;
-  /** First day under the new ticker / holding the new shares. */
-  effective?: ISODate;
-  /** Last trading day of the old ticker. */
-  lastTradingDay?: ISODate;
-  cashPerShare?: number;
-  cashPayDate?: ISODate;
-  /** ISINs of the old security (so statements with ISINs still resolve). */
-  isins?: string[];
-  /**
-   * Units / certificates split into several securities (Copel CPLE11 = 1 CPLE3 + 4 CPLE6): one
-   * component per receiving security. `toId`/`ratio` repeat the main component.
-   */
-  components?: { toId: string; ratio: number }[];
-  note: string;
+/** A core TickerEvent with both Yahoo symbols filled in. */
+export type TickerAlias = TickerEvent & { fromYahoo: string; toYahoo: string };
+
+const yahooOf = (id: string, given?: string) => given ?? yahooSymbolFromId(id) ?? id.split(':')[1]!;
+
+export const TICKER_ALIASES: readonly TickerAlias[] = TICKER_EVENTS.map((e) => ({ ...e, fromYahoo: yahooOf(e.fromId, e.fromYahoo), toYahoo: yahooOf(e.toId, e.toYahoo) }));
+
+const up = (s: string) => s.trim().toUpperCase();
+
+/** The old code of `a` was taken again by a later event (the code is live again). */
+function superseded(a: TickerAlias): boolean {
+  return TICKER_ALIASES.some((b) => b !== a && up(b.toId) === up(a.fromId) && !!b.effective && !!a.effective && b.effective > a.effective);
 }
 
-export const TICKER_ALIASES: readonly TickerAlias[] = [
-  {
-    kind: 'rename', fromId: 'XBOG:PFBCOLOM', fromYahoo: 'PFBCOLOM.CL', toId: 'XBOG:PFCIBEST', toYahoo: 'PFCIBEST.CL', ratio: 1, isins: ['COB07PA00078'],
-    note: 'Bancolombia preferencial -> Grupo Cibest preferencial (reorganización 2025, canje 1:1; misma serie de precios)',
-  },
-  {
-    kind: 'rename', fromId: 'XBOG:BCOLOMBIA', fromYahoo: 'BCOLOMBIA.CL', toId: 'XBOG:CIBEST', toYahoo: 'CIBEST.CL', ratio: 1,
-    note: 'Bancolombia ordinaria -> Grupo Cibest ordinaria (reorganización 2025, canje 1:1; misma serie de precios)',
-  },
-  { kind: 'rename', fromId: 'BVMF:ELET3', fromYahoo: 'ELET3.SA', toId: 'BVMF:AXIA3', toYahoo: 'AXIA3.SA', ratio: 1, note: 'Eletrobras -> AXIA Energia (mudança de nome e código)' },
-  { kind: 'rename', fromId: 'BVMF:EMBR3', fromYahoo: 'EMBR3.SA', toId: 'BVMF:EMBJ3', toYahoo: 'EMBJ3.SA', ratio: 1, note: 'Embraer: novo código EMBJ3' },
-  { kind: 'rename', fromId: 'BVMF:CCRO3', fromYahoo: 'CCRO3.SA', toId: 'BVMF:MOTV3', toYahoo: 'MOTV3.SA', ratio: 1, note: 'CCR -> Motiva (mudança de nome e código)' },
-  {
-    // Not a rename at the provider: Yahoo has NO NTCO3 history (2020-2025) and its NATU3 series
-    // jumps from Natura Cosméticos 2019 to 2025-07-02 through zero-volume bars repeating the 2019
-    // close (36.86) — review R3, M28. Treated as a conversion: NTCO3 keeps its own (unavailable)
-    // history and becomes NATU3 1:1 on 2025-07-02.
-    kind: 'conversion', fromId: 'BVMF:NTCO3', fromYahoo: 'NTCO3.SA', toId: 'BVMF:NATU3', toYahoo: 'NATU3.SA', ratio: 1, effective: '2025-07-02', lastTradingDay: '2025-07-01',
-    note: 'Natura &Co Holding incorporada por Natura Cosméticos: 1 NATU3 por NTCO3, sem diluição; NATU3 negocia desde 2025-07-02 (o provedor não tem o histórico de NTCO3)',
-  },
-  {
-    kind: 'rename', fromId: 'BVMF:MRFG3', fromYahoo: 'MRFG3.SA', toId: 'BVMF:MBRF3', toYahoo: 'MBRF3.SA', ratio: 1, effective: '2025-09-23', lastTradingDay: '2025-09-22',
-    note: 'Marfrig é a companhia sobrevivente da fusão com a BRF e passou a se chamar MBRF (MRFG3 -> MBRF3, 1:1)',
-  },
-  {
-    kind: 'merger', fromId: 'BVMF:BRFS3', fromYahoo: 'BRFS3.SA', toId: 'BVMF:MBRF3', toYahoo: 'MBRF3.SA', ratio: 0.8521, effective: '2025-09-23', lastTradingDay: '2025-09-22',
-    note: 'BRF incorporada pela Marfrig (MBRF): 0,8521 MBRF3 por BRFS3. O histórico de MBRF3 é o da Marfrig, não o da BRF',
-  },
-  {
-    // Copel chain (review R3, M29): CPLE6 (PNB) last traded 2025-11-07 and became CPLE5 (PNA) on
-    // 2025-11-10; CPLE5 last traded 2025-12-19 and became 1 CPLE3 + 1 PNC (CPLE7) on 2025-12-22,
-    // the PNC being redeemed for R$0.7749 (paid 2025-12-30).
-    kind: 'conversion', fromId: 'BVMF:CPLE6', fromYahoo: 'CPLE6.SA', toId: 'BVMF:CPLE5', toYahoo: 'CPLE5.SA', ratio: 1, effective: '2025-11-10', lastTradingDay: '2025-11-07',
-    note: 'Copel PNB (CPLE6) convertida em PNA (CPLE5) 1:1 em 2025-11-10; depois CPLE5 -> CPLE3 + R$ 0,7749 em 2025-12-22',
-  },
-  {
-    kind: 'conversion', fromId: 'BVMF:CPLE5', fromYahoo: 'CPLE5.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2025-12-22', lastTradingDay: '2025-12-19', cashPerShare: 0.7749, cashPayDate: '2025-12-30',
-    note: 'Copel (migração ao Novo Mercado): cada PNA virou 1 ON (CPLE3) + 1 PNC resgatada compulsoriamente por R$ 0,7749 (pago em 2025-12-30)',
-  },
-  {
-    kind: 'conversion', fromId: 'BVMF:CPLE11', fromYahoo: 'CPLE11.SA', toId: 'BVMF:CPLE3', toYahoo: 'CPLE3.SA', ratio: 1, effective: '2023-12-26', lastTradingDay: '2023-12-22',
-    components: [
-      { toId: 'BVMF:CPLE3', ratio: 1 },
-      { toId: 'BVMF:CPLE6', ratio: 4 },
-    ],
-    note: 'Units Copel (CPLE11 = 1 CPLE3 + 4 CPLE6) desfeitas em 2023-12-26 (último pregão 2023-12-22); confirme o rateio do custo entre ON e PNB',
-  },
-];
-
+const current = TICKER_ALIASES.filter((a) => !superseded(a));
 const byKey = new Map<string, TickerAlias>();
-for (const a of TICKER_ALIASES) {
-  byKey.set(a.fromId.toUpperCase(), a);
-  byKey.set(a.fromYahoo.toUpperCase(), a);
+for (const a of current) {
+  byKey.set(up(a.fromId), a);
+  byKey.set(up(a.fromYahoo), a);
   // Bare old ticker as typed from a broker statement (PFBCOLOM, ELET3).
-  byKey.set(a.fromId.split(':')[1]!.toUpperCase(), a);
-  for (const isin of a.isins ?? []) byKey.set(isin.toUpperCase(), a);
+  byKey.set(up(a.fromId.split(':')[1]!), a);
+  for (const isin of a.isins ?? []) byKey.set(up(isin), a);
 }
 
-/** Alias for an old id, old Yahoo symbol, bare ticker or old ISIN (case-insensitive). */
+/** Alias for an old id, old Yahoo symbol, bare ticker or old ISIN (case-insensitive). Current codes only. */
 export function findAlias(key: string): TickerAlias | undefined {
-  return byKey.get(key.trim().toUpperCase());
+  return byKey.get(up(key));
 }
 
 /** Same-security renames whose new instrument is `toId` (history can be stitched). */
 export function aliasesTo(toId: string): TickerAlias[] {
-  return TICKER_ALIASES.filter((a) => a.kind === 'rename' && a.toId.toUpperCase() === toId.toUpperCase());
+  return current.filter((a) => a.kind === 'rename' && up(a.toId) === up(toId));
+}
+
+/** Past events of a code that is live again (NATU3 -> NTCO3 in 2019): actions of its history. */
+export function historicalEventsFrom(id: string): TickerAlias[] {
+  return TICKER_ALIASES.filter((a) => superseded(a) && up(a.fromId) === up(id));
 }
 
 export function renameInfo(a: TickerAlias): RenameInfo {
