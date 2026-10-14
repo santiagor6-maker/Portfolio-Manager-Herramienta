@@ -80,6 +80,14 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
     case 'INTEREST_NET_ASSUMED':
       r = m.match(new RegExp(`gross ${NUM} with an estimated ${NUM} withheld`));
       return r && c.tx ? { ...base, gross: money(r[1]!, c.tx.currency), withheld: money(r[2]!, c.tx.currency) } : undefined;
+    case 'TRADE_PRICE_UNIT_SUSPECT': {
+      const f = unitFactor(m);
+      return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—', factor: f ? (f >= 1 ? `×${f}` : `÷${Math.round(1 / f)}`) : '?' };
+    }
+    case 'POSSIBLE_UNRECORDED_SPLIT': {
+      const sp = splitSuggestion(m);
+      return sp ? { ...base, symbol: sym(sp.instrumentId), ratio: sp.ratio >= 1 ? `${sp.ratio}:1` : `1:${Math.round(1 / sp.ratio)}`, date: sp.date } : undefined;
+    }
     case 'TRADE_PRICE_CONFIRMED_BY_RUN':
       return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—' };
     case 'INTEREST_POSSIBLY_NET':
@@ -112,4 +120,29 @@ export function describeDiagnostic(d: Diagnostic, c: DiagContext): string {
     if (s) return s;
   }
   return cleanMessage(d.message, c.instruments, c.locale);
+}
+
+/** Core R7: "close to a factor of 10" / "1/100" in a TRADE_PRICE_UNIT_SUSPECT message. */
+export function unitFactor(message: string): number | undefined {
+  const m = message.match(/close to a factor of (1\/)?(\d+(?:\.\d+)?)/);
+  if (!m) return undefined;
+  const v = Number(m[2]);
+  return m[1] ? 1 / v : v;
+}
+
+/**
+ * Core R7: POSSIBLE_UNRECORDED_SPLIT → instrument, ratio (new shares per old share) and the date of
+ * the first close after it. The ratio comes from the two closes in the message (old / new price,
+ * snapped to the usual split factors), not from the label wording.
+ */
+const SPLIT_FACTORS = [2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30, 40, 50, 100];
+export function splitSuggestion(message: string): { instrumentId: string; ratio: number; date: string } | undefined {
+  const m = message.match(/^The price of (\S+) went from (-?[\d.]+) \((\d{4}-\d{2}-\d{2})\) to (-?[\d.]+) \((\d{4}-\d{2}-\d{2})\)/);
+  if (!m) return undefined;
+  const a = Number(m[2]);
+  const b = Number(m[4]);
+  if (!(a > 0 && b > 0)) return undefined;
+  const r = a / b;
+  const snap = (x: number) => SPLIT_FACTORS.reduce((best, k) => (Math.abs(Math.log(x / k)) < Math.abs(Math.log(x / best)) ? k : best), SPLIT_FACTORS[0]!);
+  return { instrumentId: m[1]!, date: m[5]!, ratio: r >= 1 ? snap(r) : 1 / snap(1 / r) };
 }

@@ -152,7 +152,14 @@ src/
   (`vite preview`), con el worker de pdf.js de producción (W30).
 - `e2e/regression-r3.spec.ts` — W31 (al salir del ejemplo se borran sus series) y W35 (navegador pt-BR).
 
-Totales: 73 pruebas unitarias (12 archivos) y 36 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/r4.test.ts` — `series.seed` (M37), pedido por id y rechazo de respuestas de otro activo o
+  moneda, factor de unidad y split sugerido (core R7).
+- `e2e/regression-r4.spec.ts` — W33 (cuenta «XP» frente a «XP INVESTIMENTOS CCTVM S/A»), W34 (DARF con
+  fecha y monto; la KPI excluye las pagadas, con `e2e/fixtures/br-darf.csv`), W37 (Total impreso una
+  vez), W38 (403 de IBKR explicado), W39 (aporte en BRL + cambio a USD) y las notas en revisión de los
+  importadores R5.
+
+Totales: 76 pruebas unitarias (13 archivos) y 41 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
@@ -288,4 +295,25 @@ Revisión: `reviews/web-r3.md`.
 | W38 | Un 403 de IBKR explica que el servidor necesita `API_TOKEN` (o `ALLOW_LOCAL_ADMIN=1` en local) y `SYNC_SECRET`. La tarjeta trae los pasos y el comando para configurar el servidor. |
 | W39 | «Crear aporte en esa fecha» registra un aporte en la moneda base del portafolio más el cambio a la moneda de la compra, con la tasa del día (por ejemplo, COP → USD con la TRM). Si no hay tasa, el aporte queda en la moneda de la compra. |
 | W20, W10 | Hechos después de la revisión: ver la ronda 2 (ECharts diferido y enlace de solo lectura). |
+
+### Integración posterior a la ronda 3 (paquetes)
+
+- **Datos de mercado (M37):**
+  - el último cierre antes de la ventana llega como `series.seed`; se guarda en su fecha y nunca pisa un
+    cierre existente;
+  - los precios se piden por id de instrumento (`XETR:DTE`);
+  - se rechaza una respuesta de otro listado o de otra moneda (por ejemplo, DTE de NYSE en USD) y queda
+    como fuente fallida.
+- **Core R7:**
+  - `TRADE_PRICE_UNIT_SUSPECT` con «Corregir a …» (divide por el factor sugerido) y «Confirmar precio»;
+  - `POSSIBLE_UNRECORDED_SPLIT` con «Registrar split N:1», con la proporción tomada de los dos cierres;
+  - `TRADE_PRICE_CONFIRMED_BY_RUN` ahora como aviso, con «Confirmar precio».
+  - Los tres tienen etiquetas y textos en es/pt/en y salen como insignia en el mes y en el resumen.
+- **Importadores R5:**
+  - las notas en revisión (`noteChecks`) muestran las líneas sin leer, el líquido de la nota, lo
+    calculado y la diferencia, con una sugerencia;
+  - para cada nota: «Aceptar la nota» (`acceptNotes`), «Ingresar la operación a mano» u «Omitir»;
+  - los avisos del archivo (`UNPARSED_LINE`, `SECURITY_ANSWER_CONFLICT`…) se muestran arriba de la
+    vista previa;
+  - la unión de cuentas usa `normalizeBrokerName` / `sameBroker` de `@pm/importers`.
 

@@ -338,3 +338,10 @@ Fuentes de las fechas de Copel: CPLE11 negoció por última vez el 2023-12-22 y 
 | M29, M2, M15, M8, M13, M18 | persisten | Sin cambios en esta ronda: las fuentes (B3, BVC, BCB, BCE, FRED) siguen bloqueadas desde aquí. Las herramientas de la ronda 4 (`cotahist`, instantánea ampliada y calendario de dividendos) siguen disponibles. | — |
 
 Suite en vivo: **19/19**.
+
+## Integración (ronda 6): tabla única de renombres y fusiones
+
+- `src/aliases.ts` ya no tiene datos propios: lee `TICKER_EVENTS` de `@pm/core` (`packages/core/src/tickerRenames.ts`), la tabla que comparten importers, market-data y tax. Solo completa los símbolos de Yahoo que falten.
+- Con la tabla común entran **TRPL3/TRPL4 → ISAE3/ISAE4** (en vivo, 93 meses continuos desde 2019) y **ELET6 → AXIA6**.
+- **Códigos reutilizados.** NATU3 fue Natura Cosméticos hasta el 2019-12-17 (→ NTCO3) y volvió a usarse el 2025-07-02. Un evento cuyo código se reutilizó después es histórico: no hace que el NATU3 actual figure como "delisted". Si el rango de la historia de NATU3 cubre el 2019-12-18, se emite como acción `MERGER` → NTCO3, 1:1 (`historicalEventsFrom`).
+- **Hueco conocido: ELET6/AXIA6.** Yahoo no tiene historia ni bajo `ELET6.SA` ni bajo `AXIA6.SA`. Según la circular B3 OC 035/2026, AXIA6 dejó de negociar el 2026-06-08 y se convirtió en AXIA3 con un factor de 1,1. Esa conversión todavía no está en la tabla común (pendiente para core/importers, a confirmar con el comunicado de la compañía). La prueba en vivo lo registra como hueco conocido.

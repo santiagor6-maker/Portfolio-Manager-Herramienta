@@ -185,19 +185,16 @@ export async function cachePriceSeries(series: PriceSeries[], isDemo = false): P
 
 /** Merge new points into an existing cached series (new points win on the same date). */
 export async function mergePriceSeries(
-  series: PriceSeries & { partial?: boolean; coverageFrom?: string; coverageTo?: string },
+  series: PriceSeries & { seed?: { date: string; close: number }; partial?: boolean; coverageFrom?: string; coverageTo?: string },
 ): Promise<void> {
   const prev = await db.priceSeries.get(series.instrumentId);
   const map = new Map<string, number>();
   // Real data fully replaces synthetic sample series.
   if (prev && !prev.isDemo) for (const p of prev.points) map.set(p.date, p.close);
-  // Points are keyed by their own date: a `carried` seed (last real trade before the requested
-  // window) lands on its real trade date, never inside the window. A carried seed never
-  // overwrites a close already stored for that date.
-  for (const p of series.points as (PriceSeries['points'][number] & { carried?: boolean })[]) {
-    if (p.carried && map.has(p.date)) continue;
-    map.set(p.date, p.close);
-  }
+  for (const p of series.points) map.set(p.date, p.close);
+  // M37: the last real trade before the requested window comes apart as `seed` (points stay inside
+  // [from, to]). It is stored on its own trade date and never overwrites a close already known.
+  if (series.seed && !map.has(series.seed.date)) map.set(series.seed.date, series.seed.close);
   const points = [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, close]) => ({ date, close }));
   const { instrumentId, currency, source } = series;
   await db.priceSeries.put({

@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { AlertTriangle, Copy, GitMerge, HelpCircle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Copy, FileWarning, GitMerge, HelpCircle, RefreshCw } from 'lucide-react';
 import type { Instrument } from '@pm/core';
 import { Card } from './ui';
 import { InstrumentPicker } from './InstrumentPicker';
@@ -356,3 +356,97 @@ export function CorporateEvents({
     </Card>
   );
 }
+
+/**
+ * Importers R5: broker notes held for review (unreadable trade lines or a "Líquido para" that does
+ * not match the trades read). Their rows stay pending until the user accepts the note (costs are
+ * then allocated), enters the missing trade by hand, or skips the note.
+ */
+export function PendingNotes({
+  result,
+  accepted,
+  skipped,
+  onAccept,
+  onSkip,
+  busy,
+}: {
+  result: ImportResult;
+  accepted: string[];
+  skipped: string[];
+  onAccept: (nota: string) => void;
+  onSkip: (nota: string) => void;
+  busy: boolean;
+}) {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const notes = (result.noteChecks ?? []).filter((n) => !accepted.includes(n.nota) && !skipped.includes(n.nota));
+  if (!notes.length) return null;
+  const byLine = new Map(result.rows.map((r) => [r.line, r]));
+  const money = (v: number | undefined) => (v === undefined ? '—' : new Intl.NumberFormat(f.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v));
+  return (
+    <Card
+      className="mb-3 !border-warn/40"
+      title={<span className="flex items-center gap-2"><FileWarning size={15} className="text-warn" /> {t('impr.notesTitle', { count: notes.length })}</span>}
+      subtitle={t('impr.notesSub')}
+    >
+      <ul className="flex flex-col gap-3" data-testid="pending-notes">
+        {notes.map((n) => {
+          const diff = n.actualNet !== undefined ? n.actualNet - n.expectedNet : undefined;
+          return (
+            <li key={n.nota} className="rounded-lg border border-line p-3 text-[13px]" data-testid="pending-note">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{t('impr.nota', { nota: n.nota })}</span>
+                {n.date && <span className="num text-xs text-muted">{formatDate(n.date, f.locale, 'short')}</span>}
+                <span className="chip">{t('impr.notePending', { count: n.lines.length })}</span>
+              </div>
+              {n.unparsedLines.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs font-medium text-ink-2">{t('impr.unparsed', { count: n.unparsedLines.length })}</div>
+                  <ul className="mt-1 flex flex-col gap-1">
+                    {n.unparsedLines.map((l) => (
+                      <li key={l} className="font-mono text-[11.5px] bg-surface-2 rounded px-2 py-1 overflow-x-auto whitespace-pre" data-testid="unparsed-line">
+                        <span className="text-muted mr-2">#{l}</span>
+                        {(byLine.get(l)?.raw ?? []).filter(Boolean).join('  ') || '—'}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                <div>
+                  <div className="text-muted">{t('impr.netPrinted')}</div>
+                  <div className="num font-semibold">{money(n.actualNet)}</div>
+                </div>
+                <div>
+                  <div className="text-muted">{t('impr.netRead')}</div>
+                  <div className="num font-semibold">{money(n.expectedNet)}</div>
+                </div>
+                <div>
+                  <div className="text-muted">{t('impr.netDiff')}</div>
+                  <div className={clsx('num font-semibold', diff && Math.abs(diff) >= 0.01 ? 'text-warn' : 'text-pos')} data-testid="note-diff">
+                    {money(diff)}
+                  </div>
+                </div>
+              </div>
+              {diff !== undefined && Math.abs(diff) >= 0.01 && (
+                <p className="text-xs text-ink-2 mt-2">{t(diff < 0 ? 'impr.suggestMissingBuy' : 'impr.suggestMissingSell', { amount: money(Math.abs(diff)) })}</p>
+              )}
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onAccept(n.nota)} data-testid="note-accept">
+                  {t('impr.noteAccept')}
+                </button>
+                <a className="btn btn-sm" href={`/movimientos?nuevo=1`} target="_blank" rel="noreferrer" data-testid="note-edit">
+                  {t('impr.noteEdit')}
+                </a>
+                <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onSkip(n.nota)} data-testid="note-skip">
+                  {t('impr.noteSkip')}
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+

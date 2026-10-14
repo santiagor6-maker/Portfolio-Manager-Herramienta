@@ -302,7 +302,7 @@ export async function fetchHistory(inst: Instrument, from: string): Promise<bool
   try {
     const res = await getMarketClient().batch({ histories: [{ symbol: providerSymbol(inst), from, interval: '1d' }] });
     const r = res.histories[0];
-    if (r?.ok) {
+    if (r?.ok && responseMatches(inst, { id: r.data.instrument?.id, symbol: r.data.instrument?.symbol, currency: r.data.series.currency })) {
       await mergePriceSeries({ ...r.data.series, instrumentId: inst.id });
       return true;
     }

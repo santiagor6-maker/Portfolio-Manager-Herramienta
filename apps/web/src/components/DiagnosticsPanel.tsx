@@ -3,13 +3,28 @@ import { AlertTriangle, Info, Plus, Stethoscope, XCircle } from 'lucide-react';
 import type { Diagnostic } from '@pm/core';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
-import { formatDate, formatMoney } from '../lib/format';
+import { formatDate, formatMoney, formatPrice } from '../lib/format';
 import { db } from '../db/schema';
 import { saveTransaction } from '../db/repo';
 import type { ImplicitFunding } from '../services/analysis';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useInstrumentMap } from '../hooks/useData';
-import { describeDiagnostic } from '../lib/diagnosticText';
+import { describeDiagnostic, splitSuggestion, unitFactor } from '../lib/diagnosticText';
+
+/** Core R7: divides the price by the suspected unit factor (×10, ×100, pence…) and recomputes the amount. */
+export async function fixUnit(tx: { id: string; price?: number; quantity?: number }, factor: number): Promise<void> {
+  if (tx.price === undefined) return;
+  const price = tx.price / factor;
+  await db.transactions.update(tx.id, { price, amount: tx.quantity !== undefined ? tx.quantity * price : undefined, priceConfirmed: undefined });
+}
+
+/** Core R7: records the split the price history suggests (one transaction, in the affected portfolio). */
+export async function recordSplit(sp: { instrumentId: string; ratio: number; date: string }, portfolioId?: string): Promise<void> {
+  const inst = await db.instruments.get(sp.instrumentId);
+  const pids = portfolioId ? [portfolioId] : [...new Set((await db.transactions.where('instrumentId').equals(sp.instrumentId).toArray()).map((t) => t.portfolioId))];
+  for (const pid of pids)
+    await saveTransaction({ portfolioId: pid, date: sp.date, type: 'SPLIT', instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note: 'Split sugerido por el historial de precios' });
+}
 
 /** W33: every transaction of the portfolio under `from` moves to the `to` account (same broker). */
 export async function relabelAccount(portfolioId: string, from: string | undefined, to: string): Promise<void> {
@@ -141,6 +156,32 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                 {describeDiagnostic(d, { tx: d.transactionId ? txs?.get(d.transactionId) : undefined, instruments, locale: f.locale, t })}
               </span>
             </span>
+            {(d.code === 'TRADE_PRICE_UNIT_SUSPECT' || d.code === 'TRADE_PRICE_CONFIRMED_BY_RUN') && d.transactionId && txs?.get(d.transactionId) && !txs.get(d.transactionId)!.priceConfirmed && (
+              <>
+                {d.code === 'TRADE_PRICE_UNIT_SUSPECT' && unitFactor(d.message) && (
+                  <button
+                    className="btn btn-sm btn-primary"
+                    data-testid="fix-unit"
+                    title={t('diag.fixUnitHint')}
+                    onClick={() => void fixUnit(txs.get(d.transactionId!)!, unitFactor(d.message)!)}
+                  >
+                    {t('diag.fixUnit', { price: formatPrice((txs.get(d.transactionId)!.price ?? 0) / unitFactor(d.message)!, txs.get(d.transactionId)!.currency, f.locale) })}
+                  </button>
+                )}
+                <button className="btn btn-sm" data-testid="confirm-price-diag" onClick={() => void db.transactions.update(d.transactionId!, { priceConfirmed: true })}>
+                  {t('pw.confirm')}
+                </button>
+              </>
+            )}
+            {d.code === 'POSSIBLE_UNRECORDED_SPLIT' && splitSuggestion(d.message) && d.transactionId && (
+              <button
+                className="btn btn-sm btn-primary"
+                data-testid="record-split"
+                onClick={() => void recordSplit(splitSuggestion(d.message)!, txs?.get(d.transactionId!)?.portfolioId)}
+              >
+                {t('diag.recordSplit', { ratio: splitSuggestion(d.message)!.ratio >= 1 ? `${splitSuggestion(d.message)!.ratio}:1` : `1:${Math.round(1 / splitSuggestion(d.message)!.ratio)}` })}
+              </button>
+            )}
             {d.code === 'INTEREST_POSSIBLY_NET' && d.transactionId && !txs?.get(d.transactionId)?.amountIsNet && (
               <button className="btn btn-sm" data-testid="mark-net" onClick={() => void db.transactions.update(d.transactionId!, { amountIsNet: true })}>
                 {t('diag.markNet')}

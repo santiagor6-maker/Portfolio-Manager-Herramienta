@@ -8,7 +8,7 @@ import { Banner, Card, Field, PageHeader, Segmented } from '../components/ui';
 import { usePortfolios, useInstrumentMap } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
 import { canonicalTemplateCsv, commitImport, corporateActionToTransaction, listBrokerProfiles, listPresets, runImport, type ColumnMapping, type ImportAnswers, type ImportResult, type MappingField } from '../services/importers';
-import { ConfirmFormats, CorporateEvents, PossibleDuplicates, SecurityMapPrompt, type CaChoice } from '../components/ImportReview';
+import { ConfirmFormats, CorporateEvents, PendingNotes, PossibleDuplicates, SecurityMapPrompt, type CaChoice } from '../components/ImportReview';
 import { db } from '../db/schema';
 import { bulkAddTransactions } from '../db/repo';
 import { parseDecimal } from '../lib/parse';
@@ -58,6 +58,7 @@ export default function ImportPage() {
   /** Set when the preview comes from the IBKR Flex sync instead of a file. */
   const [syncOrigin, setSyncOrigin] = useState<SyncOrigin>();
   const [inboxIds, setInboxIds] = useState<string[]>([]);
+  const [skippedNotes, setSkippedNotes] = useState<string[]>([]);
   const profile = profiles.find((p) => p.id === profileId);
 
   const resolvePortfolio = async (): Promise<string> => {
@@ -159,6 +160,7 @@ export default function ImportPage() {
     setAnswers({});
     setCaChoices({});
     setSyncOrigin(undefined);
+    setSkippedNotes([]);
   };
 
   const rerun = (patch: ImportAnswers) => {
@@ -405,6 +407,25 @@ export default function ImportPage() {
         <>
           <ConfirmFormats key={`cf-${result.needsConfirmation?.length ?? 0}`} result={result} busy={busy} onApply={(a) => rerun(a)} />
           <SecurityMapPrompt result={result} current={answers.securityMap ?? {}} busy={busy} onApply={(m) => rerun({ securityMap: { ...(answers.securityMap ?? {}), ...m } })} />
+          <PendingNotes
+            result={result}
+            accepted={answers.acceptNotes ?? []}
+            skipped={skippedNotes}
+            busy={busy}
+            onAccept={(nota) => rerun({ acceptNotes: [...new Set([...(answers.acceptNotes ?? []), nota])] })}
+            onSkip={(nota) => setSkippedNotes((s) => [...s, nota])}
+          />
+          {result.warnings.length > 0 && (
+            <div className="mb-3" data-testid="import-file-warnings">
+              <Banner tone="warn">
+                <ul className="list-disc pl-4">
+                  {result.warnings.slice(0, 6).map((w, i) => (
+                    <li key={i}>{w.message}</li>
+                  ))}
+                </ul>
+              </Banner>
+            </div>
+          )}
           <PossibleDuplicates result={result} accepted={answers.acceptDuplicates ?? []} busy={busy} onApply={(lines) => rerun({ acceptDuplicates: lines })} />
           <CorporateEvents
             result={result}

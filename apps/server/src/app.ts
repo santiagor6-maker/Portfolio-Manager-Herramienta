@@ -23,6 +23,7 @@ import {
   type Interval,
   type PriceAdjustment,
 } from '@pm/market-data';
+import type { EmailInboxMount } from './emailInbox';
 import { PORTFOLIO_ID_RE, type IbkrFlexSyncMount } from './ibkrSync';
 
 export const VERSION = '0.2.0';
@@ -64,6 +65,13 @@ export interface AppOptions {
    * not configured (SYNC_SECRET unset): the routes answer 503. Same protection as DELETE /api/cache.
    */
   ibkrFlexSync?: IbkrFlexSyncMount;
+  /**
+   * E-mail inbox webhook (POST /api/inbox/email) and its drafts (GET/DELETE /api/inbox/email/drafts).
+   * Undefined = not configured (INBOX_SECRET unset): 503.
+   */
+  emailInbox?: EmailInboxMount;
+  /** Messages accepted per hour by the e-mail webhook, all senders together. Default 60. */
+  inboxPerHour?: number;
   /** Max body of POST /api/sync/* (it may carry the portfolio's transactions). Default 5 MiB. */
   syncMaxBodyBytes?: number;
   /** Request log sink (default console.log). Pass null to silence. */
@@ -169,6 +177,8 @@ export function createApp(opts: AppOptions = {}): Hono {
   const limiter = opts.rateLimit === false ? undefined : new RateLimiter(opts.rateLimit ?? { capacity: 120, refillPerSecond: 2 }, opts.now);
   const maxBody = opts.maxBodyBytes ?? 64 * 1024;
   const syncMaxBody = opts.syncMaxBodyBytes ?? 5 * 1024 * 1024;
+  const inboxPerHour = opts.inboxPerHour ?? 60;
+  const inboxLimiter = inboxPerHour > 0 ? new RateLimiter({ capacity: inboxPerHour, refillPerSecond: inboxPerHour / 3600 }, opts.now) : undefined;
   const allowedHosts = opts.allowedHosts ? new Set(opts.allowedHosts.map((h) => h.toLowerCase())) : undefined;
   let warnedShared = false;
   const app = new Hono();
@@ -179,7 +189,9 @@ export function createApp(opts: AppOptions = {}): Hono {
     await next();
     const ms = performance.now() - started;
     c.header('Server-Timing', `total;dur=${ms.toFixed(1)}`);
-    log?.(`${c.req.method} ${c.req.path}${new URL(c.req.url).search.slice(0, 200)} -> ${c.res.status} ${ms.toFixed(0)}ms`);
+    // Secrets that webhook URLs may carry (?secret=, ?api_key=) never reach the log.
+    const search = new URL(c.req.url).search.replace(/([?&](?:secret|api_key|token)=)[^&]*/gi, '$1***');
+    log?.(`${c.req.method} ${c.req.path}${search.slice(0, 200)} -> ${c.res.status} ${ms.toFixed(0)}ms`);
   });
 
   app.use(
@@ -216,7 +228,10 @@ export function createApp(opts: AppOptions = {}): Hono {
   app.use('/api/*', async (c, next) => {
     if (opts.apiToken && c.req.path !== '/api/health' && c.req.method !== 'OPTIONS') {
       const auth = c.req.header('authorization');
-      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : c.req.header('x-api-key');
+      // Inbound-mail providers that cannot set headers (Mailgun routes, Postmark) put the API token in
+      // the webhook URL: accepted as ?api_key= on that route only (and redacted from the log).
+      const webhookKey = c.req.method === 'POST' && c.req.path === '/api/inbox/email' ? c.req.query('api_key') : undefined;
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (c.req.header('x-api-key') ?? webhookKey);
       if (!(await tokenMatches(token, opts.apiToken))) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API token' } }, 401);
     }
     if (limiter && c.req.method !== 'OPTIONS' && c.req.path !== '/api/health') {
@@ -246,7 +261,7 @@ export function createApp(opts: AppOptions = {}): Hono {
       {
         error: {
           code: 'NOT_FOUND',
-          message: `No route ${c.req.method} ${c.req.path}. Endpoints: /api/health, /api/search, /api/quote, /api/history, /api/fx, /api/index, /api/catalog, POST /api/batch, POST /api/sync/ibkr-flex`,
+          message: `No route ${c.req.method} ${c.req.path}. Endpoints: /api/health, /api/search, /api/quote, /api/history, /api/fx, /api/index, /api/catalog, POST /api/batch, POST /api/sync/ibkr-flex, POST /api/inbox/email`,
         },
       },
       404,
@@ -397,6 +412,20 @@ export function createApp(opts: AppOptions = {}): Hono {
     if (!opts.ibkrFlexSync) return c.json({ error: { code: 'NOT_CONFIGURED', message: 'IBKR sync is disabled: set SYNC_SECRET on the server' } }, 503);
     return undefined;
   };
+  /** Optional JSON body { ids: string[] } of an acknowledgement (DELETE); undefined = everything. */
+  const idsBody = async (c: Context): Promise<string[] | undefined> => {
+    const text = await c.req.text();
+    if (!text.trim()) return undefined;
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      bad('Body must be JSON: { "ids": ["id", ...] }');
+    }
+    const raw = (body as { ids?: unknown })?.ids;
+    if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) bad('"ids" must be an array of ids');
+    return raw as string[];
+  };
   const portfolioParam = (c: Context): string => {
     const id = required(c, 'portfolioId', 'portfolio id');
     if (!PORTFOLIO_ID_RE.test(id)) bad('"portfolioId" has invalid characters');
@@ -415,6 +444,58 @@ export function createApp(opts: AppOptions = {}): Hono {
       return res;
     },
   );
+  // E-mail inbox (importers I2). The webhook passes the API token check above, the server-side
+  // Origin check (providers send no Origin), its own shared secret (INBOX_SECRET, constant-time),
+  // the sender allowlist, SPF/DKIM, a streamed size limit and a global hourly cap.
+  const inboxGuard = (c: Context): Response | undefined => {
+    const denied = adminForbidden(c, 'The e-mail inbox');
+    if (denied) return denied;
+    if (!opts.emailInbox) return c.json({ error: { code: 'NOT_CONFIGURED', message: 'The e-mail inbox is disabled: set INBOX_SECRET on the server' } }, 503);
+    return undefined;
+  };
+  const inboxMaxBody = opts.emailInbox?.maxBytes ?? 10 * 1024 * 1024;
+  app.post(
+    '/api/inbox/email',
+    async (c, next) => inboxGuard(c) ?? next(),
+    async (c, next) => {
+      if (inboxLimiter) {
+        const r = inboxLimiter.take('email-inbox', 1);
+        if (!r.ok) {
+          c.header('Retry-After', String(r.retryAfterS));
+          return c.json({ error: { code: 'RATE_LIMITED', message: `Too many messages; retry in ${r.retryAfterS}s` } }, 429);
+        }
+      }
+      return next();
+    },
+    bodyLimit({
+      maxSize: inboxMaxBody,
+      onError: (c) => c.json({ error: { code: 'TOO_LARGE', message: `Message too large (max ${inboxMaxBody} bytes)` } }, 413),
+    }),
+    async (c) => {
+      const res = await opts.emailInbox!.handler(c.req.raw);
+      res.headers.set('cache-control', 'no-store');
+      return res;
+    },
+  );
+  app.get('/api/inbox/email/drafts', async (c) => {
+    const denied = inboxGuard(c);
+    if (denied) return denied;
+    c.header('Cache-Control', 'no-store');
+    return c.json(await opts.emailInbox!.drafts(portfolioParam(c)));
+  });
+  app.delete(
+    '/api/inbox/email/drafts',
+    async (c, next) => inboxGuard(c) ?? next(),
+    bodyLimit({
+      maxSize: syncMaxBody,
+      onError: (c) => c.json({ error: { code: 'BAD_REQUEST', message: `Body too large (max ${syncMaxBody} bytes)` } }, 413),
+    }),
+    async (c) => {
+      const portfolioId = portfolioParam(c);
+      return c.json(await opts.emailInbox!.clearDrafts(portfolioId, await idsBody(c)));
+    },
+  );
+
   app.get('/api/sync/ibkr-flex/inbox', async (c) => {
     const denied = syncGuard(c);
     if (denied) return denied;
@@ -432,20 +513,7 @@ export function createApp(opts: AppOptions = {}): Hono {
     }),
     async (c) => {
       const portfolioId = portfolioParam(c);
-      const text = await c.req.text();
-      let ids: string[] | undefined;
-      if (text.trim()) {
-        let body: unknown;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          bad('Body must be JSON: { "ids": ["transaction id", ...] }');
-        }
-        const raw = (body as { ids?: unknown })?.ids;
-        if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) bad('"ids" must be an array of transaction ids');
-        ids = raw as string[];
-      }
-      return c.json(await opts.ibkrFlexSync!.clearInbox(portfolioId, ids));
+      return c.json(await opts.ibkrFlexSync!.clearInbox(portfolioId, await idsBody(c)));
     },
   );
 

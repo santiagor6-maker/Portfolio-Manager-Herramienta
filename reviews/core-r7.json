@@ -1,0 +1,345 @@
+{
+  "part": "core",
+  "round": 7,
+  "score": 7.9,
+  "competitorName": "Portfolio Performance",
+  "competitorScore": 8,
+  "approved": false,
+  "fixed": [
+    "C48",
+    "C49",
+    "C50",
+    "C51"
+  ],
+  "gaps": [
+    {
+      "id": "C52",
+      "severity": "alta",
+      "text": "Un split registrado sin cierre en la fecha ex valora con el último cierre pre-split sin ajustar: el valor queda multiplicado por la razón hasta el siguiente cierre (20.000 en vez de 10.000; WEGE3 del demo 15,4 millones en vez de 7,7 millones), el TWR de un mes plano con un flujo da +20 % y un grupamento registrado provoca un falso TRADE_PRICE_UNIT_SUSPECT (−90 %)."
+    },
+    {
+      "id": "C53",
+      "severity": "baja",
+      "text": "La regla de potencia de diez bloquea movimientos reales de 8× a 12× aunque haya tres precios consistentes en días distintos (una acción de centavos que se multiplica por 10 queda en 1.030 en vez de 12.360), con aviso pero sin una acción única de confirmación por instrumento."
+    },
+    {
+      "id": "C54",
+      "severity": "baja",
+      "text": "POSSIBLE_UNRECORDED_SPLIT da falsos positivos en movimientos reales (−50 %, −66 % y +100 % diarios, cripto −75 % en un mes) y no detecta una redenominación ÷1.000, que da −40 % sin aviso."
+    },
+    {
+      "id": "C55",
+      "severity": "media",
+      "text": "El desarme de units en el orden que emite market-data (MERGER y luego SPINOFF) borra en core los componentes del SPINOFF: CPLE11 → 100 CPLE3 y 0 CPLE6, TWR −80 % sin diagnóstico."
+    },
+    {
+      "id": "C56",
+      "severity": "media",
+      "text": "Core no usa la tabla compartida de renombres: un id viejo (manual) y su sucesor (importado) quedan como dos instrumentos, con OVERSELL y una posición fantasma; además el efectivo de una fusión se acredita en la fecha efectiva y no en cashPayDate."
+    },
+    {
+      "id": "C57",
+      "severity": "baja",
+      "text": "El devengo IPCA no sigue la convención del VNA de ANBIMA (escalón el día 15 con el IPCA del mes anterior) y difiere entre −0,05 % y −0,31 % del VNA, sin deriva acumulada."
+    }
+  ],
+  "matrix": [
+    {
+      "feature": "TWR diario encadenado exacto",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "TWR correcto con precios escasos (usa precio de la operación)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "TWR correcto en días con split/spin-off y flujos",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "MWR / XIRR",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Tabla mensual (valor, aportes, ganancia, TWR, acumulado)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Cascada de ganancia en dinero que cuadra",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Separación precio vs divisa (no realizada, realizada y TWR mensual)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Cambio de moneda base (COP/BRL/USD/EUR)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Caja multi-divisa y conversiones",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Dividendos con retención en la fuente",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Splits, bonificações, desdobramentos, JCP, fusiones y spin-offs",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Acciones corporativas automáticas",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Renta fija por devengo (CDT/CDB/IPCA+/Tesouro)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Renta fija con cupones, intereses periódicos y amortización",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Valor líquido de renta fija (neto de IR/IOF/retención)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Calendarios de días hábiles (ANBIMA, Colombia)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Comparación como porcentaje del CDI / índices de tasa",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Rentabilidad real (IPC/IPCA) a hoy",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Benchmarks (precio, retorno total y tasa)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Rentabilidad por posición (retorno total, TWR, IRR)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Seguimiento de aportes y capital neto invertido",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Vista por cuenta y consolidada con rentabilidad",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Métodos de costo FIFO / promedio (preço médio) / LIFO",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Métricas de riesgo (volatilidad, Sharpe, drawdown diario, beta)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Seguimiento de metas y proyección (conectada al portafolio, real)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Validación, diagnósticos y calidad de datos (FX faltante, precios viejos, atípicos)",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Robustez de la API (sin resultados viejos por caché)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    }
+  ]
+}

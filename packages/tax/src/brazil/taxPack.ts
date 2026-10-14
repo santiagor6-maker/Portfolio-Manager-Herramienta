@@ -38,8 +38,8 @@ export function brazilDarfCsv(r: BrApuracaoReport, opts?: CsvOptions): string {
 export function brazilProventosCsv(r: BrProventosReport, opts?: CsvOptions): string {
   return toCsv(
     [
-      ['data', 'ticker', 'tipo', 'bruto', 'irrf', 'liquido', 'irrf_esperado', 'ficha_dirpf', 'linha', 'transicao_lei_15270'],
-      ...r.rows.map((x) => [x.date, x.symbol, x.type, x.gross, x.irrf, x.net, x.expectedIrrf, x.dirpf?.ficha, x.dirpf?.linha, x.lei15270Transition ?? false]),
+      ['data', 'ticker', 'tipo', 'bruto', 'irrf', 'liquido', 'irrf_esperado', 'ficha_dirpf', 'linha', 'transicao_lei_15270', 'irrf_estimado'],
+      ...r.rows.map((x) => [x.date, x.symbol, x.type, x.gross, x.irrf, x.net, x.expectedIrrf, x.dirpf?.ficha, x.dirpf?.linha, x.lei15270Transition ?? false, x.irrfEstimated ?? false]),
     ],
     opts,
   );

@@ -19,7 +19,7 @@ está en la tabla, se copian los valores del año más cercano y todos quedan ma
 ## Cómo se prueba
 
 ```bash
-npx vitest run packages/tax      # 243 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5, 18 ronda 6, 21 ronda 7, 29 ronda 8)
+npx vitest run packages/tax      # 252 pruebas con escenarios calculados a mano (regresión: 46 ronda 1, 35 ronda 2, 17 ronda 3, 10 ronda 4, 13 ronda 5, 18 ronda 6, 21 ronda 7, 29 ronda 8, 9 ronda 9 con paridad core ↔ tax)
 npx tsc -p packages/tax --noEmit
 ```
 
@@ -338,3 +338,24 @@ S3: un pago tardío solo del principal ahora queda `paga_parcial` (T68).
 | T68 | media | `settleDarfs` suma todos los pagos de un DARF. Un pago tardío cubre principal, multa y juros a prorrata (regla del Sicalc). Estados: `paga`, `paga_em_atraso`, `paga_parcial` (con `balance`, incluidos recargos), `vencida` y `pendente`. Hay campos `payments`, `paidTotal` y `overpaid`, y avisos `DARF_UNDERPAID`, `DARF_OVERPAID` (PER/DCOMP) y `DARF_PAYMENT_UNMATCHED`. La apuración B3 recibe solo pagos 6015 o sin código. D3 → `paga` (1.000 + 2.000); D4a → `paga_parcial`; D4b → excedente de 500 |
 | T69 | baja | Un pago se reconoce por cualquiera de los meses que cubre el DARF (`includesMonths`). El acumulado de cripto se calcula desde la primera venta. D5 → `paga`; D6c → DARF de R$ 11,25 en enero de 2026 con nov/dic de 2024 |
 | T70 | baja | Con `transitResolution: "mantido"`, una entrada posterior compatible (cantidad dentro de la tolerancia de comisión) se empareja con esa salida. El costo de origen se traslada como provisorio y se avisa con `TRANSFER_MATCH_APPLIED_MANTIDO`, así el patrimonio no se cuenta dos veces. Con `"alienado"`, la salida ya no se propone ni se avisa como sin pareja. La opción llega al ruteo desde los reportes de cripto, exterior, Bens e Direitos y el paquete |
+
+---
+
+## Respuesta a la revisión ronda 9
+
+Revisión: `reviews/tax-r9.md`. Las pruebas están en `src/review-r9.test.ts`.
+
+| Gap | Severidad | Corrección |
+|---|---|---|
+| T71 | baja | En la B3, una fusión, un cambio de ticker o una escisión con ratio fraccionario separa la fracción del ticker nuevo, igual que un grupamento: usa la misma función, con el aviso `FRACAO_GRUPAMENTO` sobre el ticker nuevo y la venta del leilão como enajenación con el costo de la fracción. Bens e Direitos muestra solo las acciones enteras. El ledger expone `pendingFractions` (fracciones pendientes de remate, a costo). E1 → 333 por R$ 9.990 en la posición y 0,333 por R$ 10 pendientes |
+| T72 | baja | `totals.jcpIrrf` suma solo el IRRF registrado. El estimado de un JCP neto va a `totals.jcpIrrfEstimated`. El IRPFM acredita solo el registrado y lista el estimado en `estimatedCreditsNotApplied` (junto con el IR estimado de cupones netos), sin descontarlo. El CSV de proventos agrega la columna `irrf_estimado` |
+
+**Paridad con core.** La prueba "core ↔ tax parity" corre los escenarios del revisor (`r9-corporate.ts`, `r9-corp2.ts`) por `computeHoldings` y `realizedGains` de `@pm/core` y por los ledgers de tax, y exige el mismo resultado:
+
+- Colombia (FIFO): cada lote realizado y cada lote restante, al centavo.
+- B3 (preço médio): costo realizado por venta y posiciones, que deben coincidir con core al sumar posición + fracción pendiente.
+- Fusión 1/3 en la B3.
+- Fusión del exterior con efectivo: costo en USD y en BRL.
+- MATIC → POL en cripto: cantidad y costo total en BRL entre custodias.
+
+Si core o `common/corporate.ts` cambian la semántica, la prueba falla.

@@ -1,0 +1,338 @@
+{
+  "part": "importers",
+  "round": 5,
+  "score": 7.5,
+  "competitorName": "Sharesight",
+  "competitorScore": 8,
+  "approved": false,
+  "fixed": [
+    "I34",
+    "I35",
+    "I36",
+    "I37",
+    "I38",
+    "I39"
+  ],
+  "gaps": [
+    {
+      "id": "I40",
+      "severity": "alta",
+      "title": "SINACOR no valida cantidad × precio = valor por línea: un dígito mal leído pasa en silencio",
+      "detail": "La nota 8001 trae 'PETROBRAS PN N2 180 37,00 3.700,00 D' (un 100 leído por OCR como 180) y su 'Líquido para' es consistente. Se importa como BUY PETR4 180 a 37 por 3.700, 'ok', sin ningún aviso, y la posición queda inflada un 80 %. La verificación contra 'Líquido para' no lo detecta porque usa el valor impreso. El mismo hueco aparece si una variante de layout desplaza columnas. Arreglo: exigir |cantidad × precio − valor| ≤ max(0,01; 0,5 × 10^-decimales del precio × cantidad) por línea; si falla, error QTY_PRICE_VALUE_MISMATCH con la lectura alternativa (cantidad = valor / precio) y la nota en pending."
+    },
+    {
+      "id": "I41",
+      "severity": "alta",
+      "title": "Receptor de correo: la autenticación del remitente se puede saltar de 5 formas",
+      "detail": "createEmailInboxHandler, ya montado en POST /api/inbox/email, aceptó y guardó como borrador un CSV de un atacante en los 5 casos: (1) 'dkim=pass header.d=evil.com; dmarc=fail header.from=xpi.com.br' con From xpi.com.br, porque no hay alineación DMARC; (2) Authentication-Results del proveedor con fail y otro Authentication-Results falsificado más abajo con pass, porque se aceptan todos los encabezados y no el del authserv-id propio; (3) 'From: attacker@evil.com (XP <noreply@xpi.com.br>)', porque el regex toma el primer <…>, que está dentro del comentario; (4) nombre visible con encoded-word '=?UTF-8?B?PG5vcmVwbHlAeHBpLmNvbS5icj4=?=' que decodifica a '<noreply@xpi.com.br>'; (5) dos encabezados From. Como el resultado queda en borrador, el daño requiere conocer el token y que el usuario lo apruebe, pero la lista de remitentes + SPF/DKIM que se documenta como barrera no protege. Arreglo: parsear el From con RFC 5322 (addr-spec, rechazar varios From), confiar solo en el primer Authentication-Results con el authserv-id configurado y exigir dmarc=pass o dkim=pass con header.d alineado al dominio del From."
+    },
+    {
+      "id": "I42",
+      "severity": "media",
+      "title": "Sin límites de recursos ante bombas de descompresión y correos con miles de adjuntos",
+      "detail": "Un PDF de 150 KB con un content stream FlateDecode que se expande a 150 MB tardó 6,3 s y subió el RSS en 316 MB dentro de importFile. Con el bodyLimit de 10 MB del servidor, un correo puede inflar del orden de 10 GB y tumbar el proceso. Un correo de 349 KB con 1.500 adjuntos CSV se procesó entero (4,2 s de CPU) y no hay tope de adjuntos. Además, un cuerpo de 40 MB sin content-length se lee completo antes de rechazarse (+168 MB), aunque el bodyLimit de apps/server lo mitiga, y el secreto se acepta también en la URL (?secret=), que queda en los logs. Arreglo: tope de adjuntos y de bytes descomprimidos por adjunto, timeout por adjunto, pdf.js en un worker con límite de memoria, y el secreto solo por cabecera."
+    },
+    {
+      "id": "I43",
+      "severity": "media",
+      "title": "Notas en espera demasiado estrictas, y al aceptarlas se pierde el costo residual",
+      "detail": "Una nota legítima de Nu con un costo de etiqueta desconocida ('Taxa de Transf. de Ativos 0,50') queda pending por NOTA_TOTALS_MISMATCH. Al aceptarla con acceptNotes se importa con costos 0,93: los 0,50 que el propio 'Líquido para' confirma se pierden en lugar de registrarse como 'otros costos'. Una nota de 20 operaciones con 0,08 de diferencia también queda en espera, porque la tolerancia es fija en 0,05 y no escala con el número de operaciones. La diferencia de 0,01 sí pasa. Arreglo: al aceptar, prorratear el residuo de costo (si tiene el signo de un costo y es pequeño); tolerancia proporcional al número de líneas; reconocer más etiquetas (transferencia de ativos, ISS municipal, taxa de custódia mensal)."
+    },
+    {
+      "id": "I44",
+      "severity": "media",
+      "title": "Los eventos de TICKER_EVENTS (conversiones y fusiones) quedan registrados pero nadie los aplica ni los propone",
+      "detail": "La tabla única de @pm/core es correcta y market-data ya la usa (TICKER_ALIASES = TICKER_EVENTS; NATU3 sin alias porque el código se reutiliza). Pero una compra de 'NATURA ON' de 2019 se importa como NATU3 y no se propone el canje NATU3→NTCO3 del 18/12/2019. Ni core ni la web aplican TICKER_EVENTS. Según market-data, la serie de NATU3 en Yahoo es plana (36,86, volumen cero) de 2020 a 2025, así que el valor mensual de esa posición queda congelado 5 años. Lo mismo pasa con BRFS3→MBRF3 (0,8521) y con CPLE6→CPLE5→CPLE3 + R$ 0,7749 para quien solo importa notas o Negociação. Arreglo: el importador ya sabe proponer eventos (I33); debería emitir corporateActions con la transacción lista para cada evento conocido que afecte una posición existente o importada."
+    },
+    {
+      "id": "I45",
+      "severity": "baja",
+      "title": "La normalización de corredores agrupa por la primera palabra y le faltan alias",
+      "detail": "'Global Investimentos' (BR) se reconoce como 'Global Securities' (CO, known=true), y su compra quedó possible_duplicate frente a una de Global Securities. Otros falsos 'mismo corredor' (sameBroker = true): 'Casa de Bolsa' con 'Casa de Valores', y 'Credicorp Capital Colombia' con 'Credicorp Capital Perú'. Faltan alias: 'Banco do Brasil' frente a 'BB Investimentos' (brasil/bb), 'DEGIRO' frente a 'flatexDEGIRO Bank' y 'Bancolombia' frente a 'Grupo Cibest'. Lo bueno: Inter≠Interactive Brokers, XP≠Clear≠Rico, U1234567≠DU1234567, Toro≠Toronto y Nu≠Nuvemshop. Arreglo: no usar la primera palabra como id para nombres desconocidos (usar el nombre normalizado completo) y ampliar los alias."
+    },
+    {
+      "id": "I46",
+      "severity": "baja",
+      "title": "Detalles de PDF: notas BM&F, periodo del extracto y retención dentro del texto",
+      "detail": "En una nota BM&F (WIN J24) dentro de un PDF con varias notas, sus líneas salen como UNPARSED_LINE (errores que el usuario no puede corregir) en lugar de UNSUPPORTED_ASSET (futuros). Un extracto colombiano con 'Periodo: 01/03/2024 al 31/03/2024' pide confirmar el formato de fecha porque las filas tienen día ≤ 12: el 31/03 del encabezado no se usa como evidencia. La retención escrita dentro del texto de la segunda línea ('Retención 7% $ 9.437') no se suma; solo funciona si el monto está en la columna Valor."
+    },
+    {
+      "id": "I2",
+      "severity": "baja",
+      "title": "Sin conexión con B3 ni agregadores",
+      "detail": "El correo (POST /api/inbox/email con borradores), la sincronización IBKR con pantalla y la bandeja con deduplicación ya existen de punta a punta. Queda fuera de alcance, por requerir contrato, la conexión con la Área do Investidor de B3 (Gorila, Kinvo) y con Pluggy o Belvo. Es la ventaja estructural que conservan Gorila y Kinvo en Brasil."
+    },
+    {
+      "id": "I31",
+      "severity": "baja",
+      "title": "Todavía sin documentos reales de usuarios",
+      "detail": "El corpus real-like es amplio y mis layouts propios casi siempre pasan, pero I40 (un dígito mal leído por OCR que pasa en silencio) muestra que el ruido real todavía no está cubierto. Falta al menos una nota o extracto real anonimizado por corredora."
+    }
+  ],
+  "matrix": [
+    {
+      "feature": "Sincronización automática con corredor/agregador",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Sincronización B3 (Área do Investidor)",
+      "ours": "no",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Importación de archivos B3 Negociação/Movimentação/Posição",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Lectura de notas de corretagem en PDF (SINACOR) con validación",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Importadores PDF de bancos y corredores",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "PDF protegidos con contraseña",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Reenvío de confirmaciones por correo (seguro)",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Asistente CSV/Excel con mapeo de columnas editable",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Presets de corredores (IBKR, Schwab, Fidelity, DEGIRO, T212, eToro...)",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "IBKR completo (FX, retenciones, transferencias, acciones corporativas, varias cuentas)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Formato regional de números y fechas sin errores silenciosos",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Vista previa fila por fila con línea y mensajes",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "no",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Deduplicación al reimportar el mismo archivo",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Deduplicación entre fuentes por cuenta, sin falsos positivos",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Splits, bonificaciones, spin-offs y cambios de código",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Colombia: extractos de comisionistas, GMF y CDT",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "no",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "no"
+      }
+    },
+    {
+      "feature": "Tesouro Direto con id cotizable automáticamente",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "no",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Traspasos de custodia entre corredores",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Codificaciones Latin-1/UTF-16, BOM, CRLF y campos multilínea",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "partial",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Formatos .xls antiguo / HTML complejo / OFX",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "partial",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Respaldo completo e ida y vuelta CSV/JSON",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "partial",
+        "Gorila": "partial"
+      }
+    },
+    {
+      "feature": "Conciliación con posiciones y caja del corredor (por cuenta)",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "partial",
+        "Portfolio Performance": "partial",
+        "Ghostfolio": "no",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Validado con documentos reales de usuarios",
+      "ours": "partial",
+      "others": {
+        "Sharesight": "yes",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "partial",
+        "Kubera": "yes",
+        "Gorila": "yes"
+      }
+    },
+    {
+      "feature": "Privacidad: todo en el navegador o en servidor propio",
+      "ours": "yes",
+      "others": {
+        "Sharesight": "no",
+        "Portfolio Performance": "yes",
+        "Ghostfolio": "yes",
+        "Kubera": "no",
+        "Gorila": "no"
+      }
+    }
+  ]
+}

@@ -38,7 +38,18 @@ export interface BrProventosReport {
   year: number;
   disclaimer: LocalizedText;
   rows: BrProventoRow[];
-  totals: { dividendos: number; jcpGross: number; jcpIrrf: number; rendimentosFii: number; dividendIrrf: number; aluguelGross: number; aluguelIrrf: number };
+  totals: {
+    dividendos: number;
+    jcpGross: number;
+    /** IRRF on JCP actually recorded (taxes): the only one credited (T72). */
+    jcpIrrf: number;
+    /** IRRF on JCP ESTIMATED from net-recorded JCP (amountIsNet): shown, never credited (T67/T72). */
+    jcpIrrfEstimated: number;
+    rendimentosFii: number;
+    dividendIrrf: number;
+    aluguelGross: number;
+    aluguelIrrf: number;
+  };
   notes: string[];
   issues: TaxIssue[];
 }
@@ -261,7 +272,8 @@ export function brazilProventosReport(input: TaxInput, opts: BrProventosOptions)
       dividendos: sum(t('DIVIDENDO').map((r) => r.gross)),
       dividendIrrf: sum(t('DIVIDENDO').map((r) => r.irrf)),
       jcpGross: sum(t('JCP').map((r) => r.gross)),
-      jcpIrrf: sum(t('JCP').map((r) => r.irrf)),
+      jcpIrrf: sum(t('JCP').filter((r) => !r.irrfEstimated).map((r) => r.irrf)),
+      jcpIrrfEstimated: sum(t('JCP').filter((r) => r.irrfEstimated).map((r) => r.irrf)),
       rendimentosFii: sum(t('RENDIMENTO_FII').map((r) => r.gross)),
       aluguelGross: sum(t('ALUGUEL').map((r) => r.gross)),
       aluguelIrrf: sum(t('ALUGUEL').map((r) => r.irrf)),

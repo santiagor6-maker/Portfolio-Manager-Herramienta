@@ -45,6 +45,8 @@ export interface ImportAnswers {
   /** Importers R4: corporate-action proposals accepted with one click, and the answers they need. */
   acceptCorporateActions?: number[];
   corporateActionAnswers?: Record<number, { costFraction?: number; ratio?: number }>;
+  /** Importers R5: broker notes released from review by the user (their pending rows import). */
+  acceptNotes?: string[];
 }
 
 export interface ImportRequest {
@@ -83,6 +85,7 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
       acceptDuplicates: req.answers?.acceptDuplicates?.length ? req.answers.acceptDuplicates : 'none',
       acceptCorporateActions: req.answers?.acceptCorporateActions?.length ? req.answers.acceptCorporateActions : undefined,
       corporateActionAnswers: req.answers?.corporateActionAnswers,
+      acceptNotes: req.answers?.acceptNotes?.length ? req.answers.acceptNotes : undefined,
       securityMap: req.answers?.securityMap && Object.keys(req.answers.securityMap).length ? req.answers.securityMap : undefined,
       catalog: (await import('../lib/catalog')).CATALOG,
       idFactory: () => newId('tx'),
@@ -145,6 +148,7 @@ export function emailToResult(e: EmailImportResult, fileName: string): ImportRes
     unknownSecurities: parts.flatMap((p) => p.unknownSecurities ?? []),
     instrumentUpdates: parts.flatMap((p) => p.instrumentUpdates ?? []),
     needsConfirmation: parts.flatMap((p) => p.needsConfirmation ?? []),
+    noteChecks: parts.flatMap((p) => p.noteChecks ?? []),
   };
 }
 

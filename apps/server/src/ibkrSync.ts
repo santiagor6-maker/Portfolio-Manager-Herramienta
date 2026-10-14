@@ -20,6 +20,7 @@ import {
   type IbkrFlexSyncJob,
 } from '@pm/importers';
 import type { PersistentStore } from '@pm/market-data';
+import { KeyedLock } from './keyedLock';
 
 export const SYNC_USER = 'default';
 
@@ -114,21 +115,6 @@ export function guardedFlexFetch(inner?: FlexFetch, timeoutMs = 60_000): FlexFet
     }
     return base(url, init);
   };
-}
-
-/** Promise-chain lock per key: inbox read-modify-write never interleaves (review R4, M35). */
-class KeyedLock {
-  private readonly tails = new Map<string, Promise<unknown>>();
-  run<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.tails.get(key) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    const tail = next.catch(() => undefined);
-    this.tails.set(key, tail);
-    void tail.then(() => {
-      if (this.tails.get(key) === tail) this.tails.delete(key);
-    });
-    return next;
-  }
 }
 
 const txKey = (t: Transaction) => t.importHash ?? t.id;

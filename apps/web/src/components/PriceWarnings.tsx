@@ -9,8 +9,14 @@ import { useInstrumentMap } from '../hooks/useData';
 import { useFmt } from '../store/app';
 import { formatDate, formatPrice } from '../lib/format';
 
-export type PriceWarningCode = 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED';
-const CODES: PriceWarningCode[] = ['TRADE_PRICE_OUTLIER', 'TRADE_PRICE_UNCONFIRMED'];
+export type PriceWarningCode =
+  | 'TRADE_PRICE_OUTLIER'
+  | 'TRADE_PRICE_UNCONFIRMED'
+  | 'TRADE_PRICE_UNIT_SUSPECT'
+  | 'TRADE_PRICE_CONFIRMED_BY_RUN'
+  | 'POSSIBLE_UNRECORDED_SPLIT';
+// Longest first so a prefix never shadows another code.
+const CODES: PriceWarningCode[] = ['TRADE_PRICE_CONFIRMED_BY_RUN', 'TRADE_PRICE_UNIT_SUSPECT', 'POSSIBLE_UNRECORDED_SPLIT', 'TRADE_PRICE_UNCONFIRMED', 'TRADE_PRICE_OUTLIER'];
 
 /** Parses core `warnings` entries such as "TRADE_PRICE_OUTLIER:XNAS:MSFT,XBOG:ISA". */
 export function parsePriceWarnings(warnings: string[] | undefined): { code: PriceWarningCode; instrumentIds: string[] }[] {
@@ -69,7 +75,13 @@ export function PriceWarnings({ warnings, from, to, compact }: { warnings: strin
       .filter((x): x is NonNullable<typeof x> => !!x && !x.priceConfirmed)
       .map((tx) => ({ code: p.code, tx })),
   );
-  const label = parsed.some((p) => p.code === 'TRADE_PRICE_OUTLIER') ? t('pw.outlier') : t('pw.unconfirmed');
+  const label = parsed.some((p) => p.code === 'POSSIBLE_UNRECORDED_SPLIT')
+    ? t('diag.code.POSSIBLE_UNRECORDED_SPLIT')
+    : parsed.some((p) => p.code === 'TRADE_PRICE_UNIT_SUSPECT')
+      ? t('diag.code.TRADE_PRICE_UNIT_SUSPECT')
+      : parsed.some((p) => p.code === 'TRADE_PRICE_OUTLIER')
+        ? t('pw.outlier')
+        : t('pw.unconfirmed');
   const symbols = [...new Set(flagged.map((id) => instruments.get(id)?.symbol ?? id))].join(', ');
   return (
     <details className="inline-block relative align-middle print:hidden" data-testid="price-warning" onClick={(e) => e.stopPropagation()}>

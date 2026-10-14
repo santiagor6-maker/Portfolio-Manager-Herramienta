@@ -62,6 +62,8 @@ export interface BrLedgerResult {
   positions: BrPosition[];
   /** Short sales not yet bought back — or sells without recorded purchases (missing history). */
   openShorts: BrShortPosition[];
+  /** Fractions separated from the position awaiting the leilão de frações (T18/T71), at cost. */
+  pendingFractions: { instrumentId: string; symbol: string; quantity: number; cost: number }[];
   issues: TaxIssue[];
 }
 
@@ -219,6 +221,30 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
   /** Premium adjustments from option exercise, applied to same-day trades of the underlying (by B3 root). */
   const exerciseAdj = new Map<string, { buyAdj: number; sellAdj: number; used: boolean; optionId: string }>();
 
+  /**
+   * Fraction left by a grupamento/desdobramento or by a restructuring ratio (T18/T71): separated from
+   * the position (it is sold by the company in a leilão de frações, a taxable alienation).
+   */
+  const separateFraction = (p: Pos, t: Transaction, id: string, symbol: string, what: string) => {
+    const frac = p.qty - Math.floor(p.qty + 1e-9);
+    if (frac <= 1e-6) return;
+    const fracCost = (p.cost * frac) / p.qty;
+    p.qty -= frac;
+    p.cost -= fracCost;
+    p.fracQty += frac;
+    p.fracCost += fracCost;
+    issues.push({
+      level: 'warning',
+      code: 'FRACAO_GRUPAMENTO',
+      transactionId: t.id,
+      instrumentId: id,
+      message:
+        `O ${what} de ${symbol} deixou fração de ${frac.toFixed(4)} ação(ões) ` +
+        `(custo R$ ${fracCost.toFixed(2)}), separada da posição. A fração é vendida em leilão pela empresa: registre a venda ` +
+        `(SELL de ${frac.toFixed(4)}) com o valor recebido — é uma alienação tributável.`,
+    });
+  };
+
   for (const key of keys) {
     const dayTxs = byDay.get(key)!;
     const [date, id] = key.split('|') as [string, string];
@@ -266,6 +292,8 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
             tp.qty += movedQty;
             tp.cost += movedCost;
             p.cost -= movedCost;
+            // T71: a fractional exchange ratio leaves fractions that the company sells at auction.
+            separateFraction(tp, t, rs.target, displaySymbol(rs.target, instruments.get(rs.target)), rs.kind === 'SPINOFF' ? 'cisão' : rs.kind === 'MERGER' ? 'incorporação' : 'mudança de ticker');
             if (rs.kind !== 'SPINOFF') {
               p.qty = 0;
               p.cost = 0;
@@ -288,24 +316,7 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
           // Rounded ratios (e.g. 0.3333 for 3:1) leave 99.99 shares: snap to the integer (T30).
           if (Math.abs(p.qty - Math.round(p.qty)) < 0.01) p.qty = Math.round(p.qty);
           if (Math.abs(p.shortQty - Math.round(p.shortQty)) < 0.01) p.shortQty = Math.round(p.shortQty);
-          const frac = p.qty - Math.floor(p.qty + 1e-9);
-          if (frac > 1e-6) {
-            const fracCost = (p.cost * frac) / p.qty;
-            p.qty -= frac;
-            p.cost -= fracCost;
-            p.fracQty += frac;
-            p.fracCost += fracCost;
-            issues.push({
-              level: 'warning',
-              code: 'FRACAO_GRUPAMENTO',
-              transactionId: t.id,
-              instrumentId: id,
-              message:
-                `O ${ratio < 1 ? 'grupamento' : 'desdobramento'} de ${symbol} deixou fração de ${frac.toFixed(4)} ação(ões) ` +
-                `(custo R$ ${fracCost.toFixed(2)}), separada da posição. A fração é vendida em leilão pela empresa: registre a venda ` +
-                `(SELL de ${frac.toFixed(4)}) com o valor recebido — é uma alienação tributável.`,
-            });
-          }
+          separateFraction(p, t, id, symbol, ratio < 1 ? 'grupamento' : 'desdobramento');
           break;
         }
         case 'STOCK_DIVIDEND': {
@@ -693,5 +704,8 @@ export function runBrazilB3Ledger(input: TaxInput, opts: BrLedgerOptions = {}): 
     }
   }
   positions.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  return { trades, positions, openShorts, issues };
+  const pendingFractions = [...pos.entries()]
+    .filter(([, p]) => p.fracQty > 1e-9)
+    .map(([id, p]) => ({ instrumentId: id, symbol: displaySymbol(id, instruments.get(id)), quantity: p.fracQty, cost: p.fracCost }));
+  return { trades, positions, openShorts, pendingFractions, issues };
 }

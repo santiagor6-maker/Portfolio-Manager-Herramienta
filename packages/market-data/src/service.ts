@@ -9,7 +9,7 @@
  * Tesouro Direto, Colombian FICs and pension funds, and user-defined feeds have their own providers.
  */
 import type { FxSeries, Instrument, ISODate, PricePoint, ProviderId } from '@pm/core';
-import { aliasesTo, findAlias, renameInfo, type TickerAlias } from './aliases';
+import { aliasesTo, findAlias, historicalEventsFrom, renameInfo, type TickerAlias } from './aliases';
 import { DAY, HOUR, MINUTE, historyTtlMs, TieredCache, TTL, type PersistentStore } from './cache';
 import { InstrumentCatalog } from './catalog';
 import { classifySplit } from './corporate';
@@ -830,6 +830,12 @@ export class MarketDataService {
         classifySplit(h.providerSymbol, { date: s.date, numerator: s.numerator ?? Math.round(s.ratio * 1000), denominator: s.denominator ?? 1000 }, inst.id),
       ),
       ...stitched.actions,
+      // Past events of a reused code (NATU3 -> NTCO3 on 2019-12-18; the code came back in 2025).
+      ...historicalEventsFrom(inst.id)
+        .filter((e) => !!e.effective && e.effective >= from && e.effective <= to)
+        .map(
+          (e): MarketCorporateAction => ({ instrumentId: inst.id, date: e.effective!, type: 'SPLIT', subtype: 'MERGER', ratio: e.ratio, targetInstrumentId: e.toId, source: 'catalog', note: e.note }),
+        ),
     ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
     // Seed (review R4, M32; R5, M37): a window that does not start with a trade gets the last real

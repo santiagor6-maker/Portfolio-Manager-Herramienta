@@ -12,6 +12,9 @@
  *   MD_DIVIDENDS_FILE (JSON array of declared dividends with payment dates, e.g. BVC installments),
  *   MD_FROZEN_DIR (directory of *.json recorded histories of delisted securities, see frozen.ts),
  *   SYNC_SECRET (≥16 chars; enables POST /api/sync/ibkr-flex), SYNC_DIR (.data/sync),
+ *   INBOX_SECRET (≥16 chars; enables POST /api/inbox/email), INBOX_RECIPIENTS ("token:portfolioId,..."),
+ *   INBOX_ALLOWED_SENDERS ("@xpi.com.br,confirm@broker.com"), INBOX_MAX_BYTES (10 MiB), INBOX_PER_HOUR (60),
+ *   INBOX_REQUIRE_AUTH (1; 0 = accept mail without SPF/DKIM pass), INBOX_PDF_PASSWORDS (optional),
  *   IBKR_FLEX_DAILY ("portfolioId[:credentialId],..."; daily Flex sync into the inbox) / IBKR_FLEX_HOUR (6 UTC),
  *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12) / SNAPSHOT_YEARS (5,
  *   closed years recorded on the first run): local price snapshot,
@@ -24,6 +27,7 @@ import { serve } from '@hono/node-server';
 import { keysFromEnv, MarketDataService, validateDeclaredDividends, validateFrozen, type CustomFeedInstrument, type DeclaredDividend, type FrozenHistory } from '@pm/market-data';
 import { createApp, DEFAULT_CORS_ORIGINS } from './app';
 import { FileStore } from './fileStore';
+import { EmailInbox, parseAllowedSenders, parseRecipients } from './emailInbox';
 import { IbkrFlexSync, msUntilHourUtc, parseDailyJobs } from './ibkrSync';
 
 const env = process.env;
@@ -85,15 +89,32 @@ const service = new MarketDataService({
 // never cleared by DELETE /api/cache.
 let ibkrFlexSync: IbkrFlexSync | undefined;
 const dailyJobs = parseDailyJobs(env.IBKR_FLEX_DAILY);
+const syncDir = resolve(env.SYNC_DIR ?? '.data/sync');
+const syncStore = env.SYNC_SECRET || env.INBOX_SECRET ? new FileStore(syncDir, { maxFiles: Number.MAX_SAFE_INTEGER, fileMode: 0o600 }) : undefined;
 if (env.SYNC_SECRET) {
-  const syncDir = resolve(env.SYNC_DIR ?? '.data/sync');
-  ibkrFlexSync = await IbkrFlexSync.create({
-    secret: env.SYNC_SECRET,
-    store: new FileStore(syncDir, { maxFiles: Number.MAX_SAFE_INTEGER, fileMode: 0o600 }),
-  });
+  ibkrFlexSync = await IbkrFlexSync.create({ secret: env.SYNC_SECRET, store: syncStore! });
   console.log(`IBKR Flex sync enabled (store: ${syncDir})`);
 } else if (dailyJobs.length) {
   console.warn('  IBKR_FLEX_DAILY ignored: SYNC_SECRET is not set');
+}
+
+// E-mail inbox: drafts from mail forwarded to importar+<token>@your-domain (see README).
+let emailInbox: EmailInbox | undefined;
+if (env.INBOX_SECRET) {
+  const recipients = parseRecipients(env.INBOX_RECIPIENTS);
+  if (!Object.keys(recipients).length) throw new Error('INBOX_RECIPIENTS is required with INBOX_SECRET ("token:portfolioId,...")');
+  emailInbox = new EmailInbox({
+    secret: env.INBOX_SECRET,
+    store: syncStore!,
+    recipients,
+    allowedSenders: parseAllowedSenders(env.INBOX_ALLOWED_SENDERS),
+    maxBytes: Number(env.INBOX_MAX_BYTES ?? 10 * 1024 * 1024),
+    requireAuthResults: env.INBOX_REQUIRE_AUTH !== '0',
+    ...(env.INBOX_PDF_PASSWORDS ? { pdfPasswords: env.INBOX_PDF_PASSWORDS.split(',').map((x) => x.trim()).filter(Boolean) } : {}),
+  });
+  if (env.INBOX_REQUIRE_AUTH === '0') console.warn('  WARNING: INBOX_REQUIRE_AUTH=0 accepts mail without SPF/DKIM pass');
+  if (!env.API_TOKEN) console.warn('  WARNING: the e-mail webhook needs API_TOKEN to be reachable from a mail provider');
+  console.log(`E-mail inbox enabled for ${Object.keys(recipients).length} recipient(s) (store: ${syncDir})`);
 }
 
 const app = createApp({
@@ -105,6 +126,8 @@ const app = createApp({
   allowedHosts,
   allowLocalAdmin: env.ALLOW_LOCAL_ADMIN === '1',
   ibkrFlexSync,
+  emailInbox,
+  inboxPerHour: Number(env.INBOX_PER_HOUR ?? 60),
 });
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {

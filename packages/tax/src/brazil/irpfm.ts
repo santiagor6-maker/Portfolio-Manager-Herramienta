@@ -52,6 +52,11 @@ export interface IrpfmEstimate {
   irpfmGross: number;
   credits: { label: string; value: number }[];
   creditsTotal: number;
+  /**
+   * Withholdings only ESTIMATED (net-recorded income, `amountIsNet`): shown for information and NOT
+   * credited until confirmed by the informe de rendimentos (T72).
+   */
+  estimatedCreditsNotApplied: { label: string; value: number }[];
   /** Redutor (company + IRPFM burden above the nominal limit) with the issuer rates supplied. */
   redutor: number;
   /** Due when unknown issuers already bear the full 34% (min) or nothing is known (max). */
@@ -101,6 +106,10 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
     { label: 'IRPF/IRRF sobre outros rendimentos', value: inp.otherTaxPaid ?? 0 },
   ];
   const creditsTotal = sum(credits.map((c) => c.value));
+  const estimatedCreditsNotApplied = [
+    { label: 'IRRF sobre JCP estimado (JCP registrado líquido)', value: prov?.totals.jcpIrrfEstimated ?? 0 },
+    { label: 'IR estimado em cupons de renda fixa registrados líquidos', value: sum((inp.rendaFixa?.rows ?? []).map((r) => r.irrfEstimated ?? 0)) },
+  ].filter((c) => c.value > 0);
   const rate = params ? irpfmRate(base, params) : 0;
   const gross = base * rate;
   // Redutor (Lei 15.270/2025): when the company's effective rate plus the IRPFM rate exceeds the
@@ -125,6 +134,7 @@ export function brazilIrpfmEstimate(inp: IrpfmInput): IrpfmEstimate {
     irpfmGross: gross,
     credits,
     creditsTotal,
+    estimatedCreditsNotApplied,
     redutor: redKnown,
     irpfmDueRange: { min: due(redFull), max: due(redKnown) },
     redutorByIssuer,
