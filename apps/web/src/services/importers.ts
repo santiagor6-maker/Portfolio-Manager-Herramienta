@@ -85,6 +85,12 @@ export async function runImport(req: ImportRequest): Promise<ImportResult> {
       catalog: (await import('../lib/catalog')).CATALOG,
       idFactory: () => newId('tx'),
   };
+  // W30: register the pdf.js worker before reading a PDF (directly or inside an e-mail).
+  if (/\.(pdf|eml)$/i.test(req.file.name) || /pdf|rfc822/.test(req.file.type)) {
+    const { loadPdfJs } = await import('./pdfjs');
+    const pdfjs = await loadPdfJs();
+    if (pdfjs) options.pdfjs = pdfjs;
+  }
   // Importers R4: a forwarded broker e-mail (.eml) imports every attachment (notas, extratos).
   if (/\.eml$/i.test(req.file.name) || req.file.type === 'message/rfc822') {
     const raw = new Uint8Array(await req.file.arrayBuffer());
