@@ -6,7 +6,7 @@ import { useApp } from '../store/app';
 import { runAnalysis, latestRequestId } from '../services/engineClient';
 import type { Dataset } from '../services/analysis';
 import type { AppSettings } from '../db/repo';
-import { BENCHMARKS } from '../lib/benchmarks';
+import { orderBenchmarks, BENCHMARKS } from '../lib/benchmarks';
 import { todayIso } from '../lib/ids';
 
 const EMPTY: never[] = [];
@@ -77,21 +77,36 @@ export interface RawData {
 /** Turns raw IndexedDB rows + settings into the engine dataset (shared by worker and one-off calls). */
 export function toDataset(raw: RawData, settings: AppSettings, asOf = todayIso()): Dataset {
   const known = new Set(raw.instruments.map((i) => i.id));
+  // W31: the sample's synthetic market data must never value a real portfolio. When the scope has
+  // no sample portfolio, every demo series (prices, FX, indices) is ignored; when both are shown
+  // together ("Todos" with the sample kept), real holdings priced only by demo data are flagged.
+  const selected = settings.selectedPortfolioId;
+  const inScope = raw.portfolios.filter((p) => selected === 'all' || p.id === selected);
+  const scopeHasDemo = inScope.some((p) => p.isDemo);
+  const notDemo = <T,>(x: T) => scopeHasDemo || !(x as { isDemo?: boolean }).isDemo;
+  const prices = raw.prices.filter(notDemo);
+  const realIds = new Set(raw.portfolios.filter((p) => !p.isDemo).map((p) => p.id));
+  const realHeld = new Set(raw.transactions.filter((t) => realIds.has(t.portfolioId) && t.instrumentId).map((t) => t.instrumentId!));
+  const realPriced = new Set(prices.filter((p) => !(p as { isDemo?: boolean }).isDemo).map((p) => p.instrumentId));
+  const demoPricedInstruments = scopeHasDemo
+    ? [...realHeld].filter((id) => !realPriced.has(id) && prices.some((p) => p.instrumentId === id))
+    : [];
   return {
     portfolios: raw.portfolios,
     transactions: raw.transactions,
     instruments: [...raw.instruments, ...BENCHMARKS.filter((b) => !known.has(b.id))],
-    prices: raw.prices.map(({ instrumentId, currency, points, source }) => ({ instrumentId, currency, points, source })),
-    fx: raw.fx.map(({ base, quote, points, source }) => ({ base, quote, points, source })),
+    prices: prices.map(({ instrumentId, currency, points, source }) => ({ instrumentId, currency, points, source })),
+    fx: raw.fx.filter(notDemo).map(({ base, quote, points, source }) => ({ base, quote, points, source })),
     manualPrices: groupManualPrices(raw.manual),
-    indexSeries: raw.indexSeries.map(({ id, kind, period, unit, dayCount, currency, points, source }) => ({ id, kind, period, unit, dayCount, currency, points, source })),
+    indexSeries: raw.indexSeries.filter(notDemo).map(({ id, kind, period, unit, dayCount, currency, points, source }) => ({ id, kind, period, unit, dayCount, currency, points, source })),
+    demoPricedInstruments,
     corporateActions: raw.corporateActions.map(({ id: _id, updatedAt: _u, ...a }: CorporateAction & { id?: string; updatedAt?: number }) => a),
     dismissedSuggestions: raw.dismissed,
     selectedPortfolioId:
       settings.selectedPortfolioId === 'all' || raw.portfolios.some((p) => p.id === settings.selectedPortfolioId) ? settings.selectedPortfolioId : 'all',
     reportingCurrency: settings.reportingCurrency,
     asOf,
-    benchmarks: settings.benchmarks,
+    benchmarks: orderBenchmarks(settings.benchmarks, settings.reportingCurrency),
     riskFreeRate: settings.riskFreeRate,
     riskFreeAuto: settings.riskFreeAuto,
     defaultCostMethod: settings.defaultCostMethod,

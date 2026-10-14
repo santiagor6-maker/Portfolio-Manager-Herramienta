@@ -142,6 +142,8 @@ export default function ImportPage() {
       setDone({ ...r, transactions: r.transactions + caTxs.length });
       setSetting('selectedPortfolioId', pid);
       setStep('done');
+      // W31: real prices for what was just imported, now (not after the 5-minute throttle).
+      void import('../services/marketData').then((m) => m.refreshMarketData({ force: true }));
     } finally {
       setBusy(false);
     }
@@ -448,7 +450,10 @@ export default function ImportPage() {
                 <Banner tone="error">
                   <ul className="list-disc pl-4">
                     {result.errors.slice(0, 5).map((e, i) => (
-                      <li key={i}>{e.message}</li>
+                      <li key={i}>
+                        {/* W30: a reader failure is not a password problem (that one comes as needsPassword). */}
+                        {e.code === 'PDF_READ_ERROR' ? t('impr.pdfReadError', { detail: String(e.params?.detail ?? '') }) : e.message}
+                      </li>
                     ))}
                   </ul>
                 </Banner>

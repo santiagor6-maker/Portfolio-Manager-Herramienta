@@ -8,6 +8,8 @@ import {
   exportTransactionsCsv,
   importEmail,
   importFile,
+  normalizeBrokerName,
+  sameBroker,
   inspectFile,
   type EmailImportResult,
   type ImportOptions,
@@ -190,9 +192,25 @@ export async function commitImport(
   const known = new Set(await db.instruments.toCollection().primaryKeys());
   const newInstruments: Instrument[] = await enrichInstruments(result.instruments.filter((i) => !known.has(i.id)));
   await upsertInstruments(newInstruments);
-  const rows: Transaction[] = result.transactions.map((t) => ({ ...t, portfolioId, source: t.source ?? source }));
+  // W33: the same institution under another spelling ("XP INVESTIMENTOS CCTVM S/A" vs the "XP" typed
+  // at onboarding) is the same account: reuse the portfolio's existing label so cash is not split.
+  const existingAccounts = [...new Set((await db.transactions.where('portfolioId').equals(portfolioId).toArray()).map((t) => t.account).filter((a): a is string => !!a))];
+  const rows: Transaction[] = result.transactions.map((t) => ({ ...t, portfolioId, source: t.source ?? source, account: matchAccount(t.account, existingAccounts) }));
   await bulkAddTransactions(rows);
   return { transactions: rows.length, instruments: newInstruments.length };
+}
+
+/**
+ * W33: maps an imported account label to the portfolio's existing account of the same institution
+ * (and same account number for IBKR); unknown institutions keep their label, known ones get the
+ * canonical name ("NU INVEST CORRETORA DE VALORES S.A." → "Nu Invest").
+ */
+export function matchAccount(label: string | undefined, existing: string[]): string | undefined {
+  if (!label) return label;
+  const same = existing.find((e) => e === label) ?? existing.find((e) => sameBroker(e, label));
+  if (same) return same;
+  const n = normalizeBrokerName(label);
+  return n.known && !n.accountNumber ? n.displayName : label;
 }
 
 /**

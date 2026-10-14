@@ -5,7 +5,7 @@
  */
 import { tickerIdOn, tickerRenameMap, TICKER_EVENTS, type Transaction } from '@pm/core';
 import { describe, expect, it, vi } from 'vitest';
-import { createEmailInboxHandler, importFile, importText, sinacorTicker, type ImportResult, type InboxTarget } from '../src';
+import { createEmailInboxHandler, importFile, importText, normalizeBrokerName, sameBroker, sinacorTicker, type ImportResult, type InboxTarget } from '../src';
 import { TICKER_RENAMES } from '../src/markets';
 import type { EmailImportResult } from '../src/email';
 import { byLine } from './helpers/load';
@@ -207,3 +207,22 @@ describe('I2 — e-mail inbox webhook (ready to mount)', () => {
 });
 
 it('byLine helper still available', () => expect(typeof byLine).toBe('function'));
+
+describe('W33 — normalized broker id so onboarding accounts match imported labels', () => {
+  it.each([
+    ['XP', 'xp', 'XP Investimentos'], ['XP INVESTIMENTOS CCTVM S/A', 'xp', 'XP Investimentos'], ['NU INVEST', 'nu', 'Nu Invest'],
+    ['NU INVEST CORRETORA DE VALORES S.A.', 'nu', 'Nu Invest'], ['Nubank', 'nu', 'Nu Invest'], ['Banco Inter', 'inter', 'Inter Invest'],
+    ['INTER DISTRIBUIDORA DE TITULOS E VALORES MOBILIARIOS LTDA', 'inter', 'Inter Invest'], ['BTG PACTUAL CTVM S.A.', 'btg', 'BTG Pactual'],
+    ['CLEAR CORRETORA - GRUPO XP', 'clear', 'Clear'], ['Davivienda Corredores', 'davivienda', 'Davivienda Corredores'],
+    ['Acciones & Valores', 'acciones', 'Acciones & Valores'], ['Valores Bancolombia', 'bancolombia', 'Valores Bancolombia'],
+    ['U1234567', 'ibkr', 'Interactive Brokers'], ['Charles Schwab', 'schwab', 'Charles Schwab'],
+  ])('%s → %s', (label, id, name) => expect(normalizeBrokerName(label)).toMatchObject({ brokerId: id, displayName: name, known: true }));
+  it('imported transactions carry brokerId; the result lists the accounts', async () => {
+    const r = await importFile({ data: note([PETR], [...FEES, ['Líquido para 08/03/2024', '3.701,18', 'D']]) }, O);
+    expect(txs(r)[0]).toMatchObject({ account: 'NU INVEST CORRETORA DE VALORES S.A.', brokerId: 'nu' });
+    expect(r.accounts).toEqual([{ account: 'NU INVEST CORRETORA DE VALORES S.A.', brokerId: 'nu', displayName: 'Nu Invest', known: true }]);
+    expect(sameBroker('Nu Invest', txs(r)[0]!.account)).toBe(true);
+    expect(sameBroker('XP', txs(r)[0]!.account)).toBe(false);
+    expect(normalizeBrokerName('U1234567').accountNumber).toBe('U1234567');
+  });
+});

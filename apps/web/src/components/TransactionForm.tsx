@@ -17,7 +17,7 @@ import { useFmt, useApp } from '../store/app';
 import { useInstrumentMap, usePortfolios } from '../hooks/useData';
 import { createPortfolio, saveTransaction, upsertInstruments } from '../db/repo';
 import { db, type StoredTransaction } from '../db/schema';
-import { fetchHistory } from '../services/marketData';
+import { fetchHistory, refreshMarketData } from '../services/marketData';
 
 const NEW_PORTFOLIO = '__new';
 const QUICK: TransactionType[] = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FX_CONVERSION'];
@@ -245,6 +245,11 @@ export function TransactionForm({
         targetPortfolio = p.id;
         setPortfolioId(p.id);
         setSelected('selectedPortfolioId', p.id);
+      }
+      // W31: an asset without real prices yet (new, or only priced by the sample) is fetched now.
+      if (inst && inst.pricing !== 'manual' && !inst.accrual) {
+        const ps = await db.priceSeries.get(inst.id);
+        if (!ps || ps.isDemo) void refreshMarketData({ force: true });
       }
       await saveTransaction({
         id: editing?.id,

@@ -15,7 +15,7 @@ import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMoney, formatMonth, formatPct, monthName, MASK } from '../lib/format';
 import { addMonths, monthEnd, todayIso } from '../lib/ids';
 import { indexName, useSliceLabel } from '../lib/labels';
-import { benchmarkName } from '../lib/benchmarks';
+import { benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { exchangeLabel } from '../lib/exchanges';
 import { downloadText } from '../lib/export';
 import { customSummary } from '../services/engineDirect';
@@ -59,7 +59,7 @@ export const REPORT_CSS = `
 .rp .bar .f{display:block;height:100%;border-radius:3px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .rp .note{font-size:10px;color:#5f687b}
 .rp .pb{break-before:page}
-@media print{.rp{padding:0;max-width:none}}
+@media print{.rp{padding:0;max-width:none}.rp tfoot{display:table-row-group}.rp thead{display:table-header-group}}
 `;
 
 const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#8a8f99'];
@@ -266,7 +266,7 @@ function ReportBody({
   const lc = useSliceLabel('assetClass');
   const lco = useSliceLabel('country');
   const lcu = useSliceLabel('currency');
-  const bench = useApp((st) => st.settings.benchmarks[0]);
+  const bench = useApp((st) => primaryBenchmark(st.settings.benchmarks, st.settings.reportingCurrency));
   const m = (v: number | undefined, signed = false) => (f.privacy ? MASK : formatMoney(v, f.currency, f.locale, { signed }));
   const p = (v: number | undefined, signed = true, d = 2) => formatPct(v, f.locale, { signed, decimals: d });
   const cls = (v: number | undefined) => (v === undefined ? '' : v > 0 ? 'pos' : v < 0 ? 'neg' : '');
@@ -290,8 +290,17 @@ function ReportBody({
     [t('report.k.gain'), m(s?.gainBase ?? tot((r) => r.gainBase), true), undefined, cls(s?.gainBase)],
     ['TWR', p(twr), years !== undefined && years >= 1 ? `${t('perf.annualized')}: ${p(annualize(twr, years))}` : t('perf.notAnnualized'), cls(twr)],
     [t('perf.mwrShort'), years !== undefined && years < 1 ? p(s?.mwrPeriod) : p(s?.mwr), years !== undefined && years < 1 ? t('perf.inPeriod') : t('perf.perYear'), cls(s?.mwr)],
-    [t('report.k.real', { index: indexName(a?.inflationIndex) }), p(s?.realTwr), s?.inflation !== undefined ? `${indexName(a?.inflationIndex)} ${p(s.inflation)}` : undefined, cls(s?.realTwr)],
-    [idx ? `% ${indexName(idx)}` : t('report.k.income'), idx ? formatPct(s?.percentOfIndex?.[idx], f.locale, { decimals: 0 }) : m(s?.incomeBase ?? tot((r) => r.incomeBase)), idx ? `${indexName(idx)} ${p(s?.indexReturns?.[idx])}` : undefined],
+    // W32: no inflation index for the currency → no "Real (vs —)" card; say which series is missing.
+    a?.inflationIndex
+      ? [t('report.k.real', { index: indexName(a.inflationIndex) }), p(s?.realTwr), s?.inflation !== undefined ? `${indexName(a.inflationIndex)} ${p(s.inflation)}` : undefined, cls(s?.realTwr)]
+      : [t('report.k.income'), m(s?.incomeBase ?? tot((r) => r.incomeBase)), a?.missingInflation ? t('report.notAvailable', { index: indexName(a.missingInflation) }) : undefined],
+    idx
+      ? [`% ${indexName(idx)}`, formatPct(s?.percentOfIndex?.[idx], f.locale, { decimals: 0 }), `${indexName(idx)} ${p(s?.indexReturns?.[idx])}`]
+      : a?.missingRateIndex
+        ? [`% ${indexName(a.missingRateIndex)}`, '—', t('report.notAvailable', { index: indexName(a.missingRateIndex) })]
+        : a?.inflationIndex
+          ? [t('report.k.income'), m(s?.incomeBase ?? tot((r) => r.incomeBase))]
+          : [t('report.k.flows'), m(s?.netFlowsBase ?? tot((r) => r.netFlowsBase), true)],
   ];
 
   const bars = (slices: { key: string; label: string; valueBase: number; weight: number }[], lab: (x: never) => string) =>
@@ -321,6 +330,11 @@ function ReportBody({
             {portfolioName} · {periodLabel}
           </div>
           {isDemo && <span className="demo">{t('demo.badge')}</span>}
+          {(a?.demoPriced?.length ?? 0) > 0 && (
+            <div className="demo" style={{ display: 'block', marginTop: 6 }} data-testid="report-demo-priced">
+              {t('dashboard.demoPriced', { symbols: a!.demoPriced.join(', ') })}
+            </div>
+          )}
         </div>
         <div className="meta">
           <div>

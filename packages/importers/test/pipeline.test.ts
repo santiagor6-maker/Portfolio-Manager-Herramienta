@@ -205,7 +205,8 @@ describe('canonical CSV', () => {
     { id: 'g', portfolioId: 'p1', date: '2024-05-03', type: 'TAX', currency: 'COP', amount: 16000, note: 'GMF' },
   ];
   const strip = (t: Transaction) => {
-    const { id: _id, importHash: _h, source: _s, ...rest } = t;
+    // brokerId is an import annotation (W33), not part of the exported CSV.
+    const { id: _id, importHash: _h, source: _s, brokerId: _b, ...rest } = t as Transaction & { brokerId?: string };
     return rest;
   };
   it.each<[string, CsvExportOptions]>([

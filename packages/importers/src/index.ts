@@ -53,7 +53,7 @@ export { createIbkrFlexSyncHandler, createTokenVault, MemoryCredentialStore, run
 export type { CredentialStore, TokenVault, IbkrFlexSyncHandlerOptions, IbkrFlexSyncJob } from './sync/server';
 export { flexXmlToTables } from './sync/ibkr-flex';
 export type { FlexXmlTable } from './sync/ibkr-flex';
-export { accountKey, accountsCompatible, accountNumber } from './pipeline';
+export { accountKey, accountsCompatible, accountNumber } from './brokers';
 export { tesouroId } from './markets';
 export { importTransactionBatch, isTransactionBatch } from './sync/inbox';
 export type { TransactionBatch } from './sync/inbox';
@@ -62,3 +62,5 @@ export { importEmail, parseEmail, decodeMimeWords } from './email';
 export type { EmailImportResult, EmailImportOptions, EmailMessage, MimePart, EmailAttachmentResult } from './email';
 export { createEmailInboxHandler } from './sync/email-inbox';
 export type { EmailInboxHandlerOptions, InboxTarget } from './sync/email-inbox';
+export { normalizeBrokerName, sameBroker, BROKERS } from './brokers';
+export type { BrokerName } from './brokers';

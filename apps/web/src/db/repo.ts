@@ -296,7 +296,11 @@ export async function seedData(data: SeedData, isDemo: boolean): Promise<void> {
 
 /** Removes the sample portfolio(s) and their transactions; keeps user data. */
 export async function removeDemoData(): Promise<void> {
-  await db.transaction('rw', [db.portfolios, db.transactions, db.instruments, db.manualPrices], async () => {
+  await db.transaction('rw', [db.portfolios, db.transactions, db.instruments, db.manualPrices, db.priceSeries, db.fxSeries, db.indexSeries], async () => {
+    // W31: the sample's synthetic prices, FX and indices go away with it (never value real data).
+    await db.priceSeries.filter((s) => !!s.isDemo).delete();
+    await db.fxSeries.filter((s) => !!s.isDemo).delete();
+    await db.indexSeries.filter((s) => !!s.isDemo).delete();
     const demos = await db.portfolios.filter((p) => !!p.isDemo).toArray();
     for (const p of demos) {
       await db.transactions.where('portfolioId').equals(p.id).delete();

@@ -788,7 +788,7 @@ están en `test/review-r4.test.ts`.
 
 **Línea base:**
 - Antes: 240 pruebas.
-- Ahora: **255 pruebas**, todas pasan.
+- Ahora: **270 pruebas**, todas pasan.
 - `npx tsc -p packages/importers --noEmit` y `npx tsc -p packages/core --noEmit` terminan sin errores, y los archivos de prueba pasan el typecheck.
 - Las pruebas de `packages/core` y `apps/server` siguen pasando (294).
 
@@ -899,3 +899,22 @@ Las pruebas de I35 a I38 reproducen el ruido de documentos reales:
 - retención en la línea siguiente.
 
 Sigue faltando al menos un documento real anonimizado por corredora.
+
+### W33 (revisión web) — Identificador normalizado de corredor
+
+El onboarding guarda la cuenta como "XP", pero los importadores escriben "XP INVESTIMENTOS CCTVM S/A".
+Esa diferencia producía avisos falsos de aportes implícitos. Ahora:
+
+- `normalizeBrokerName(etiqueta)` (en `src/brokers.ts`) devuelve
+  `{ brokerId, displayName, accountNumber?, known }`. Por ejemplo:
+  - "XP INVESTIMENTOS CCTVM S/A" y "XP" → `xp` / "XP Investimentos";
+  - "NU INVEST", "Nubank" y "Easynvest" → `nu`;
+  - "Banco Inter" e "INTER DTVM" → `inter`;
+  - "U1234567" → `ibkr`, con el número de cuenta.
+
+  También cubre los corredores de Colombia (Davivienda Corredores, Acciones & Valores, Valores
+  Bancolombia, Trii…) y de EE. UU. y Europa.
+- `sameBroker(a, b)` compara dos etiquetas. Dos números de cuenta IBKR distintos nunca coinciden.
+- Cada transacción importada lleva `brokerId` junto a `account` (tipo `ImportedTransaction`).
+  `result.accounts` lista las etiquetas usadas con su `brokerId` y nombre visible.
+- La deduplicación y la conciliación usan la misma clave (`accountKey`).

@@ -1,5 +1,5 @@
 import { db } from '../db/schema';
-import { createPortfolio, getMeta, loadSettings, removeDemoData, seedData, setMeta, type AppSettings } from '../db/repo';
+import { createPortfolio, getMeta, loadSettings, removeDemoData, saveSetting, seedData, setMeta, type AppSettings } from '../db/repo';
 import { useApp } from '../store/app';
 import { loadDemoData } from './demo';
 import i18n from '../i18n';
@@ -10,6 +10,14 @@ import i18n from '../i18n';
  */
 export async function bootstrap(): Promise<AppSettings> {
   const settings = await loadSettings();
+  // W35: first run follows the browser language (pt-BR, en-US…) until the user picks one.
+  if (!(await db.settings.get('language'))) {
+    const lang = browserLanguage();
+    if (lang !== settings.language) {
+      settings.language = lang;
+      await saveSetting('language', lang);
+    }
+  }
   const seeded = await getMeta<boolean>('demoSeeded');
   if (!seeded && (await db.portfolios.count()) === 0) {
     await seedDemo();
@@ -56,4 +64,13 @@ export async function ensureWritablePortfolio(): Promise<string> {
     costMethod: settings.defaultCostMethod,
   });
   return p.id;
+}
+
+/** First supported language among the browser's preferences (es / pt / en), Spanish otherwise. */
+export function browserLanguage(langs: readonly string[] = typeof navigator !== 'undefined' ? (navigator.languages ?? [navigator.language]) : []): AppSettings['language'] {
+  for (const l of langs) {
+    const two = l.slice(0, 2).toLowerCase();
+    if (two === 'es' || two === 'pt' || two === 'en') return two;
+  }
+  return 'es';
 }

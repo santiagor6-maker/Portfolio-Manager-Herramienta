@@ -16,7 +16,7 @@ import { useInstrumentMap } from '../hooks/useData';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
 import { previousBusinessDay } from '../services/analysis';
-import { benchmarkName } from '../lib/benchmarks';
+import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
 
 const DIMS: AllocationDimension[] = ['country', 'currency', 'assetClass', 'sector'];
 
@@ -48,7 +48,7 @@ export default function DashboardPage() {
   if (!loading && a && !a.hasTransactions) return <EmptyDashboard />;
 
   const last12 = (a?.monthly ?? []).slice(-12);
-  const bench = benchmarks[0];
+  const bench = primaryBenchmark(benchmarks, f.currency);
 
   return (
     <div>
@@ -107,6 +107,11 @@ export default function DashboardPage() {
               {si?.realTwr !== undefined && (
                 <span className="text-muted text-xs" title={t('dashboard.realHint', { index: indexName(a?.inflationIndex) })}>
                   {t('dashboard.real')} <Pct value={si.realTwr} signed />
+                </span>
+              )}
+              {!rateIdx && a?.missingRateIndex && (
+                <span className="text-muted text-xs" data-testid="rate-missing">
+                  {t('report.notAvailable', { index: indexName(a.missingRateIndex) })}
                 </span>
               )}
               {rateIdx && si?.percentOfIndex?.[rateIdx] !== undefined && (
@@ -373,7 +378,8 @@ function WarningsCard() {
   const pendingIds = new Set(pending.map((p) => p.instrumentId));
   const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
   const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error');
-  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0);
+  const demoPriced = a?.demoPriced ?? [];
+  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0);
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -391,6 +397,12 @@ function WarningsCard() {
               </span>
             </li>
           ))}
+          {demoPriced.length > 0 && (
+            <li className="flex items-start gap-2" data-testid="demo-priced">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">{t('dashboard.demoPriced', { symbols: demoPriced.map((id) => label(id).symbol).join(', ') })}</span>
+            </li>
+          )}
           {diagErrors.length > 0 && (
             <li className="flex items-start gap-2">
               <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />

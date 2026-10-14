@@ -146,7 +146,14 @@ src/
   contraseña, enlaces dañados y limpieza de HTML.
 - `e2e/taxes.spec.ts` — paquete de Colombia (Formulario 210, XLSX) y de Brasil (Bens e Direitos, exportes).
 
-Totales: 66 pruebas unitarias (11 archivos) y 31 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/r3.test.ts` — ronda 3: aislamiento de los datos del ejemplo (W31), índices y tasas por
+  moneda (W32), cuentas del mismo corredor (W33), idioma del navegador (W35), mensajes de impuestos (W36).
+- `e2e/pdf-import.spec.ts` — importación de PDF (SINACOR, Trii) y de `.eml` en la app compilada
+  (`vite preview`), con el worker de pdf.js de producción (W30).
+- `e2e/regression-r3.spec.ts` — W31 (al salir del ejemplo se borran sus series) y W35 (navegador pt-BR).
+
+Totales: 73 pruebas unitarias (12 archivos) y 36 pruebas e2e (+1 en vivo que se omite sin servidor).
+Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
 
@@ -263,4 +270,22 @@ entra en los respaldos) y errores de IBKR.
     formularios 210 y 160.
   - En los dos países: todas las secciones del documento del paquete y exportación XLSX, CSV por informe e
     impresión a PDF.
+
+## Respuesta a la revisión ronda 3
+
+Revisión: `reviews/web-r3.md`.
+
+| Brecha | Arreglo |
+|---|---|
+| W30 (alta) | El worker de pdf.js (`pdfjs-dist/legacy/build/pdf.worker.min.mjs?url`) se emite como recurso del build y se registra antes de leer un PDF o el PDF de un `.eml`. Un error de lectura ya no sugiere una contraseña (eso llega aparte, como `needsPassword`). E2E sobre `vite preview` con `nota-sinacor.pdf`, `extracto-trii.pdf` y un `.eml` con la nota adjunta. |
+| W31 (alta) | Al salir del ejemplo se borran sus series de precios, tasas e índices. Si un portafolio real se ve sin el ejemplo, la app ignora toda serie de ejemplo. En la vista «Todos» con el ejemplo conservado, los activos reales que solo tienen precio de ejemplo se marcan en Avisos y en el Informe. Después de importar, o al registrar un activo sin precios reales, la actualización se dispara de inmediato (sin esperar los 5 minutos). |
+| W32 | Índice y tasa de referencia según la moneda: BRL usa Ibovespa, CDI/Selic e IPCA; COP usa COLCAP, IBR e IPC. Nunca se cae al IBR. Si falta la serie, se dice «CDI no disponible», y el Informe ya no muestra «Real (vs —)». |
+| W33 | Al importar, la cuenta de un corredor ya existente («XP INVESTIMENTOS CCTVM S/A» frente a «XP») se une a la del portafolio (`sameBroker`); los corredores conocidos usan su nombre canónico (`normalizeBrokerName`). Si una compra quedó sin aporte y el aporte está en otra cuenta del mismo portafolio, Diagnóstico ofrece «Usar la cuenta «XP»» en vez de crear un aporte. |
+| W34 | «Registrar pago» abre un diálogo con fecha y monto (prellenados con el principal más la multa y la Selic). «DARF a pagar» solo suma las DARF pendientes y vencidas. |
+| W35 | En el primer uso, el idioma sigue al navegador (pt-BR → portugués). |
+| W36 | Los avisos de impuestos ya no muestran nombres internos de opciones (`config.meta`, `creditEstimatedIrrf`, `foreignCashCountry`…). |
+| W37 | Al imprimir, la fila Total sale una sola vez, al final de la tabla. |
+| W38 | Un 403 de IBKR explica que el servidor necesita `API_TOKEN` (o `ALLOW_LOCAL_ADMIN=1` en local) y `SYNC_SECRET`. La tarjeta trae los pasos y el comando para configurar el servidor. |
+| W39 | «Crear aporte en esa fecha» registra un aporte en la moneda base del portafolio más el cambio a la moneda de la compra, con la tasa del día (por ejemplo, COP → USD con la TRM). Si no hay tasa, el aporte queda en la moneda de la compra. |
+| W20, W10 | Hechos después de la revisión: ver la ronda 2 (ECharts diferido y enlace de solo lectura). |
 

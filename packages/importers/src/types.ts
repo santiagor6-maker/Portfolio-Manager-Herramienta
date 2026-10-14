@@ -226,8 +226,22 @@ export interface ImportResult {
    * lines. Their rows are `pending` and get no costs until fixed or accepted (`acceptNotes`).
    */
   noteChecks?: NoteCheck[];
+  /** Account labels used by the imported transactions, with `brokerId` and display name (W33). */
+  accounts?: ImportedAccount[];
   /** Suggested updates to existing instruments (e.g. a guessed US exchange now known). */
   instrumentUpdates?: { id: string; changes: Partial<Instrument>; reason: string }[];
+}
+
+/** Imported transactions carry `brokerId` (normalized institution of `account`, W33) besides the core fields. */
+export type ImportedTransaction = Transaction & { brokerId?: string };
+
+/** Account labels found in the import with their normalized broker (W33). */
+export interface ImportedAccount {
+  account: string;
+  brokerId: string;
+  displayName: string;
+  accountNumber?: string;
+  known: boolean;
 }
 
 export interface NoteCheck {

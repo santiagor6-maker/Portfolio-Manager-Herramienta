@@ -8,7 +8,7 @@ import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } fr
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
-import { BENCHMARKS, benchmarkName } from '../lib/benchmarks';
+import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { PriceWarnings } from '../components/PriceWarnings';
 import { downloadText, downloadXlsx, toCsv } from '../lib/export';
 import { indexName } from '../lib/labels';
@@ -115,7 +115,7 @@ export default function MonthlyPage() {
   const settings = useApp((s) => s.settings);
   const setSetting = useApp((s) => s.setSetting);
   const rateIndices = a?.rateIndices ?? [];
-  const [bench, setBench] = useState<string>(settings.benchmarks[0] ?? 'XBOG:ICOLCAP');
+  const [bench, setBench] = useState<string>(primaryBenchmark(settings.benchmarks, settings.reportingCurrency) ?? 'XBOG:ICOLCAP');
   const [year, setYear] = useState<string>('all');
   const [focus, setFocus] = useState<string>();
 

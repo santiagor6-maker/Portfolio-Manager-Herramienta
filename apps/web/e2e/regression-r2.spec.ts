@@ -89,18 +89,31 @@ test('W22: the initial deposit keeps its date; buys before it are flagged as imp
 });
 
 test('W20: the Resumen paints its figures before the charting library loads', async ({ page }) => {
-  const js: { url: string; size: number }[] = [];
-  page.on('response', async (r) => {
-    if (r.url().endsWith('.js')) js.push({ url: r.url(), size: (await r.body().catch(() => Buffer.alloc(0))).length });
+  // Record, inside the page, the moment the KPI figures are painted (no skeleton left).
+  await page.addInitScript(() => {
+    const w = window as unknown as { __kpiAt?: number };
+    const tick = () => {
+      const k = document.querySelector('[data-testid=kpis]');
+      if (k && !k.querySelector('.skeleton') && k.textContent && /\d/.test(k.textContent)) w.__kpiAt = performance.now();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   });
   await page.goto('/');
   await expect(page.getByTestId('kpis').locator('.skeleton')).toHaveCount(0, { timeout: 30_000 });
-  const before = js.reduce((s, x) => s + x.size, 0);
-  // ECharts (~570 kB) is requested only once the page is idle (it used to be ~1.25 MB before the KPIs).
-  expect(js.some((x) => /EChartsView/.test(x.url))).toBe(false);
-  expect(before).toBeLessThan(900 * 1024);
-  await expect.poll(() => js.some((x) => /EChartsView/.test(x.url)), { timeout: 10_000 }).toBe(true);
-  await expect(page.locator('canvas').first()).toBeVisible();
+  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 10_000 });
+  const r = await page.evaluate(() => {
+    const kpiAt = (window as unknown as { __kpiAt?: number }).__kpiAt ?? Infinity;
+    const res = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    const js = res.filter((e) => e.name.endsWith('.js'));
+    const charts = js.find((e) => /EChartsView/.test(e.name));
+    const before = js.filter((e) => e.startTime <= kpiAt).reduce((s, e) => s + (e.decodedBodySize || 0), 0);
+    return { kpiAt, chartsAt: charts?.startTime ?? -1, before };
+  });
+  // ECharts (~570 kB) is requested only after the figures are painted (it used to be ~1.25 MB of JS
+  // before the KPIs).
+  expect(r.chartsAt).toBeGreaterThan(r.kpiAt);
+  expect(r.before).toBeLessThan(900 * 1024);
 });
 
 test('W10: read-only share link (data in the URL fragment), optionally encrypted', async ({ page, browser }) => {

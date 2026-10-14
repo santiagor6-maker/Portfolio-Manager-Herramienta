@@ -14,6 +14,7 @@ import { downloadBlob, downloadText } from '../lib/export';
 import { db } from '../db/schema';
 import { getMeta, setMeta } from '../db/repo';
 import type { TransitResolution } from '../services/tax';
+import { cleanTaxMessage } from '../lib/taxText';
 
 type MoneyFn = (v: number | undefined, ccy: string) => string;
 
@@ -47,7 +48,7 @@ function cell(v: unknown, locale: string): string {
   if (v === null || v === undefined || v === '') return '';
   if (typeof v === 'number') return new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(v) < 10 && !Number.isInteger(v) ? 6 : 2 }).format(v);
   if (typeof v === 'boolean') return v ? '✓' : '—';
-  return String(v);
+  return cleanTaxMessage(String(v));
 }
 
 /** Every section of the package's TaxDocument: key figures and tables (collapsible). */
@@ -221,7 +222,7 @@ function TransitResolutionRow({ issue, onChanged }: { issue: TaxIssue; onChanged
     <div className="rounded-lg border border-neg/30 bg-neg/5 p-3 text-[13px] flex flex-col gap-2">
       <div className="flex gap-2">
         <AlertTriangle size={15} className="text-neg shrink-0 mt-0.5" />
-        <span>{issue.message}</span>
+        <span>{cleanTaxMessage(issue.message)}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="btn btn-sm" disabled={busy} onClick={() => void resolve('alienado')} data-testid="transit-alienado">

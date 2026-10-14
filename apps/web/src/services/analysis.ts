@@ -52,6 +52,8 @@ export interface Dataset {
   benchmarks: string[];
   riskFreeRate: number;
   riskFreeAuto?: boolean;
+  /** W31: real holdings valued only with the sample's synthetic series (mixed "Todos" view). */
+  demoPricedInstruments?: string[];
   defaultCostMethod: Portfolio['costMethod'];
 }
 
@@ -131,6 +133,9 @@ export interface Analysis {
   inflationIndex?: IndexId;
   /** Rate indices compared against (CDI, IBR...), when loaded. */
   rateIndices: IndexId[];
+  /** W32: the currency's reference rate / inflation index when its series is not loaded (shown as "no disponible"). */
+  missingRateIndex?: IndexId;
+  missingInflation?: IndexId;
   /** Last month covered when a "% of index" was derived from partial index data. */
   indexCoverage: Record<string, string>;
   upcomingDividends: UpcomingDividend[];
@@ -145,6 +150,8 @@ export interface Analysis {
    * They inflate contributions and can leave phantom cash when a later deposit is dated today.
    */
   implicitFunding: ImplicitFunding[];
+  /** W31: real holdings valued with sample (synthetic) prices. */
+  demoPriced: string[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
   /** Risk-free rate used by Sharpe/Sortino and where it came from (W29). */
@@ -162,6 +169,8 @@ const ALLOCATION_DIMS: AllocationDimension[] = ['country', 'currency', 'assetCla
 /** Default inflation index per reporting currency (matches the engine's own defaults). */
 export const INFLATION_BY_CURRENCY: Record<string, IndexId> = { COP: 'IPC_CO', BRL: 'IPCA', USD: 'CPI_US', EUR: 'HICP_EA' };
 export const RATE_INDICES: IndexId[] = ['CDI', 'IBR', 'SELIC'];
+/** W32: reference rates of each reporting currency only: never compare a BRL portfolio with the IBR. */
+export const RATE_INDICES_BY_CURRENCY: Record<string, IndexId[]> = { COP: ['IBR'], BRL: ['CDI', 'SELIC'] };
 
 /** Typical dividend withholding by country of the payer (non-resident, no treaty relief). */
 const DEFAULT_WITHHOLDING: Record<string, number> = { US: 0.3, ES: 0.19, NL: 0.15, DE: 0.26375, FR: 0.25, CO: 0.1, BR: 0, GB: 0, IE: 0, CH: 0.35, MX: 0.1, CL: 0.35, PE: 0.05 };
@@ -182,7 +191,7 @@ function engineOptions(ds: Dataset): EngineInput['options'] {
   return {
     asOf: ds.asOf,
     inflationIndex: inflation && loaded.has(inflation) ? inflation : null,
-    indices: RATE_INDICES.filter((i) => loaded.has(i)),
+    indices: (RATE_INDICES_BY_CURRENCY[ds.reportingCurrency] ?? []).filter((i) => loaded.has(i)),
   };
 }
 
@@ -258,6 +267,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     pendingCloses: [],
     diagnostics: [],
     implicitFunding: [],
+    demoPriced: ds.demoPricedInstruments ?? [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
@@ -271,6 +281,10 @@ export function computeAnalysis(ds: Dataset): Analysis {
   const opts = input.options!;
   out.inflationIndex = opts.inflationIndex ?? undefined;
   out.rateIndices = opts.indices ?? [];
+  const homeRate = RATE_INDICES_BY_CURRENCY[ds.reportingCurrency]?.[0];
+  if (homeRate && !out.rateIndices.includes(homeRate)) out.missingRateIndex = homeRate;
+  const homeInfl = INFLATION_BY_CURRENCY[ds.reportingCurrency];
+  if (homeInfl && !opts.inflationIndex) out.missingInflation = homeInfl;
 
   const txs = input.transactions;
   out.hasTransactions = txs.length > 0;

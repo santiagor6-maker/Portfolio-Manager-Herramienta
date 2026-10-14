@@ -9,7 +9,7 @@ import { db } from '../db/schema';
 import { getMeta, setMeta } from '../db/repo';
 import { useApp } from '../store/app';
 
-export type SyncErrorKind = 'notConfigured' | 'unauthorized' | 'noCredential' | 'ibkr' | 'offline' | 'other';
+export type SyncErrorKind = 'notConfigured' | 'unauthorized' | 'forbidden' | 'noCredential' | 'ibkr' | 'offline' | 'other';
 
 export class SyncError extends Error {
   constructor(
@@ -69,7 +69,9 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const code = err?.code;
   const message = err?.message ?? `HTTP ${res.status}`;
   if (code === 'NOT_CONFIGURED' || (res.status === 503 && !code?.startsWith('FLEX_'))) throw new SyncError('notConfigured', message, res.status, code);
-  if (res.status === 401 || res.status === 403) throw new SyncError('unauthorized', message, res.status, code);
+  if (res.status === 401) throw new SyncError('unauthorized', message, res.status, code);
+  // W38: 403 = the server allows sync only with API_TOKEN (or ALLOW_LOCAL_ADMIN=1 on loopback).
+  if (res.status === 403) throw new SyncError(code === 'FORBIDDEN_ORIGIN' ? 'other' : 'forbidden', message, res.status, code);
   if (code === 'NO_CREDENTIAL') throw new SyncError('noCredential', message, res.status, code);
   if (code?.startsWith('FLEX_') || res.status === 502) throw new SyncError('ibkr', message, res.status, code);
   throw new SyncError('other', message, res.status, code);

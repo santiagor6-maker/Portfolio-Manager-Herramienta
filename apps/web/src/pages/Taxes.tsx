@@ -5,7 +5,9 @@ import { saveTransaction } from '../db/repo';
 import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
-import { Banner, Card, Kpi, PageHeader, Segmented, Skeleton } from '../components/ui';
+import { Banner, Card, Field, Kpi, Modal, PageHeader, Segmented, Skeleton } from '../components/ui';
+import { parseDecimal, toInputNumber } from '../lib/parse';
+import { cleanTaxMessage } from '../lib/taxText';
 import { useApp, useFmt } from '../store/app';
 import { usePortfolios } from '../hooks/useData';
 import { formatDate, formatMoney, formatMonth, formatPct, formatQuantity } from '../lib/format';
@@ -132,7 +134,7 @@ function Issues({ issues }: { issues: { level: string; message: string }[] }) {
         {issues.slice(0, 30).map((i, k) => (
           <li key={k} className="flex gap-2">
             {i.level === 'info' ? <Info size={14} className="text-info mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" />}
-            <span>{i.message}</span>
+            <span>{cleanTaxMessage(i.message)}</span>
           </li>
         ))}
       </ul>
@@ -244,14 +246,22 @@ function ColombiaView({ r, money }: { r: NonNullable<TaxReports['colombia']>; mo
 }
 
 function BrazilView({ r, money, portfolioId }: { r: TaxReports; money: MoneyFn; portfolioId: string }) {
+  const [paying, setPaying] = useState<Darf>();
   const { t } = useTranslation();
   const f = useFmt();
   const a = r.brazil!;
   const p = r.proventos;
+  const unpaid = a.darfs.filter((d) => d.status === 'pendente' || d.status === 'vencida');
   return (
     <>
+      {paying && <DarfPaymentDialog darf={paying} portfolioId={portfolioId} onClose={() => setPaying(undefined)} />}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <Kpi label={t('tax.br.darfTotal')} value={money(a.totals.darfTotal, 'BRL')} sub={<span className="text-xs text-muted">{t('tax.br.darfs', { count: a.darfs.length })}</span>} />
+        {/* W34: "DARF a pagar" counts only DARFs not paid yet (overdue ones with their charges). */}
+        <Kpi
+          label={t('tax.br.darfTotal')}
+          value={money(unpaid.reduce((x, d) => x + (d.late?.total ?? d.amount), 0), 'BRL')}
+          sub={<span className="text-xs text-muted" data-testid="darf-kpi-sub">{t('tax.br.darfs', { count: unpaid.length })}</span>}
+        />
         <Kpi label={t('tax.br.exempt')} value={money(a.totals.exemptGain, 'BRL')} sub={<span className="text-xs text-muted">{t('tax.br.exemptSub')}</span>} />
         <Kpi label={t('tax.br.losses')} value={money(a.lossesAtEnd.comum + a.lossesAtEnd.dayTrade + a.lossesAtEnd.fii, 'BRL')} sub={<span className="text-xs text-muted">{t('tax.br.lossesSub')}</span>} />
         <Kpi label={t('tax.br.proventos')} value={money(p ? p.totals.dividendos + p.totals.jcpGross + p.totals.rendimentosFii : undefined, 'BRL')} sub={<span className="text-xs text-muted">JCP IRRF: {money(p?.totals.jcpIrrf, 'BRL')}</span>} />
@@ -288,19 +298,7 @@ function BrazilView({ r, money, portfolioId }: { r: TaxReports; money: MoneyFn; 
                       <DarfStatusCell
                         darf={m.darf}
                         money={money}
-                        onPay={
-                          portfolioId !== 'all' && (m.darf.status === 'pendente' || m.darf.status === 'vencida')
-                            ? () =>
-                                void saveTransaction({
-                                  portfolioId,
-                                  date: new Date().toISOString().slice(0, 10),
-                                  type: 'TAX',
-                                  currency: 'BRL',
-                                  amount: m.darf!.late?.total ?? m.darf!.amount,
-                                  note: `DARF ${m.darf!.code} ${m.darf!.month}`,
-                                })
-                            : undefined
-                        }
+                        onPay={m.darf.status === 'pendente' || m.darf.status === 'vencida' ? () => setPaying(m.darf!) : undefined}
                       />
                     )}
                   </td>
@@ -353,5 +351,63 @@ function DarfStatusCell({ darf, money, onPay }: { darf: Darf; money: MoneyFn; on
         </button>
       )}
     </div>
+  );
+}
+
+/** W34: the DARF payment is recorded with the date and amount actually paid (prefilled). */
+function DarfPaymentDialog({ darf, portfolioId, onClose }: { darf: Darf; portfolioId: string; onClose: () => void }) {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const portfolios = usePortfolios();
+  const real = portfolios.filter((p) => !p.isDemo);
+  const [pid, setPid] = useState(portfolioId !== 'all' ? portfolioId : (real[0]?.id ?? ''));
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [amount, setAmount] = useState(toInputNumber(darf.late?.total ?? darf.amount, f.locale));
+  const value = parseDecimal(amount, f.locale);
+  const save = async () => {
+    if (!pid || value === undefined || value <= 0) return;
+    await saveTransaction({ portfolioId: pid, date, type: 'TAX', currency: 'BRL', amount: value, note: `DARF ${darf.code} ${darf.month}` });
+    onClose();
+  };
+  return (
+    <Modal open onClose={onClose} title={t('tax.br.payTitle', { code: darf.code, month: formatMonth(darf.month, f.locale) })}>
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+        data-testid="darf-pay-dialog"
+      >
+        <p className="text-[13px] text-ink-2">{t('tax.br.payExplain', { due: formatDate(darf.dueDate, f.locale) })}</p>
+        {portfolioId === 'all' && (
+          <Field label={t('tx.portfolio')} htmlFor="darf-pf">
+            <select id="darf-pf" className="select" value={pid} onChange={(e) => setPid(e.target.value)}>
+              {real.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={t('tax.br.payDate')} htmlFor="darf-date">
+            <input id="darf-date" className="input num" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </Field>
+          <Field label={t('tax.br.payAmount')} htmlFor="darf-amount">
+            <input id="darf-amount" className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn" onClick={onClose}>
+            {t('common.cancel')}
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!pid || value === undefined || value <= 0} data-testid="darf-pay-save">
+            {t('tax.br.recordPayment')}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -8,6 +8,8 @@ import { businessDaysBetween, calendarFor, dayNumber, type CalendarId } from './
 import { makeIssue } from './i18n';
 import { InstrumentResolver } from './instruments';
 import { proposeCorporateActions } from './corporate';
+import { accountKey, accountNumber, accountsCompatible, normalizeBrokerName } from './brokers';
+export { accountKey, accountNumber, accountsCompatible } from './brokers';
 import { importTransactionBatch, isTransactionBatch } from './sync/inbox';
 import { getBrokerProfile } from './profiles';
 import { suggestMapping } from './mapping';
@@ -20,6 +22,7 @@ import { genericPreset, parseWithMapping } from './presets/generic';
 import { getPreset, PRESETS } from './presets/registry';
 import { readTables, type ReadResult } from './read';
 import type {
+  ImportedTransaction,
   DetectionInfo,
   DraftTransaction,
   ImportInput,
@@ -418,49 +421,6 @@ interface DupEntry {
   used?: boolean;
 }
 
-const ACCOUNT_NOISE = /\b(cctvm|ctvm|dtvm|s a|sa|s a s|sas|ltda|corretora|corredores|comisionista|de|do|da|del|y|e|valores|investimentos|investimento|invest|banco|bank|llc|inc|plc|grupo|the)\b/g;
-
-/** Same institution under different spellings (after noise removal, first word). */
-const INSTITUTION_ALIASES: Record<string, string> = {
-  interactive: 'ibkr', ib: 'ibkr', ibkr: 'ibkr',
-  nubank: 'nu', nuinvest: 'nu', easynvest: 'nu',
-  charles: 'schwab', schwab: 'schwab',
-  t212: 'trading212', trading: 'trading212', trading212: 'trading212',
-  modalmais: 'modal', btgpactual: 'btg', itau: 'itau', itaú: 'itau', ion: 'itau',
-};
-
-/** Broker account numbers that identify ONE account (IBKR U1234567 / DU1234567 paper / F-prefixed FA). */
-const ACCOUNT_NUMBER_RE = /\b(D?U\d{5,10}|F\d{6,10})\b/i;
-
-/** The broker account number inside an account label ("U1234567", "IBKR U1234567"), upper-cased. */
-export function accountNumber(account: string | undefined): string | undefined {
-  const m = account ? ACCOUNT_NUMBER_RE.exec(account) : null;
-  return m ? m[1]!.toUpperCase() : undefined;
-}
-
-/** Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu"; "U1234567" → "ibkr". */
-export function accountKey(account: string | undefined): string | undefined {
-  if (!account) return undefined;
-  if (accountNumber(account)) return 'ibkr';
-  const n = normalizeText(account);
-  const k = n.replace(ACCOUNT_NOISE, ' ').replace(/\s+/g, ' ').trim();
-  const first = (k || n).split(' ')[0]!;
-  return INSTITUTION_ALIASES[first] ?? first;
-}
-
-/**
- * Accounts are compatible when either is unknown, or both are the same institution and they do not
- * carry two different account numbers ("U1111111" vs "U2222222" are two IBKR accounts; "IBKR" is
- * compatible with both).
- */
-export function accountsCompatible(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return true;
-  if (accountKey(a) !== accountKey(b)) return false;
-  const na = accountNumber(a);
-  const nb = accountNumber(b);
-  return !na || !nb || na === nb;
-}
-
 const near = (a: number | undefined, b: number | undefined, rel: number, absTol: number) =>
   a === undefined || b === undefined ? a === b : Math.abs(a - b) <= Math.max(absTol, rel * Math.max(Math.abs(a), Math.abs(b)));
 
@@ -615,7 +575,11 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
       currency: d.currency,
     };
     const account = d.account ?? opts.account;
-    if (account) tx.account = account;
+    if (account) {
+      tx.account = account;
+      // W33: stable broker id next to the label ("XP INVESTIMENTOS CCTVM S/A" → 'xp') for the web to match.
+      (tx as ImportedTransaction).brokerId = normalizeBrokerName(account).brokerId;
+    }
     if (w.instrumentId) tx.instrumentId = w.instrumentId;
     if (d.quantity !== undefined) tx.quantity = d.quantity;
     if (d.price !== undefined) tx.price = d.price;
@@ -802,6 +766,8 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   if (ctx.corporateActions.length) result.corporateActions = ctx.corporateActions;
   if (ctx.unknownSecurities.length) result.unknownSecurities = ctx.unknownSecurities;
   if (ctx.noteChecks.length) result.noteChecks = ctx.noteChecks;
+  const labels = [...new Set(outRows.flatMap((r) => [r.transaction, ...(r.extraTransactions ?? [])]).map((t) => t?.account).filter((x): x is string => !!x))];
+  if (labels.length) result.accounts = labels.map((account) => ({ account, ...normalizeBrokerName(account) }));
   if (reconciliation) result.reconciliation = reconciliation;
   return result;
 }

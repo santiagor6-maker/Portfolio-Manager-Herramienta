@@ -56,3 +56,15 @@ export const BENCHMARK_IDS = BENCHMARKS.map((b) => b.id);
 export function benchmarkName(id: string): string {
   return BENCHMARKS.find((b) => b.id === id)?.name ?? indexName(id.replace(/^INDEX:\^?/, ''));
 }
+
+/** W32: the benchmark that matches the reporting currency comes first (BRL → Ibovespa, COP → COLCAP). */
+export const HOME_BENCHMARK: Record<string, string> = { COP: 'XBOG:ICOLCAP', BRL: 'INDEX:^BVSP', USD: 'INDEX:^GSPC', EUR: 'ARCX:URTH' };
+
+export function orderBenchmarks(list: string[], currency: string): string[] {
+  const home = HOME_BENCHMARK[currency];
+  return home && list.includes(home) ? [home, ...list.filter((b) => b !== home)] : list;
+}
+
+export function primaryBenchmark(list: string[], currency: string): string | undefined {
+  return orderBenchmarks(list, currency)[0];
+}

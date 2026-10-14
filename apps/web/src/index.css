@@ -351,6 +351,13 @@ body {
 /* ---------------------------------------------------------------------------
  * Print / "Guardar como PDF": every page prints cleanly; colours (heatmap, gains) are kept.
  * ------------------------------------------------------------------------- */
+/* W37: the Total row is printed once, after the last row (not repeated at every page break). */
+@media print {
+  tfoot {
+    display: table-row-group;
+  }
+}
+
 @media print {
   @page {
     size: A4 landscape;

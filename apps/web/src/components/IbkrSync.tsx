@@ -128,6 +128,15 @@ export function IbkrSyncCard({
             </ol>
             <p className="text-xs text-muted mt-2">{t('ibkr.needsServer')}</p>
           </details>
+          <details className="lg:col-span-3 text-[13px]" data-testid="ibkr-server-setup">
+            <summary className="cursor-pointer text-accent font-medium">{t('ibkr.serverSetup')}</summary>
+            <ol className="list-decimal pl-5 mt-2 flex flex-col gap-1 text-ink-2">
+              {(t('ibkr.serverSteps', { returnObjects: true }) as string[]).map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ol>
+            <pre className="mt-2 text-xs bg-surface-2 rounded-lg p-2 overflow-x-auto">SYNC_SECRET=$(openssl rand -hex 32) API_TOKEN=$(openssl rand -hex 16) npm run dev:server</pre>
+          </details>
         </form>
       ) : (
         <div className="flex flex-col gap-3">

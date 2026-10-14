@@ -11,11 +11,59 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useInstrumentMap } from '../hooks/useData';
 import { describeDiagnostic } from '../lib/diagnosticText';
 
+/** W33: every transaction of the portfolio under `from` moves to the `to` account (same broker). */
+export async function relabelAccount(portfolioId: string, from: string | undefined, to: string): Promise<void> {
+  const txs = (await db.transactions.where('portfolioId').equals(portfolioId).toArray()).filter((t) => (t.account ?? '') === (from ?? ''));
+  await db.transactions.bulkPut(txs.map((t) => ({ ...t, account: to || undefined })));
+}
+
 /** W22: books the deposit the engine had to assume, on the purchase date, in its portfolio. */
 export async function createDepositFor(f: ImplicitFunding, note: string): Promise<void> {
   const tx = f.transactionId ? await db.transactions.get(f.transactionId) : undefined;
   if (!tx) return;
-  await saveTransaction({ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: f.currency, amount: Math.round(f.amount * 100) / 100, account: tx.account, note });
+  const base = (await db.portfolios.get(tx.portfolioId))?.baseCurrency;
+  const rate = base && base !== f.currency ? await fxRateOn(base, f.currency, f.date) : undefined;
+  const round = (v: number, ccy: string) => (['COP', 'CLP', 'JPY'].includes(ccy) ? Math.round(v) : Math.round(v * 100) / 100);
+  if (base && rate) {
+    // W39: the investor deposited in the base currency and converted it (FX effect measured from here).
+    const baseAmount = round(f.amount / rate, base);
+    await saveTransaction({ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: base, amount: baseAmount, account: tx.account, note });
+    await saveTransaction({
+      portfolioId: tx.portfolioId,
+      date: f.date,
+      type: 'FX_CONVERSION',
+      currency: base,
+      amount: baseAmount,
+      toCurrency: f.currency,
+      toAmount: round(f.amount, f.currency),
+      account: tx.account,
+      note,
+    });
+    return;
+  }
+  await saveTransaction({ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: f.currency, amount: round(f.amount, f.currency), account: tx.account, note });
+}
+
+/** Units of `to` per unit of `from` on or before `date`, from the cached FX series (direct or inverse). */
+export async function fxRateOn(from: string, to: string, date: string): Promise<number | undefined> {
+  const pick = (pts: { date: string; rate: number }[]) => {
+    let best: number | undefined;
+    for (const p of pts) if (p.date <= date) best = p.rate;
+    return best;
+  };
+  const direct = await db.fxSeries.get(`${from}/${to}`);
+  const d = direct ? pick(direct.points) : undefined;
+  if (d) return d;
+  const inv = await db.fxSeries.get(`${to}/${from}`);
+  const i = inv ? pick(inv.points) : undefined;
+  if (i) return 1 / i;
+  // Cross through USD (e.g. BRL → EUR).
+  if (from !== 'USD' && to !== 'USD') {
+    const a = await fxRateOn(from, 'USD', date);
+    const b = await fxRateOn('USD', to, date);
+    if (a && b) return a * b;
+  }
+  return undefined;
 }
 
 /**
@@ -29,7 +77,10 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const list = analysis?.diagnostics ?? [];
   const implicit = analysis?.implicitFunding ?? [];
   const instruments = useInstrumentMap();
-  const txIds = list.map((d) => d.transactionId).filter((x): x is string => !!x);
+  const txIds = [...list.map((d) => d.transactionId), ...implicit.map((x) => x.transactionId)].filter((x): x is string => !!x);
+  // W33: deposits recorded under another account label of the same portfolio (e.g. "XP" vs
+  // "XP INVESTIMENTOS CCTVM S/A"): offer to use that account instead of inventing a deposit.
+  const deposits = useLiveQuery(() => db.transactions.where('type').equals('DEPOSIT').toArray(), [], []);
   const txs = useLiveQuery(async () => new Map((await db.transactions.bulkGet(txIds)).filter((x) => !!x).map((x) => [x!.id, x!])), [txIds.join('|')]);
   if (!list.length && !implicit.length) return null;
   const errors = list.filter((d) => d.severity === 'error').length;
@@ -59,6 +110,22 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                 {t('diag.open')}
               </button>
             )}
+            {(() => {
+              const tx = x.transactionId ? txs?.get(x.transactionId) : undefined;
+              const other = tx
+                ? [...new Set(deposits.filter((d) => d.portfolioId === tx.portfolioId && d.date <= x.date && (d.account ?? '') !== (tx.account ?? '')).map((d) => d.account ?? ''))][0]
+                : undefined;
+              return other !== undefined && tx ? (
+                <button
+                  className="btn btn-sm btn-primary"
+                  data-testid="use-account"
+                  title={t('diag.useAccountHint', { from: tx.account || '—', to: other || '—' })}
+                  onClick={() => void relabelAccount(tx.portfolioId, tx.account, other)}
+                >
+                  {t('diag.useAccount', { account: other || t('diag.noAccount') })}
+                </button>
+              ) : null;
+            })()}
             <button className="btn btn-sm" onClick={() => void createDepositFor(x, t('diag.implicitNote'))} data-testid="create-deposit">
               <Plus size={13} /> {t('diag.createDeposit')}
             </button>
