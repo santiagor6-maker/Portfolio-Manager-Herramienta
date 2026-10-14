@@ -8,6 +8,7 @@ import { bootstrap } from './services/onboarding';
 import { hydrateMarketState, refreshMarketData } from './services/marketData';
 import { ensureDefaultAlerts, evaluateAlerts } from './services/alerts';
 import { checkIbkrInboxes } from './services/ibkrSync';
+import { checkEmailDrafts } from './services/emailInbox';
 
 /** PWA: cache the app shell for offline use (production builds only). */
 function registerServiceWorker() {
@@ -39,6 +40,7 @@ async function start() {
     await ensureDefaultAlerts();
     void evaluateAlerts();
     void checkIbkrInboxes(); // IBKR daily-sync inbox badge
+    void checkEmailDrafts(); // forwarded e-mails waiting for review
     if (settings.autoRefresh) void refreshMarketData();
     registerServiceWorker();
   } catch (e) {

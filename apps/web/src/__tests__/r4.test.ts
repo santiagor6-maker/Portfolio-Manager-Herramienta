@@ -46,6 +46,8 @@ describe('core R7 diagnostics', () => {
     expect(unitFactor('Trade price 2450 of XBOG:ISA is 10.0x the previous reference 245.0000 (2026-01-02), close to a factor of 10: likely a unit')).toBe(10);
     expect(unitFactor('… close to a factor of 1/100: likely …')).toBeCloseTo(0.01);
     expect(splitSuggestion('The price of XNAS:NVDA went from 1200 (2024-06-07) to 121 (2024-06-10), close to a 10:1 split, and no split is recorded; if there was one, record it')).toEqual({ instrumentId: 'XNAS:NVDA', ratio: 10, date: '2024-06-10' });
+    // Core R8 structured fields win over the message.
+    expect(splitSuggestion('anything', { instrumentId: 'XNAS:NVDA', ratioFrom: 1, ratioTo: 10, splitRatio: 10, dateTo: '2024-06-10' })).toEqual({ instrumentId: 'XNAS:NVDA', ratio: 10, date: '2024-06-10' });
     expect(splitSuggestion('The price of BVMF:XYZ3 went from 1 (2024-01-02) to 10 (2024-01-03), close to a 1:10 reverse split, and no split is recorded')).toEqual({ instrumentId: 'BVMF:XYZ3', ratio: 0.1, date: '2024-01-03' });
   });
 });

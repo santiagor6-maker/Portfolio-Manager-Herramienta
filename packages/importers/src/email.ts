@@ -109,6 +109,9 @@ function splitHead(raw: string): [string, string] {
   return m ? [raw.slice(0, m.index), raw.slice(m.index + m[0].length)] : [raw, ''];
 }
 
+/** MIME parts parsed at most (a message with thousands of parts is cut, I42). */
+const MAX_PARTS = 500;
+
 function parseEntity(raw: string, out: MimePart[], depth = 0): Record<string, string> {
   const [head, body] = splitHead(raw);
   const headers = parseHeaders(head);
@@ -118,7 +121,10 @@ function parseEntity(raw: string, out: MimePart[], depth = 0): Record<string, st
     const boundary = param(ct, 'boundary');
     if (boundary) {
       const parts = body.split(new RegExp(`\\r?\\n?--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:--)?[ \\t]*\\r?\\n?`));
-      for (const p of parts.slice(1)) if (p.trim()) parseEntity(p, out, depth + 1);
+      for (const p of parts.slice(1)) {
+        if (out.length >= MAX_PARTS) break;
+        if (p.trim()) parseEntity(p, out, depth + 1);
+      }
     }
     return headers;
   }
@@ -162,8 +168,8 @@ export interface EmailImportResult {
   date?: string;
   /** One import per attachment (de-duplicated against the previous ones). */
   attachments: EmailAttachmentResult[];
-  /** Parts that are not importable (signatures, logos, plain text). */
-  ignored: { fileName?: string; contentType: string }[];
+  /** Parts that are not importable (signatures, logos, plain text) or over the limits. */
+  ignored: { fileName?: string; contentType: string; reason?: 'too_large' | 'too_many' }[];
   /** All transactions ready to save, across attachments. */
   transactions: Transaction[];
   /** Attachments still waiting for a PDF password. */
@@ -178,6 +184,10 @@ export interface EmailImportOptions extends ImportOptions {
   pdfPasswords?: string[];
   /** Import a table in the HTML body when the message has no importable attachment. Default true. */
   bodyTables?: boolean;
+  /** At most this many attachments are imported (I42); the rest are listed as ignored. Default 20. */
+  maxAttachments?: number;
+  /** Attachments larger than this (decoded bytes) are ignored. Default 15 MB. */
+  maxAttachmentBytes?: number;
 }
 
 /** Import every supported attachment of a forwarded e-mail. */
@@ -206,7 +216,21 @@ export async function importEmail(raw: string | Uint8Array, options: EmailImport
   };
   const files = msg.parts.filter((p) => !!p.fileName && (IMPORTABLE.test(p.fileName) || IMPORTABLE_TYPES.test(p.contentType)));
   for (const p of msg.parts) if (!files.includes(p) && (p.fileName || !/^text\//.test(p.contentType))) out.ignored.push({ ...(p.fileName ? { fileName: p.fileName } : {}), contentType: p.contentType });
-  for (const p of files) await run(p, p.fileName!);
+  const maxN = options.maxAttachments ?? 20;
+  const maxB = options.maxAttachmentBytes ?? 15 * 1024 * 1024;
+  let n = 0;
+  for (const p of files) {
+    if (p.body.length > maxB) {
+      out.ignored.push({ fileName: p.fileName!, contentType: p.contentType, reason: 'too_large' });
+      continue;
+    }
+    if (n >= maxN) {
+      out.ignored.push({ fileName: p.fileName!, contentType: p.contentType, reason: 'too_many' });
+      continue;
+    }
+    n++;
+    await run(p, p.fileName!);
+  }
   if (!files.length && options.bodyTables !== false) {
     const html = msg.parts.find((p) => p.contentType === 'text/html' && /<table/i.test(bytesToLatin1(p.body)));
     if (html) {

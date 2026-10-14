@@ -231,6 +231,10 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     const rate = exact ?? ledger.ctx.market.fxNearest(ccy, base, day);
     const cb: CashBalance = { currency: ccy, amount: amt };
     if (rate !== undefined) cb.amountBase = amt * rate;
+    if (ledger.receivables.length) {
+      const rc = ledger.pendingReceivable(ccy, day);
+      if (rc > 0) cb.receivable = rc;
+    }
     const byAcct = ledger.cashByAccount.get(ccy);
     if (byAcct) {
       const aa: Record<string, number> = {};

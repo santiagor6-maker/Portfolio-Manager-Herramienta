@@ -96,7 +96,7 @@ function Brand() {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
-  const inboxCount = useApp((s) => Object.values(s.ibkrInbox).reduce((a, b) => a + b, 0));
+  const inboxCount = useApp((s) => [...Object.values(s.ibkrInbox), ...Object.values(s.emailDrafts)].reduce((a, b) => a + b, 0));
   const link = (n: NavItem) => (
     <NavLink
       key={n.to}

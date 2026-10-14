@@ -10,6 +10,7 @@
  *   SPLIT_SAME_DAY_TRADE (trades on a split's ex-date: quantities must be post-split units),
  *   INCOME_WITHOUT_POSITION, INVALID_ACCRUAL, INVALID_COST_FRACTION
  */
+import { renamedTickerId } from './tickerRenames';
 import type { Instrument, ISODate, Transaction, TransactionType } from './types';
 import type { ValidationIssue } from './api';
 import { isValidIsoDate, todayIso } from './dates';
@@ -155,6 +156,19 @@ export function validateTransactionsImpl(
     if (!a) continue;
     const bad = a.kind === 'fixed' ? !(typeof a.annualRate === 'number' && a.annualRate > -1) : !a.index && !a.spread;
     if (bad) warnings.push({ code: 'INVALID_ACCRUAL', message: `Instrument ${id}: accrual needs annualRate (fixed) or index/spread (indexed)` });
+  }
+
+  // C56: an old ticker and its renamed successor used together (the engine books both under the
+  // current id; the user may want to rename the old rows).
+  {
+    const ids = new Set(valid.flatMap((t) => [t.instrumentId, t.targetInstrumentId]).filter(Boolean) as string[]);
+    for (const id of ids) {
+      const to = renamedTickerId(id);
+      if (to && ids.has(to)) {
+        const tx = valid.find((t) => t.instrumentId === id || t.targetInstrumentId === id);
+        warn(tx, 'RENAMED_TICKER_MIXED', `${id} and ${to} are the same security (ticker rename); the engine books ${id} under ${to}. Consider renaming the old rows`);
+      }
+    }
   }
 
   // Trades on a split's ex-date: the engine applies the split first (post-split units).

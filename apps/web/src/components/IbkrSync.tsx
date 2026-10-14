@@ -18,7 +18,7 @@ import {
   type IbkrInbox,
 } from '../services/ibkrSync';
 
-export type SyncOrigin = 'ibkr-sync' | 'ibkr-inbox';
+export type SyncOrigin = 'ibkr-sync' | 'ibkr-inbox' | 'email-inbox';
 
 /** Translated, user-facing message for a sync failure (503 / 401 / IBKR errors...). */
 export function syncErrorText(e: unknown, t: (k: string, o?: Record<string, unknown>) => string): string {

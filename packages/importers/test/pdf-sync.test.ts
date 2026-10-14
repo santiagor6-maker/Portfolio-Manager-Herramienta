@@ -57,7 +57,9 @@ describe('I1 — PDF: nota de corretagem SINACOR', async () => {
     // Accepting the note imports it with its costs (MINERVA ON NM is in the round-4 table).
     const mapped = await importFixture('nota-sinacor.pdf', { acceptNotes: ['99887766'] });
     const beef = mapped.transactions.find((t) => t.instrumentId === 'BVMF:BEEF3')!;
-    expect(beef).toMatchObject({ quantity: 200, fees: 0.6, account: 'RICO INVESTIMENTOS - GRUPO XP' });
+    // Accepted: the 10,00 that "Líquido para" shows beyond the listed costs is kept as other fees (I43).
+    expect(beef).toMatchObject({ quantity: 200, fees: 10.6, account: 'RICO INVESTIMENTOS - GRUPO XP' });
+    expect(mapped.warnings.some((w) => w.code === 'OTHER_FEES_FROM_NET' && w.params?.amount === 10)).toBe(true);
     // The note's "Líquido para" was printed inconsistent on purpose → warning.
     expect(mapped.warnings.some((w) => w.code === 'NOTA_TOTALS_MISMATCH' && w.params?.nota === '99887766')).toBe(true);
     expect(mapped.warnings.some((w) => w.code === 'NOTA_TOTALS_MISMATCH' && w.params?.nota === '87654321')).toBe(false);

@@ -224,6 +224,12 @@ export interface Transaction {
    * missing the engine infers the withholding of the instrument's regime and marks it estimated.
    */
   amountIsNet?: boolean;
+  /**
+   * SPLIT/MERGER with cash (round 8, C56): the day the merger cash (`amount`) is actually paid, when
+   * later than the ex-date. Until then it is a receivable: counted in the value, not available to
+   * fund trades (CashBalance.receivable).
+   */
+  cashPayDate?: ISODate;
 }
 
 export type TransactionSubtype = 'JCP' | 'ORDINARY' | 'EXTRAORDINARY' | 'SPINOFF' | 'MERGER' | 'TICKER_CHANGE' | (string & {});
@@ -389,6 +395,12 @@ export interface CashBalance {
   amountBase?: number;
   /** Balance per account/broker ('' = no account). Additive; used by allocation('account'). */
   accountAmounts?: Record<string, number>;
+  /**
+   * Round 8 (C56): part of `amount` that is a receivable not yet paid on the valuation date (merger
+   * cash with a later `cashPayDate`). Included in `amount` and in the value; not available to fund
+   * trades until paid.
+   */
+  receivable?: number;
 }
 
 export interface Valuation {

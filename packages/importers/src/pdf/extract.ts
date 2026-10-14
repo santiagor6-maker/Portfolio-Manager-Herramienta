@@ -107,7 +107,64 @@ export class PdfPasswordError extends Error {
   }
 }
 
-export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown, password?: string): Promise<PdfDocument> {
+/** A resource limit was hit (I42): too many pages, too much decompressed data, or too slow. */
+export class PdfLimitError extends Error {
+  constructor(readonly reason: 'pages' | 'inflated' | 'time', readonly limit: number) {
+    super(`PDF limit exceeded: ${reason} (${limit})`);
+    this.name = 'PdfLimitError';
+  }
+}
+
+export interface PdfLimits {
+  maxPdfPages?: number;
+  maxPdfInflatedBytes?: number;
+  pdfTimeoutMs?: number;
+}
+
+const DEFAULT_LIMITS = { maxPdfPages: 500, maxPdfInflatedBytes: 200 * 1024 * 1024, pdfTimeoutMs: 60_000 };
+
+/**
+ * Zip-bomb guard: inflate every FlateDecode stream with a streaming decompressor and stop as soon as the
+ * total exceeds `max` (nothing is kept in memory). Encrypted or broken streams are skipped (pdf.js
+ * still has the page and time limits). Uses DecompressionStream (browsers, Node ≥ 18).
+ */
+export async function pdfInflatedSize(bytes: Uint8Array, max: number): Promise<number> {
+  const DS = (globalThis as { DecompressionStream?: new (f: string) => TransformStream<Uint8Array, Uint8Array> }).DecompressionStream;
+  if (!DS) return 0;
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 65536) text += String.fromCharCode(...bytes.subarray(i, i + 65536));
+  let total = 0;
+  const re = /<<((?:(?!>>\s*stream)[\s\S]){0,2000})>>\s*stream\r?\n/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (!/FlateDecode/.test(m[1]!)) continue;
+    const start = m.index + m[0].length;
+    const end = text.indexOf('endstream', start);
+    if (end < 0) break;
+    re.lastIndex = end;
+    const chunk = bytes.subarray(start, end);
+    try {
+      const reader = new Blob([new Uint8Array(chunk)]).stream().pipeThrough(new DS('deflate')).getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > max) {
+          await reader.cancel();
+          return total;
+        }
+      }
+    } catch {
+      // encrypted / truncated stream: not measurable here
+    }
+  }
+  return total;
+}
+
+export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown, password?: string, limits: PdfLimits = {}): Promise<PdfDocument> {
+  const lim = { ...DEFAULT_LIMITS, ...limits };
+  const started = Date.now();
+  if ((await pdfInflatedSize(bytes, lim.maxPdfInflatedBytes)) > lim.maxPdfInflatedBytes) throw new PdfLimitError('inflated', lim.maxPdfInflatedBytes);
   const pdfjs = (pdfjsModule as PdfJsLike | undefined) ?? (await loadPdfJs());
   const params: Record<string, unknown> = {
     data: bytes.slice(), // pdf.js may transfer/detach the buffer
@@ -126,10 +183,32 @@ export async function extractPdf(bytes: Uint8Array, pdfjsModule?: unknown, passw
     if (err?.name === 'PasswordException') throw new PdfPasswordError(err.code === 2 ? 'incorrect' : 'required');
     throw e;
   }
+  if (doc.numPages > lim.maxPdfPages) {
+    await doc.destroy?.();
+    throw new PdfLimitError('pages', lim.maxPdfPages);
+  }
   const lines: PdfLine[] = [];
+  const deadline = started + lim.pdfTimeoutMs;
+  const withDeadline = <T>(p: Promise<T>): Promise<T> => {
+    const left = deadline - Date.now();
+    if (left <= 0) return Promise.reject(new PdfLimitError('time', lim.pdfTimeoutMs));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      p,
+      new Promise<T>((_, rej) => {
+        timer = setTimeout(() => rej(new PdfLimitError('time', lim.pdfTimeoutMs)), left);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
   for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const content = await page.getTextContent();
+    let content: { items: unknown[] };
+    try {
+      const page = await withDeadline(doc.getPage(p));
+      content = await withDeadline(page.getTextContent());
+    } catch (e) {
+      await doc.destroy?.();
+      throw e;
+    }
     const items: PdfItem[] = [];
     for (const raw of content.items) {
       const it = raw as { str?: string; transform?: number[]; width?: number };

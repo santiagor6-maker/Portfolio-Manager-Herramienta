@@ -506,7 +506,7 @@ const rowCache = new WeakMap<object, { vals: unknown[]; a: number; b: number }>(
 
 
 /** Number of hashed Transaction fields (see rowValues). */
-const W = 24;
+const W = 25;
 
 /** Unrolled named-property comparison against a flat store (monomorphic loads, no keyed access). */
 function sameRow(v: unknown[], o: number, t: Transaction): boolean {
@@ -534,7 +534,8 @@ function sameRow(v: unknown[], o: number, t: Transaction): boolean {
     v[o + 20] === t.amountIsNet &&
     v[o + 21] === t.note &&
     v[o + 22] === t.source &&
-    v[o + 23] === t.importHash
+    v[o + 23] === t.importHash &&
+    v[o + 24] === t.cashPayDate
   );
 }
 
@@ -545,7 +546,7 @@ function sameRow(v: unknown[], o: number, t: Transaction): boolean {
 function rowValues(t: Transaction): unknown[] {
   return [
     t.id, t.date, t.type, t.instrumentId, t.quantity, t.price, t.currency, t.amount, t.fees, t.taxes, t.ratio, t.toCurrency, t.toAmount, t.fxRateToBase, t.account, t.subtype, t.targetInstrumentId,
-    t.costFraction, t.portfolioId, t.priceConfirmed, t.amountIsNet, t.note, t.source, t.importHash,
+    t.costFraction, t.portfolioId, t.priceConfirmed, t.amountIsNet, t.note, t.source, t.importHash, t.cashPayDate,
   ];
 }
 

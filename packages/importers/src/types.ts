@@ -253,6 +253,8 @@ export interface NoteCheck {
   expectedNet: number;
   /** Lines that look like trades but could not be read (each also has an UNPARSED_LINE error row). */
   unparsedLines: number[];
+  /** Lines where quantity × price ≠ value (QTY_PRICE_VALUE_MISMATCH, I40). */
+  mismatchLines: number[];
   /** Lines of the trades that were read (pending). */
   lines: number[];
   /** Total costs of the note (to be allocated once the note is accepted). */
@@ -513,6 +515,12 @@ export interface ImportOptions {
    * When missing/wrong the result has `needsPassword` and the UI asks the user.
    */
   pdfPassword?: string;
+  /**
+   * Resource limits (I42) for untrusted input (e-mail inbox, uploads): PDF pages, total bytes after
+   * decompressing the PDF streams (zip-bomb guard) and time spent extracting text.
+   * Defaults: 500 pages, 200 MB, 60 s.
+   */
+  limits?: { maxPdfPages?: number; maxPdfInflatedBytes?: number; pdfTimeoutMs?: number };
   /**
    * Per-line answers for rows whose numbers are ambiguous only for that row (e.g. a USD row in a COP
    * statement with ';' delimiter): `{ 12: 'dot' }`.

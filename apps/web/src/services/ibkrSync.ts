@@ -47,7 +47,8 @@ function base(): string {
   return useApp.getState().settings.serverUrl.trim().replace(/\/+$/, '');
 }
 
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Authenticated JSON call to the market-data server (shared by the IBKR and e-mail inboxes). */
+export async function serverCall<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = useApp.getState().settings.apiToken.trim();
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (init.body) headers['Content-Type'] = 'application/json';
@@ -77,7 +78,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   throw new SyncError('other', message, res.status, code);
 }
 
-const post = <T>(body: Record<string, unknown>) => call<T>(PATH, { method: 'POST', body: JSON.stringify(body) });
+const post = <T>(body: Record<string, unknown>) => serverCall<T>(PATH, { method: 'POST', body: JSON.stringify(body) });
 
 export async function connectIbkr(token: string, queryId: string): Promise<IbkrConnection> {
   const r = await post<{ credentialId?: string }>({ action: 'save', token: token.trim(), queryId: queryId.trim() });
@@ -117,7 +118,7 @@ export async function syncIbkrNow(portfolioId: string, account?: string): Promis
 }
 
 export async function fetchIbkrInbox(portfolioId: string): Promise<IbkrInbox> {
-  const r = await call<IbkrInbox>(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`);
+  const r = await serverCall<IbkrInbox>(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`);
   useApp.getState().setIbkrInbox(portfolioId, r?.pending?.length ?? 0);
   return { portfolioId, pending: r?.pending ?? [], instruments: r?.instruments ?? [], lastRun: r?.lastRun };
 }
@@ -127,7 +128,7 @@ export async function fetchIbkrInbox(portfolioId: string): Promise<IbkrInbox> {
  * after the preview are kept); without ids the whole inbox is emptied.
  */
 export async function clearIbkrInbox(portfolioId: string, ids?: string[]): Promise<void> {
-  const r = await call<{ cleared?: number }>(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`, {
+  const r = await serverCall<{ cleared?: number }>(`${PATH}/inbox?portfolioId=${encodeURIComponent(portfolioId)}`, {
     method: 'DELETE',
     ...(ids ? { body: JSON.stringify({ ids }) } : {}),
   });

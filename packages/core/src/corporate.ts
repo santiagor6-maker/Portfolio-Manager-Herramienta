@@ -269,6 +269,8 @@ export function applyCorporateActions(
       t.amount = Math.round(q * cash.amountPerShare * 1e6) / 1e6;
       t.currency = cash.currency ?? t.currency;
       t.note = `${t.note ? `${t.note} · ` : ''}efectivo de la fusión ${cash.amountPerShare} por acción`;
+      // C56: the cash is paid on the dividend's pay date (CPLE5 -> CPLE3: 8 days after the ex-date)
+      if (cash.payDate && isStrictIsoDate(cash.payDate) && cash.payDate > t.date) t.cashPayDate = cash.payDate as ISODate;
     }
     out.suggested.push(t);
     applyTx(t); // the suggested event changes the holdings for later actions

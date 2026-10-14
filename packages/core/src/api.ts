@@ -85,6 +85,12 @@ export interface EngineOptions {
   tradePriceTolerance?: number;
   /** Currency whose cash funds implicit FX conversions (default: currency of the first DEPOSIT, else portfolio base). */
   fundingCurrency?: CurrencyCode;
+  /**
+   * Round 8 (C56): follow pure ticker renames of the shared table (tickerRenames.ts): transactions
+   * under an old id (XBOG:PFBCOLOM) are booked under the current id (XBOG:PFCIBEST), with an
+   * INSTRUMENT_RENAMED info diagnostic. Default true.
+   */
+  tickerRenames?: boolean;
 }
 
 export interface MarketDataInput {

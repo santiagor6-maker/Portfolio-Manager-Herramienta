@@ -14,7 +14,7 @@ import { importTransactionBatch, isTransactionBatch } from './sync/inbox';
 import { getBrokerProfile } from './profiles';
 import { suggestMapping } from './mapping';
 import { exchangeCurrency } from './markets';
-import { extractPdf, PdfPasswordError, pdfToTable } from './pdf/extract';
+import { extractPdf, PdfLimitError, PdfPasswordError, pdfToTable } from './pdf/extract';
 import { PDF_PARSERS } from './pdf/parsers';
 import { ParseContext, type PresetDefinition } from './presets/common';
 import { extractoColombianoPreset } from './presets/extracto-co';
@@ -114,8 +114,11 @@ function failure(detection: DetectionInfo, issue: ImportIssue, extra: Partial<Im
 async function importPdf(read: ReadResult, options: ImportOptions, detection: DetectionInfo, locale: Locale): Promise<ImportResult> {
   let doc;
   try {
-    doc = await extractPdf(read.bytes!, options.pdfjs, options.pdfPassword);
+    doc = await extractPdf(read.bytes!, options.pdfjs, options.pdfPassword, options.limits);
   } catch (e) {
+    if (e instanceof PdfLimitError) {
+      return failure(detection, makeIssue(locale, 'PDF_LIMIT_EXCEEDED', 'error', { reason: e.reason, limit: e.limit }));
+    }
     if (e instanceof PdfPasswordError) {
       return failure(detection, makeIssue(locale, e.reason === 'required' ? 'PDF_PASSWORD_REQUIRED' : 'PDF_PASSWORD_INCORRECT', 'error'), { needsPassword: e.reason });
     }

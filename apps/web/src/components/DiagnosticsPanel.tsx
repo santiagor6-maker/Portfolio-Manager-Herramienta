@@ -173,15 +173,17 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                 </button>
               </>
             )}
-            {d.code === 'POSSIBLE_UNRECORDED_SPLIT' && splitSuggestion(d.message) && d.transactionId && (
-              <button
-                className="btn btn-sm btn-primary"
-                data-testid="record-split"
-                onClick={() => void recordSplit(splitSuggestion(d.message)!, txs?.get(d.transactionId!)?.portfolioId)}
-              >
-                {t('diag.recordSplit', { ratio: splitSuggestion(d.message)!.ratio >= 1 ? `${splitSuggestion(d.message)!.ratio}:1` : `1:${Math.round(1 / splitSuggestion(d.message)!.ratio)}` })}
-              </button>
-            )}
+            {(d.code === 'POSSIBLE_UNRECORDED_SPLIT' || d.code === 'POSSIBLE_REDENOMINATION') &&
+              (() => {
+                const sp = splitSuggestion(d.message, d.data);
+                if (!sp) return null;
+                const ratio = sp.ratio >= 1 ? `${Math.round(sp.ratio)}:1` : `1:${Math.round(1 / sp.ratio)}`;
+                return (
+                  <button className="btn btn-sm btn-primary" data-testid="record-split" onClick={() => void recordSplit(sp, d.transactionId ? txs?.get(d.transactionId)?.portfolioId : undefined)}>
+                    {t('diag.recordSplit', { ratio })}
+                  </button>
+                );
+              })()}
             {d.code === 'INTEREST_POSSIBLY_NET' && d.transactionId && !txs?.get(d.transactionId)?.amountIsNet && (
               <button className="btn btn-sm" data-testid="mark-net" onClick={() => void db.transactions.update(d.transactionId!, { amountIsNet: true })}>
                 {t('diag.markNet')}

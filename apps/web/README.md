@@ -159,7 +159,10 @@ src/
   vez), W38 (403 de IBKR explicado), W39 (aporte en BRL + cambio a USD) y las notas en revisión de los
   importadores R5.
 
-Totales: 76 pruebas unitarias (13 archivos) y 41 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/emailInbox.test.ts` y `e2e/email-inbox.spec.ts` — buzón de correo: borradores, vista
+  previa con deduplicación, confirmación por `ids` y mensajes para 401/403/503.
+
+Totales: 78 pruebas unitarias (14 archivos) y 42 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
@@ -316,4 +319,15 @@ Revisión: `reviews/web-r3.md`.
   - los avisos del archivo (`UNPARSED_LINE`, `SECURITY_ANSWER_CONFLICT`…) se muestran arriba de la
     vista previa;
   - la unión de cuentas usa `normalizeBrokerName` / `sameBroker` de `@pm/importers`.
+- **Importar por correo** (servidor: `POST /api/inbox/email`, `GET/DELETE /api/inbox/email/drafts`):
+  - en Importar se muestran la dirección de reenvío (`importar+<token>@…`, la define `INBOX_RECIPIENTS`)
+    y los pasos para configurar el servidor, con el id del portafolio listo para copiar;
+  - los borradores de correos reenviados pasan por `importTransactionBatch` (deduplicación) y la misma
+    vista previa, y se confirman por `ids`;
+  - el menú muestra una insignia de pendientes (se revisa al abrir la app una vez que el buzón se usó);
+  - hay mensajes claros para 401/403/503.
+- **Core R8:**
+  - «Registrar split» usa los campos estructurados del diagnóstico (`data.splitRatio`, `dateTo`), sin
+    leer el texto; el mensaje queda solo como respaldo;
+  - también se cubre `POSSIBLE_REDENOMINATION`.
 

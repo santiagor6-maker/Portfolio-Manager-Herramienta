@@ -32,6 +32,9 @@ interface AppState {
   /** IBKR Flex daily-sync inbox: pending transactions per portfolio id. */
   ibkrInbox: Record<string, number>;
   setIbkrInbox(portfolioId: string, count: number): void;
+  /** E-mail inbox drafts (forwarded notes / statements) per portfolio id. */
+  emailDrafts: Record<string, number>;
+  setEmailDrafts(portfolioId: string, count: number): void;
   setReady(settings: AppSettings): void;
   setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void;
   setAnalysis(a: Analysis): void;
@@ -51,6 +54,8 @@ export const useApp = create<AppState>((set) => ({
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   ibkrInbox: {},
   setIbkrInbox: (portfolioId, count) => set((s) => ({ ibkrInbox: { ...s.ibkrInbox, [portfolioId]: count } })),
+  emailDrafts: {},
+  setEmailDrafts: (portfolioId, count) => set((s) => ({ emailDrafts: { ...s.emailDrafts, [portfolioId]: count } })),
   setReady: (settings) =>
     set((s) => {
       const merged = { ...settings };

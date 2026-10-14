@@ -456,6 +456,26 @@ const R3: Catalog = {
     pt: '"{spec}" foi importado antes como {learned}, mas a tabela segura diz {table}: a mesma ação ficaria em dois ativos. Revise a resposta anterior.',
     en: '"{spec}" was imported before as {learned}, but the built-in table says {table}: one security would be split across two assets. Review the earlier answer.',
   },
+  QTY_PRICE_VALUE_MISMATCH: {
+    es: 'Nota {nota}, {spec}: {quantity} × {price} no da el valor impreso {value} (¿dígito mal leído?). Lectura que cuadra: {reading}. La nota queda en revisión.',
+    pt: 'Nota {nota}, {spec}: {quantity} × {price} não dá o valor impresso {value} (dígito mal lido?). Leitura que fecha: {reading}. A nota fica em revisão.',
+    en: 'Note {nota}, {spec}: {quantity} × {price} does not give the printed value {value} (misread digit?). Reading that adds up: {reading}. The note is held for review.',
+  },
+  UNKNOWN_FEE_ACCEPTED: {
+    es: 'Nota {nota}: "{label}" ({amount}) no es un costo conocido, pero explica exactamente el "Líquido para": se toma como otras taxas.',
+    pt: 'Nota {nota}: "{label}" ({amount}) não é um custo conhecido, mas explica exatamente o "Líquido para": considerado outras taxas.',
+    en: 'Note {nota}: "{label}" ({amount}) is not a known cost but exactly explains "Líquido para": taken as other fees.',
+  },
+  OTHER_FEES_FROM_NET: {
+    es: 'Nota {nota} aceptada: la diferencia de {amount} con "Líquido para" se reparte como otras taxas.',
+    pt: 'Nota {nota} aceita: a diferença de {amount} para o "Líquido para" é rateada como outras taxas.',
+    en: 'Note {nota} accepted: the {amount} difference to "Líquido para" is allocated as other fees.',
+  },
+  PDF_LIMIT_EXCEEDED: {
+    es: 'El PDF supera el límite de seguridad ({reason}: {limit}). No se procesó.',
+    pt: 'O PDF excede o limite de segurança ({reason}: {limit}). Não foi processado.',
+    en: 'The PDF exceeds the safety limit ({reason}: {limit}). It was not processed.',
+  },
   TICKER_RENAMED: {
     es: '{from} cambió de código: se usa {to} (misma acción).',
     pt: '{from} mudou de código: usa-se {to} (mesma ação).',

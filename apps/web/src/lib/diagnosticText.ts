@@ -84,8 +84,9 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
       const f = unitFactor(m);
       return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—', factor: f ? (f >= 1 ? `×${f}` : `÷${Math.round(1 / f)}`) : '?' };
     }
-    case 'POSSIBLE_UNRECORDED_SPLIT': {
-      const sp = splitSuggestion(m);
+    case 'POSSIBLE_UNRECORDED_SPLIT':
+    case 'POSSIBLE_REDENOMINATION': {
+      const sp = splitSuggestion(m, d.data);
       return sp ? { ...base, symbol: sym(sp.instrumentId), ratio: sp.ratio >= 1 ? `${sp.ratio}:1` : `1:${Math.round(1 / sp.ratio)}`, date: sp.date } : undefined;
     }
     case 'TRADE_PRICE_CONFIRMED_BY_RUN':
@@ -136,7 +137,13 @@ export function unitFactor(message: string): number | undefined {
  * snapped to the usual split factors), not from the label wording.
  */
 const SPLIT_FACTORS = [2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30, 40, 50, 100];
-export function splitSuggestion(message: string): { instrumentId: string; ratio: number; date: string } | undefined {
+export function splitSuggestion(
+  message: string,
+  data?: Record<string, string | number>,
+): { instrumentId: string; ratio: number; date: string } | undefined {
+  // Core R8: structured fields (no text parsing) when the engine provides them.
+  if (data && typeof data.splitRatio === 'number' && data.splitRatio > 0 && data.instrumentId && data.dateTo)
+    return { instrumentId: String(data.instrumentId), ratio: data.splitRatio, date: String(data.dateTo) };
   const m = message.match(/^The price of (\S+) went from (-?[\d.]+) \((\d{4}-\d{2}-\d{2})\) to (-?[\d.]+) \((\d{4}-\d{2}-\d{2})\)/);
   if (!m) return undefined;
   const a = Number(m[2]);

@@ -14,9 +14,10 @@ export type PriceWarningCode =
   | 'TRADE_PRICE_UNCONFIRMED'
   | 'TRADE_PRICE_UNIT_SUSPECT'
   | 'TRADE_PRICE_CONFIRMED_BY_RUN'
-  | 'POSSIBLE_UNRECORDED_SPLIT';
+  | 'POSSIBLE_UNRECORDED_SPLIT'
+  | 'POSSIBLE_REDENOMINATION';
 // Longest first so a prefix never shadows another code.
-const CODES: PriceWarningCode[] = ['TRADE_PRICE_CONFIRMED_BY_RUN', 'TRADE_PRICE_UNIT_SUSPECT', 'POSSIBLE_UNRECORDED_SPLIT', 'TRADE_PRICE_UNCONFIRMED', 'TRADE_PRICE_OUTLIER'];
+const CODES: PriceWarningCode[] = ['TRADE_PRICE_CONFIRMED_BY_RUN', 'TRADE_PRICE_UNIT_SUSPECT', 'POSSIBLE_UNRECORDED_SPLIT', 'POSSIBLE_REDENOMINATION', 'TRADE_PRICE_UNCONFIRMED', 'TRADE_PRICE_OUTLIER'];
 
 /** Parses core `warnings` entries such as "TRADE_PRICE_OUTLIER:XNAS:MSFT,XBOG:ISA". */
 export function parsePriceWarnings(warnings: string[] | undefined): { code: PriceWarningCode; instrumentIds: string[] }[] {

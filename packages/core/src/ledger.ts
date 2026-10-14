@@ -16,17 +16,19 @@ import type {
   CurrencyCode,
   IncomeEvent,
   Instrument,
+  ISODate,
   RealizedGain,
   Transaction,
   TransactionType,
 } from './types';
 import type { EngineInput, EngineOptions } from './api';
-import { dayToIso, days360, isStrictIsoDate, isoToDay } from './dates';
+import { dayToIso, days360, isStrictIsoDate, isoToDay, lastIndexAtOrBefore } from './dates';
 import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
 import { accrualFactor, accruedLotValues, payableFactor, priceInfo } from './pricing';
 import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
 import { fixedIncomeTax, irRate, residenceOf, taxRegimeFor } from './fitax';
+import { renamedTickerId } from './tickerRenames';
 
 export const TYPE_RANK: Record<TransactionType, number> = {
   SPLIT: -1,
@@ -53,9 +55,20 @@ export interface SortedTx {
 }
 
 /** Sort chronologically with the intra-day rank order; stable on input order. Invalid dates are dropped. */
+/**
+ * Intra-day order. C55: on the same day, mergers and ticker changes (which consume the whole
+ * parent) come after splits, bonus shares and spin-offs, so a unit dissolution emitted as MERGER +
+ * SPINOFF (CPLE11 = 1 CPLE3 + 4 CPLE6) hands over every component.
+ */
+function rankOf(tx: Transaction): number {
+  const r = TYPE_RANK[tx?.type] ?? 9;
+  if (tx?.type === 'SPLIT' && (tx.subtype === 'MERGER' || tx.subtype === 'TICKER_CHANGE')) return -0.5;
+  return r;
+}
+
 export function sortTransactions(transactions: Transaction[]): SortedTx[] {
   return transactions
-    .map((tx, index) => ({ tx, day: isStrictIsoDate(tx?.date) ? isoToDay(tx.date) : NaN, rank: TYPE_RANK[tx?.type] ?? 9, index }))
+    .map((tx, index) => ({ tx, day: isStrictIsoDate(tx?.date) ? isoToDay(tx.date) : NaN, rank: rankOf(tx), index }))
     .filter((s) => Number.isFinite(s.day))
     .sort((a, b) => a.day - b.day || a.rank - b.rank || a.index - b.index);
 }
@@ -143,6 +156,14 @@ export interface Diagnostic {
   code: string;
   message: string;
   severity?: 'error' | 'warning' | 'info';
+  /**
+   * Round 8: structured fields for the UI (no text parsing). POSSIBLE_UNRECORDED_SPLIT /
+   * POSSIBLE_REDENOMINATION: `ratioFrom` old shares -> `ratioTo` new shares (a 10:1 split is 1 -> 10,
+   * a 1:10 reverse split is 10 -> 1), `splitRatio` = ratioTo / ratioFrom (the SPLIT `ratio` to
+   * record), `priceFrom`/`priceTo`, `dateFrom`/`dateTo`, `instrumentId`, `source`
+   * ('provider' | 'prices').
+   */
+  data?: Record<string, string | number>;
 }
 
 export interface ResolvedOptions {
@@ -167,6 +188,12 @@ export interface EngineContext {
   sorted: SortedTx[];
   /** Rows rejected before processing (invalid date, filtered out...). */
   rejected: { tx: Transaction; code: string; message: string }[];
+  /**
+   * C52: recorded quantity-changing corporate actions per instrument (SPLIT, STOCK_DIVIDEND, SPINOFF
+   * with costFraction): day and cumulative factor. A price observed before such a day is divided by
+   * the factor accumulated up to the valuation day (prices are unadjusted; see splitAdjust).
+   */
+  splitAdj: Map<string, { days: number[]; cum: number[] }>;
   /** Trade prints per instrument (instrument currency, last trade of each day). */
   observations: Map<string, { days: number[]; prices: number[] }>;
   /** First trade price per day per instrument (intra-day pre-flow valuation). */
@@ -177,7 +204,7 @@ export interface EngineContext {
    * Diagnostics found while building the context: trade prints rejected (TRADE_PRICE_OUTLIER) or
    * used but unconfirmed (TRADE_PRICE_UNCONFIRMED), late recorded redemptions (LATE_REDEMPTION).
    */
-  outliers: { tx: Transaction; code: string; severity: Diagnostic['severity']; message: string }[];
+  outliers: { tx: Transaction; code: string; severity: Diagnostic['severity']; message: string; day?: number; data?: Diagnostic['data'] }[];
   /** C44: questionable trade prints (TRADE_PRICE_OUTLIER rejected, TRADE_PRICE_UNCONFIRMED used). */
   priceFlags: { day: number; instrumentId: string; code: PriceFlagCode }[];
   /** Tax residence (explicit or inferred from the portfolio base currency). */
@@ -217,7 +244,16 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   for (const i of input.instruments ?? []) instruments.set(i.id, i);
   const raw: EngineOptions = { ...(input.options ?? {}), ...(extra ?? {}) };
   const options = resolveOptions(input, extra);
-  const market = toEngineMarket(input.market);
+  let market = toEngineMarket(input.market);
+  // C56: pure renames of the shared table (same security, same price series)
+  const renames = new Map<string, string>(); // old id -> current id, for ids used here
+  const canon = (id: string | undefined): string | undefined => {
+    if (!id || raw.tickerRenames === false) return id;
+    const to = renamedTickerId(id);
+    if (!to) return id;
+    renames.set(id, to);
+    return to;
+  };
   const base = input.baseCurrency ?? input.portfolio.baseCurrency;
   const rejected: EngineContext['rejected'] = [];
   const accounts = raw.filter?.accounts;
@@ -229,9 +265,85 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       continue;
     }
     if (accounts && !accounts.includes(tx.account ?? '')) continue;
-    kept.push(tx);
+    const ci = canon(tx.instrumentId);
+    const ct = canon(tx.targetInstrumentId);
+    if (ci !== tx.instrumentId || ct !== tx.targetInstrumentId) {
+      const c: Transaction = { ...tx };
+      if (ci !== undefined) c.instrumentId = ci;
+      if (ct !== undefined) c.targetInstrumentId = ct;
+      kept.push(c);
+    } else kept.push(tx);
   }
   const sorted = sortTransactions(kept);
+  const renameNotes: EngineContext['outliers'] = [];
+  if (renames.size) {
+    const aliases = new Map<string, string>(); // current id -> old id whose prices to use
+    for (const [from, to] of renames) {
+      const old = instruments.get(from);
+      if (old && !instruments.has(to)) instruments.set(to, { ...old, id: to });
+      if (market.priceDayAt(to, Infinity) === -Infinity && market.priceDayAt(from, Infinity) > -Infinity) aliases.set(to, from);
+      const first = sorted.find((x) => x.tx.instrumentId === to || x.tx.targetInstrumentId === to);
+      if (first) renameNotes.push({ tx: first.tx, code: 'INSTRUMENT_RENAMED', severity: 'info', message: `${from} is now ${to} (same security, ticker rename); its transactions are booked under ${to}`, data: { fromId: from, toId: to } });
+    }
+    if (aliases.size) {
+      const base = market;
+      const al = (id: string) => aliases.get(id) ?? id;
+      const w = Object.create(base) as EngineMarket & Record<string, unknown>;
+      w.price = (id: string, d: ISODate) => base.price(al(id), d);
+      w.priceAt = (id: string, d: number) => base.priceAt(al(id), d);
+      w.pricePointAt = (id: string, d: number) => base.pricePointAt(al(id), d);
+      w.priceDayAt = (id: string, d: number) => base.priceDayAt(al(id), d);
+      w.pricePointAfter = (id: string, d: number) => base.pricePointAfter(al(id), d);
+      w.priceCurrency = (id: string) => base.priceCurrency(al(id));
+      w.dividends = (id: string, a: number, b: number) => base.dividends(al(id), a, b);
+      w.splitFactor = (id: string, a: number, b: number) => base.splitFactor(al(id), a, b);
+      market = w;
+    }
+  }
+
+  // C52: split/bonus/spin-off factors per instrument from the recorded ledger.
+  const splitAdj: EngineContext['splitAdj'] = new Map();
+  {
+    const q = new Map<string, number>();
+    for (const { tx, day } of sorted) {
+      const id = tx.instrumentId;
+      if (!id) continue;
+      const q0 = q.get(id) ?? 0;
+      const n = num(tx.quantity);
+      let f = 1;
+      if (tx.type === 'BUY' || tx.type === 'TRANSFER_IN') q.set(id, q0 + n);
+      else if (tx.type === 'SELL' || tx.type === 'TRANSFER_OUT') q.set(id, q0 - n);
+      else if (tx.type === 'SPLIT' && !tx.subtype) {
+        f = num(tx.ratio) > 0 ? num(tx.ratio) : 1;
+        q.set(id, q0 * f);
+      } else if (tx.type === 'STOCK_DIVIDEND') {
+        if (n > 0) f = q0 > 0 ? (q0 + n) / q0 : 1;
+        else f = 1 + num(tx.ratio);
+        q.set(id, q0 * f);
+      } else if (tx.type === 'SPLIT' && tx.subtype === 'SPINOFF') {
+        const cf = num(tx.costFraction);
+        if (cf > 0 && cf < 1) f = 1 / (1 - cf);
+      }
+      if (!(f > 0) || f === 1) continue;
+      let e = splitAdj.get(id);
+      if (!e) splitAdj.set(id, (e = { days: [], cum: [] }));
+      const prev = e.cum.length ? (e.cum[e.cum.length - 1] as number) : 1;
+      if (e.days[e.days.length - 1] === day) e.cum[e.cum.length - 1] = prev * f;
+      else {
+        e.days.push(day);
+        e.cum.push(prev * f);
+      }
+    }
+  }
+  const adj = (id: string, from: number, to: number): number => {
+    const e = splitAdj.get(id);
+    if (!e || from === to) return 1;
+    const ca = (x: number) => {
+      const i = lastIndexAtOrBefore(e.days, x);
+      return i < 0 ? 1 : (e.cum[i] as number);
+    };
+    return ca(to) / ca(from);
+  };
 
   // Trade prints as price observations (BUY/SELL only; transfer prices are historical costs).
   // C25/C37: a print that deviates more than `tradePriceTolerance` (default 30 %, x2 for crypto,
@@ -247,7 +359,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   // Tiny trades (< 0.5 % of the position) are not used when a market close exists that week.
   const observations = new Map<string, { days: number[]; prices: number[] }>();
   const firstTradePrice = new Map<number, Map<string, number>>();
-  const outliers: EngineContext['outliers'] = [];
+  const outliers: EngineContext['outliers'] = renameNotes;
   const priceFlags: EngineContext['priceFlags'] = [];
   const tol = raw.tradePriceTolerance ?? 0.3;
   const held = new Map<string, number>();
@@ -288,7 +400,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
   // C46: rejected prints waiting for a consistent successor, and the last unconfirmed print.
   type Outlier = EngineContext['outliers'][number];
   type Flag = EngineContext['priceFlags'][number];
-  const pending = new Map<string, { day: number; price: number; tx: Transaction; outlier: Outlier; flag: Flag }[]>();
+  const pending = new Map<string, { day: number; price: number; tx: Transaction; outlier: Outlier; flag: Flag; unit?: number }[]>();
   const unconfirmed = new Map<string, { day: number; outlier: Outlier; flag: Flag }>();
   const dropped = new Set<object>();
   const accept = (id: string, day: number, p: number) => {
@@ -309,9 +421,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       if (id && (tx.type === 'SPLIT' || tx.type === 'STOCK_DIVIDEND')) {
         const f = tx.type === 'SPLIT' ? (tx.subtype ? 1 : num(tx.ratio) || 1) : tx.quantity ? 1 : 1 + num(tx.ratio);
         held.set(id, (held.get(id) ?? 0) * f + (tx.type === 'STOCK_DIVIDEND' && tx.quantity ? num(tx.quantity) : 0));
-        // previous observations are pre-split: rescale them so the outlier check stays meaningful
-        const o = observations.get(id);
-        if (o && f !== 1) o.prices = o.prices.map((x) => x / f);
+        // previous observations stay unadjusted: references are split-adjusted on read (C52)
         if (f !== 1) {
           pending.delete(id);
           unconfirmed.delete(id);
@@ -332,8 +442,10 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         p *= r;
       }
       const o = observations.get(id);
-      const prevMarket = toInstCcy(inst, id, market.pricePointAt(id, day - 1));
-      const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: o.prices[o.prices.length - 1] as number } : undefined;
+      // C52: references observed before a recorded split are expressed in post-split terms
+      const pm0 = toInstCcy(inst, id, market.pricePointAt(id, day - 1));
+      const prevMarket = pm0 && { day: pm0.day, price: pm0.price / adj(id, pm0.day, day) };
+      const prevObs = o && o.days.length ? { day: o.days[o.days.length - 1] as number, price: (o.prices[o.prices.length - 1] as number) / adj(id, o.days[o.days.length - 1] as number, day) } : undefined;
       const prevRef = prevObs && (!prevMarket || prevObs.day > prevMarket.day) ? prevObs : prevMarket;
       if (tx.priceConfirmed === true) {
         // C46: a confirmed print is a new reference for the following ones
@@ -343,7 +455,8 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         continue;
       }
       const sameDay = market.pricePointAt(id, day);
-      const nextRef = toInstCcy(inst, id, sameDay && sameDay.day === day ? sameDay : market.pricePointAfter(id, day));
+      const nr0 = toInstCcy(inst, id, sameDay && sameDay.day === day ? sameDay : market.pricePointAfter(id, day));
+      const nextRef = nr0 && { day: nr0.day, price: nr0.price * adj(id, day, nr0.day) };
       const d1 = deviates(p, prevRef, day, inst);
       const d2 = deviates(p, nextRef, day, inst);
       const pct = Math.round(tol * 100);
@@ -369,17 +482,29 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         // C46/C48: two or more consecutive prints from DIFFERENT days that agree with each other
         // (and no close contradicts them) confirm the new level: the earlier ones are re-accepted
         // with this one (TRADE_PRICE_CONFIRMED_BY_RUN, a warning that reaches rows and summaries).
-        // Same-day fills are one piece of evidence; unit-like factors (x10, x100, /1000...) are
-        // never confirmed automatically (TRADE_PRICE_UNIT_SUSPECT, needs priceConfirmed).
+        // Same-day fills are one piece of evidence. Unit-like factors (x100, /1000...) are never
+        // confirmed automatically (TRADE_PRICE_UNIT_SUSPECT, needs priceConfirmed, which also
+        // re-anchors the following prints). C53: a factor of about x10 or /10 is accepted as a real
+        // move after 3 consistent prints on distinct days, keeping the UNIT_SUSPECT warnings.
         const run = pending.get(id) ?? [];
         const lastP = run[run.length - 1];
-        if (!reject.unit && d2 !== true && lastP && run.some((r) => r.day !== day) && deviates(p, lastP, day, inst) === false) {
+        const tenish = (u: number | undefined) => u === undefined || u === 10 || u === 0.1;
+        const unitRun = !!reject.unit || run.some((r) => r.unit !== undefined);
+        const days = new Set([...run.map((r) => r.day), day]).size;
+        const enough = unitRun ? days >= 3 && tenish(reject.unit) && run.every((r) => tenish(r.unit)) : days >= 2;
+        if (d2 !== true && lastP && enough && deviates(p, lastP, day, inst) === false) {
           for (const r of run) {
-            dropped.add(r.outlier);
-            dropped.add(r.flag);
+            if (r.unit === undefined) {
+              dropped.add(r.outlier);
+              dropped.add(r.flag);
+            }
             outliers.push({ tx: r.tx, code: 'TRADE_PRICE_CONFIRMED_BY_RUN', severity: 'warning', message: `Trade price ${r.price} of ${id} was rejected and then confirmed by later consistent trade prices (${dayToIso(day)}: ${p}); used as the price — check that it is not a systematic import error` });
             priceFlags.push({ day: r.day, instrumentId: id, code: 'TRADE_PRICE_CONFIRMED_BY_RUN' });
             accept(id, r.day, r.price);
+          }
+          if (reject.unit) {
+            outliers.push({ tx, code: 'TRADE_PRICE_UNIT_SUSPECT', severity: 'warning', message: `${reject.message} — accepted because ${days} consistent prices on distinct days confirm the new level` });
+            priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_UNIT_SUSPECT' });
           }
           priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_CONFIRMED_BY_RUN' });
           pending.delete(id);
@@ -392,11 +517,11 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
         const flag = { day, instrumentId: id, code };
         outliers.push(outlier);
         priceFlags.push(flag);
-        if (reject.unit) continue;
+        if (reject.unit && !tenish(reject.unit)) continue;
         if (d2 !== true) {
           // keep only the latest run of mutually consistent rejected prints
           const keep = lastP && deviates(p, lastP, day, inst) === false ? run : [];
-          keep.push({ day, price: p, tx, outlier, flag });
+          keep.push({ day, price: p, tx, outlier, flag, unit: reject.unit });
           pending.set(id, keep.slice(-5));
         }
         continue;
@@ -421,11 +546,17 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     }
   }
 
-  // C50: a jump between two consecutive prices (market closes, or accepted trade prints) close to a
-  // common split ratio while the position is held, with no SPLIT/STOCK_DIVIDEND recorded around it,
-  // is reported as POSSIBLE_UNRECORDED_SPLIT (warning, also in rows and summaries).
+  // C50/C54: a jump between two consecutive prices (market closes, or accepted trade prints) close to
+  // a split ratio while the position is held, with no SPLIT/STOCK_DIVIDEND recorded around it:
+  // - the provider lists a split there (MarketData corporate actions): warning, source 'provider';
+  // - price-only evidence: ratios 4, 5, 8, 10, 20, 25, 50, 100 (or inverses) within 3 % on daily
+  //   gaps (widening to ~11 % for month-end series) and a level that persists: warning; ratios 2 and
+  //   3 need gaps up to 4 days and 1 % and are info only (real crashes look the same);
+  // - a fall to about 1/1000 is POSSIBLE_REDENOMINATION (cash is not redenominated by the engine).
+  // Crypto is excluded (no splits). Warnings also reach rows and summaries; the diagnostic carries
+  // the ratio as structured `data` (ratioFrom old shares -> ratioTo new shares).
   {
-    const RATIOS = [2, 3, 4, 5, 8, 10, 20, 25, 50, 100];
+    const RATIOS = [2, 3, 4, 5, 8, 10, 20, 25, 50, 100, 1000];
     const qty = new Map<string, number>();
     const intervals = new Map<string, [number, number][]>();
     const splits = new Map<string, number[]>();
@@ -455,39 +586,60 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
       if (q0 <= QTY_EPS && q1 > QTY_EPS) iv.push([day, Infinity]);
       else if (q0 > QTY_EPS && q1 <= QTY_EPS && iv.length) (iv[iv.length - 1] as [number, number])[1] = day;
     }
-    const near = (a: { day: number; close: number }, b: { day: number; close: number }): number | undefined => {
+    type Pt = { day: number; close: number };
+    // returns new shares per old share (k for a k:1 split, 1/k for a 1:k reverse split)
+    const near = (a: Pt, b: Pt, after: Pt | undefined): { shares: number; strong: boolean } | undefined => {
       if (!(a.close > 0) || !(b.close > 0)) return undefined;
       const r = b.close / a.close;
       const gap = b.day - a.day;
-      const t = Math.min(0.15, 0.05 * Math.max(1, Math.sqrt(gap / 7)));
+      if (after && after.day - b.day <= 10 && Math.abs(after.close / b.close - 1) > 0.25) return undefined; // level must persist
       for (const k of RATIOS) {
-        if (k <= 3 && gap > 10) continue;
-        if (Math.abs(r * k - 1) <= t) return k;
-        if (Math.abs(r / k - 1) <= t) return 1 / k;
+        const small = k <= 3;
+        if (small && gap > 4) continue;
+        const t = small ? 0.01 : Math.min(0.15, 0.03 * Math.max(1, Math.sqrt(gap / 2)));
+        if (Math.abs(r * k - 1) <= t) return { shares: k, strong: !small };
+        if (k < 1000 && Math.abs(r / k - 1) <= t) return { shares: 1 / k, strong: !small };
       }
       return undefined;
     };
     for (const [id, ivs] of intervals) {
+      if (instruments.get(id)?.assetClass === 'crypto') continue;
       const sp = splits.get(id) ?? [];
       const obs = observations.get(id);
       const flagged = new Set<number>();
-      const report = (a: { day: number; close: number }, b: { day: number; close: number }) => {
-        const k = near(a, b);
-        if (k === undefined || flagged.has(b.day)) return;
-        if (sp.some((d) => d >= a.day - 3 && d <= b.day + 3)) return;
+      const report = (a: Pt, b: Pt, after: Pt | undefined) => {
+        if (flagged.has(b.day) || sp.some((d) => d >= a.day - 3 && d <= b.day + 3)) return;
+        const provider = market.splitFactor(id, a.day, b.day);
+        let hit = near(a, b, after);
+        let source = 'prices';
+        if (provider !== 1 && provider > 0) {
+          hit = { shares: provider, strong: true };
+          source = 'provider';
+        }
+        if (!hit) return;
         flagged.add(b.day);
         const list = txsOf.get(id) ?? [];
         const ref = list.find((x) => x.day >= b.day) ?? list[list.length - 1];
         if (!ref) return;
-        const label = k < 1 ? `${Math.round(1 / k)}:1 split` : `1:${Math.round(k)} reverse split`;
-        outliers.push({ tx: ref.tx, code: 'POSSIBLE_UNRECORDED_SPLIT', severity: 'warning', message: `The price of ${id} went from ${a.close} (${dayToIso(a.day)}) to ${b.close} (${dayToIso(b.day)}), close to a ${label}, and no split is recorded; if there was one, record it (applyCorporateActions can suggest it)` });
-        priceFlags.push({ day: b.day, instrumentId: id, code: 'POSSIBLE_UNRECORDED_SPLIT' });
+        const k = hit.shares;
+        const redenom = source === 'prices' && k > 999;
+        const ratioFrom = k >= 1 ? 1 : Math.round(1 / k);
+        const ratioTo = k >= 1 ? Math.round(k) : 1;
+        const data = { instrumentId: id, ratioFrom, ratioTo, splitRatio: ratioTo / ratioFrom, priceFrom: a.close, priceTo: b.close, dateFrom: dayToIso(a.day), dateTo: dayToIso(b.day), source };
+        if (redenom) {
+          outliers.push({ tx: ref.tx, day: b.day, data, code: 'POSSIBLE_REDENOMINATION', severity: 'warning', message: `The price of ${id} went from ${a.close} (${dayToIso(a.day)}) to ${b.close} (${dayToIso(b.day)}), about 1/1000: a currency redenomination or a 1000:1 split? Record a SPLIT if it was a split; the engine does not redenominate cash or past flows` });
+          priceFlags.push({ day: b.day, instrumentId: id, code: 'POSSIBLE_REDENOMINATION' });
+          return;
+        }
+        const label = k >= 1 ? `${ratioTo}:1 split (${ratioTo} new shares per share)` : `1:${ratioFrom} reverse split (1 new share per ${ratioFrom})`;
+        outliers.push({ tx: ref.tx, day: b.day, data, code: 'POSSIBLE_UNRECORDED_SPLIT', severity: hit.strong ? 'warning' : 'info', message: `The price of ${id} went from ${a.close} (${dayToIso(a.day)}) to ${b.close} (${dayToIso(b.day)}), consistent with a ${label}${source === 'provider' ? ' listed by the data provider' : ''}, and no split is recorded; if there was one, record it (SPLIT ratio ${ratioTo / ratioFrom}; applyCorporateActions can suggest it)` });
+        if (hit.strong) priceFlags.push({ day: b.day, instrumentId: id, code: 'POSSIBLE_UNRECORDED_SPLIT' });
       };
       for (const [s0, e0] of ivs) {
         let prev = market.pricePointAt(id, s0);
         let guard = 0;
         for (let nx = market.pricePointAfter(id, prev ? prev.day : s0 - 1); nx && nx.day <= e0 && guard < 1_000_000; nx = market.pricePointAfter(id, nx.day), guard++) {
-          if (prev) report(prev, nx);
+          if (prev) report(prev, nx, market.pricePointAfter(id, nx.day));
           prev = nx;
         }
         if (obs) {
@@ -498,7 +650,8 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
             // only when no market close lies between them (closes are checked above)
             const pm = market.pricePointAt(id, d);
             if (pm && pm.day >= d0) continue;
-            report({ day: d0, close: obs.prices[i - 1] as number }, { day: d, close: obs.prices[i] as number });
+            const nd = obs.days[i + 1];
+            report({ day: d0, close: obs.prices[i - 1] as number }, { day: d, close: obs.prices[i] as number }, nd === undefined ? undefined : { day: nd, close: obs.prices[i + 1] as number });
           }
         }
       }
@@ -542,6 +695,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     rejected,
     observations,
     firstTradePrice,
+    splitAdj,
     maturities,
     outliers: dropped.size ? outliers.filter((x) => !dropped.has(x)) : outliers,
     priceFlags: dropped.size ? priceFlags.filter((x) => !dropped.has(x)) : priceFlags,
@@ -576,7 +730,7 @@ export function priceFlagWarnings(ctx: EngineContext, startDay: number, endDay: 
 const CASH_EPS = 1e-7;
 
 /** Codes of questionable prices that reach MonthlyRow/PerformanceSummary warnings. */
-export type PriceFlagCode = 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED' | 'TRADE_PRICE_UNIT_SUSPECT' | 'TRADE_PRICE_CONFIRMED_BY_RUN' | 'POSSIBLE_UNRECORDED_SPLIT';
+export type PriceFlagCode = 'TRADE_PRICE_OUTLIER' | 'TRADE_PRICE_UNCONFIRMED' | 'TRADE_PRICE_UNIT_SUSPECT' | 'TRADE_PRICE_CONFIRMED_BY_RUN' | 'POSSIBLE_UNRECORDED_SPLIT' | 'POSSIBLE_REDENOMINATION';
 
 /** Who a coupon belongs to and how much interest accrued over its period (see Ledger.couponPlan). */
 interface CouponPlan {
@@ -618,6 +772,8 @@ export class Ledger {
   /** Index into ctx.sorted of the next transaction to process. */
   cursor = 0;
   private matCursor = 0;
+  /** C56: merger cash receivables (credited on the ex-date, paid on payDay). */
+  readonly receivables: { currency: CurrencyCode; amount: number; payDay: number; account: string }[] = [];
   /** C42: day of the last coupon paid per accrual instrument. */
   private readonly lastCoupon = new Map<string, number>();
   /** Day of the last processed transaction (or -Infinity). */
@@ -633,7 +789,7 @@ export class Ledger {
 
   constructor(readonly ctx: EngineContext) {
     for (const r of ctx.rejected) this.diag(r.tx, NaN, r.code, r.message, 'error');
-    for (const o of ctx.outliers) this.diag(o.tx, isoToDay(o.tx.date), o.code, o.message, o.severity);
+    for (const o of ctx.outliers) this.diag(o.tx, o.day ?? isoToDay(o.tx.date), o.code, o.message, o.severity, o.data);
   }
 
   get done(): boolean {
@@ -686,9 +842,11 @@ export class Ledger {
 
   // ---- helpers --------------------------------------------------------------
 
-  diag(tx: Transaction | undefined, day: number, code: string, message: string, severity: Diagnostic['severity'] = 'warning'): void {
+  diag(tx: Transaction | undefined, day: number, code: string, message: string, severity: Diagnostic['severity'] = 'warning', data?: Diagnostic['data']): void {
     if (this.diagnostics.length < 5000) {
-      this.diagnostics.push({ transactionId: tx?.id, date: Number.isFinite(day) ? dayToIso(day) : String(tx?.date ?? ''), code, message, severity });
+      const d: Diagnostic = { transactionId: tx?.id, date: Number.isFinite(day) ? dayToIso(day) : String(tx?.date ?? ''), code, message, severity };
+      if (data) d.data = data;
+      this.diagnostics.push(d);
     }
   }
 
@@ -793,8 +951,16 @@ export class Ledger {
    * without an account. Rows without an account may use the whole balance of the currency.
    */
   private availableFor(ccy: CurrencyCode, acct: string): number {
-    if (acct === NO_ACCOUNT) return Math.max(this.cash.get(ccy) ?? 0, 0);
-    return Math.max(this.acctCash(ccy, acct), 0) + Math.max(this.acctCash(ccy, NO_ACCOUNT), 0);
+    const pending = this.receivables.length ? this.pendingReceivable(ccy, this.curDay, acct) : 0;
+    if (acct === NO_ACCOUNT) return Math.max((this.cash.get(ccy) ?? 0) - pending, 0);
+    return Math.max(this.acctCash(ccy, acct) + Math.max(this.acctCash(ccy, NO_ACCOUNT), 0) - pending, 0);
+  }
+
+  /** C56: merger cash credited on the ex-date but paid later (not yet available on `day`). */
+  pendingReceivable(ccy: CurrencyCode, day: number, acct?: string): number {
+    let s = 0;
+    for (const r of this.receivables) if (r.currency === ccy && r.payDay > day && (acct === undefined || r.account === acct || r.account === NO_ACCOUNT)) s += r.amount;
+    return s;
   }
 
   /** Move unassigned cash ('' account) into `acct` (bookkeeping only; totals unchanged). */
@@ -1133,6 +1299,11 @@ export class Ledger {
       return p !== undefined ? ((qty * p) / mult(inst)) * this.X(inst.currency, day) : fallback;
     };
     const parentQty = pb.lots.reduce((acc, l) => acc + l.quantity, 0);
+    if (!(parentQty > QTY_EPS)) {
+      // C55: nothing to hand over (e.g. the parent was already consumed by another action that day)
+      this.diag(tx, day, 'CORPORATE_ACTION_WITHOUT_POSITION', `${tx.subtype} of ${parent.id} into ${targetId}: no units of ${parent.id} are held, so no ${targetId} is received; check the order and dates of the corporate actions`, 'warning', { instrumentId: parent.id, targetInstrumentId: targetId });
+      return;
+    }
     const cashPart = tx.subtype !== 'SPINOFF' ? num(tx.amount) : 0;
     // C38: a merger / ticker change hands over the parent at ITS OWN last close (cash included);
     // any difference to the target's price is the target's return from then on.
@@ -1160,12 +1331,27 @@ export class Ledger {
         this.pushRealized({ day, instrumentId: parent.id, sellDate: tx.date, openDate: dayToIso(l.openDay), quantity: 0, proceeds, cost, gain: proceeds - cost, proceedsBase, costBase, gainBase: proceedsBase - costBase, holdingDays: day - l.openDay });
       }
       this.credit(tx, tx.currency, cashPart);
+      if (tx.cashPayDate && isStrictIsoDate(tx.cashPayDate) && isoToDay(tx.cashPayDate) > day) {
+        this.receivables.push({ currency: tx.currency, amount: cashPart, payDay: isoToDay(tx.cashPayDate), account: tx.account ?? NO_ACCOUNT });
+        this.diag(tx, day, 'MERGER_CASH_PENDING', `Merger cash of ${cashPart} ${tx.currency} for ${parent.id} is paid on ${tx.cashPayDate}; until then it is a receivable (counted in the value, not available to fund trades)`, 'info', { instrumentId: parent.id, amount: cashPart, currency: tx.currency, payDate: tx.cashPayDate });
+      }
       this.positionFlow(parent.id, day).startOutBase += cashPart * this.X(tx.currency, day, this.hintFor(tx.currency));
       this.pf = undefined;
     }
     let moved: LotState[];
-    if (tx.subtype === 'SPINOFF') moved = pb.carveOutCost(tx.costFraction ?? 0);
-    else moved = pb.extractAll();
+    if (tx.subtype === 'SPINOFF') {
+      let cf = tx.costFraction;
+      if (!(cf !== undefined && cf >= 0 && cf <= 1)) {
+        // C55: no cost fraction given: split the cost by market value (target / parent before)
+        const pp = this.marketPrice(parent, day);
+        const pt = this.marketPrice(target, day);
+        const vp = pp !== undefined ? ((parentQty * pp) / mult(parent)) * this.X(parent.currency, day) : undefined;
+        const vt = pt !== undefined ? ((parentQty * r * pt) / mult(target)) * this.X(target.currency, day) : undefined;
+        cf = vp !== undefined && vt !== undefined && vp > 0 ? Math.min(1, vt / vp) : 0;
+        this.diag(tx, day, 'COST_FRACTION_ESTIMATED', `SPINOFF of ${parent.id} into ${targetId} without costFraction: ${(cf * 100).toFixed(1)} % of the cost assigned to ${targetId} by market value; record the official split of the cost to override`, 'info', { instrumentId: parent.id, targetInstrumentId: targetId, costFraction: cf });
+      }
+      moved = pb.carveOutCost(cf);
+    } else moved = pb.extractAll();
     const scaled = moved.map((l) => ({ ...l, quantity: l.quantity * r, unitCost: l.unitCost / r, unitCostBase: l.unitCostBase / r, unitValue: l.unitValue / r }));
     const qty = scaled.reduce((acc, l) => acc + l.quantity, 0);
     const costBase = scaled.reduce((acc, l) => acc + l.quantity * l.unitCostBase, 0);

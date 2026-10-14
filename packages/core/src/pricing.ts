@@ -31,6 +31,21 @@ function multiplier(m: number | undefined): number {
 }
 
 /** Latest market/manual close on or before day (instrument currency), without trade prints. */
+/**
+ * C52: factor of the recorded splits / bonus shares / spin-offs between a price observed on `from`
+ * and the day `to` it is used for (prices are unadjusted; quantities change on the ex-date). A price
+ * observed on an ex-date is already post-split. Divide the observed price by it.
+ */
+export function splitAdjust(ctx: EngineContext, id: string, from: number, to: number): number {
+  const e = ctx.splitAdj.get(id);
+  if (!e || from >= to) return 1;
+  const b = lastIndexAtOrBefore(e.days, to);
+  if (b < 0) return 1;
+  const a = lastIndexAtOrBefore(e.days, from);
+  if (a === b) return 1;
+  return (e.cum[b] as number) / (a < 0 ? 1 : (e.cum[a] as number));
+}
+
 export function marketInfo(ctx: EngineContext, inst: Instrument, day: number): PriceInfo | undefined {
   const m = ctx.market;
   const pt = m.pricePointAt(inst.id, day);
@@ -41,7 +56,7 @@ export function marketInfo(ctx: EngineContext, inst: Instrument, day: number): P
     const r = m.fxAt(pc, inst.currency, day) ?? m.fxNearest(pc, inst.currency, day);
     p = r === undefined ? undefined : p * r;
   }
-  return p === undefined ? undefined : { price: p, day: pt.day, source: 'market' };
+  return p === undefined ? undefined : { price: p / splitAdjust(ctx, inst.id, pt.day, day), day: pt.day, source: 'market' };
 }
 
 /** Latest price observation (market close or trade print) on or before day, instrument currency. */
@@ -66,6 +81,7 @@ export function priceInfo(ctx: EngineContext, inst: Instrument, day: number): Pr
       if (!best || od > best.day) best = { price: obs.prices[i] as number, day: od, source: 'trade' };
     }
   }
+  if (best && ctx.splitAdj.size) best.price /= splitAdjust(ctx, inst.id, best.day, day);
   return best;
 }
 
@@ -209,15 +225,21 @@ export function quickValue(ledger: Ledger, book: LotBook, inst: Instrument, day:
     oi = lastIndexAtOrBefore(obs.days, day);
     if (oi >= 0) od = obs.days[oi] as number;
   }
-  if (od > pd) price = obs!.prices[oi] as number;
-  else if (pd > -Infinity) {
+  let used = -Infinity;
+  if (od > pd) {
+    price = obs!.prices[oi] as number;
+    used = od;
+  } else if (pd > -Infinity) {
     const p = m.priceAt(id, day) as number;
     const pc = m.priceCurrency(id);
+    used = pd;
     if (pc && pc !== inst.currency) {
       const r = m.fxAt(pc, inst.currency, day) ?? m.fxNearest(pc, inst.currency, day);
+      if (r === undefined && od > -Infinity) used = od;
       price = r === undefined ? (od > -Infinity ? (obs!.prices[oi] as number) : undefined) : p * r;
     } else price = p;
   }
+  if (price !== undefined && ctx.splitAdj.size) price /= splitAdjust(ctx, id, used, day);
   const base = ctx.base;
   let exact: number | undefined;
   let rate: number | undefined;

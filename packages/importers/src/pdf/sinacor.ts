@@ -124,6 +124,8 @@ export interface SinacorTrade {
   lineIndex: number;
   /** Continuation lines appended to the specification. */
   wrapped?: number;
+  /** Decimals printed in the price (for the quantity × price = value check). */
+  priceDecimals?: number;
 }
 
 const OBS_RE = /\s+(#|D|F|T|@|2|8|B|C|H|X|P|Y|L|A|I)$/i;
@@ -158,7 +160,7 @@ export function parseTradeLine(text: string, lineIndex: number, columnObs?: stri
     obs = mo[1]!.toUpperCase() + obs;
     spec = spec.slice(0, mo.index).trim();
   }
-  const r: SinacorTrade = { side: m[1] as 'C' | 'V', market, spec, quantity, price, value, obs, dayTrade: obs.includes('D'), lineIndex };
+  const r: SinacorTrade = { side: m[1] as 'C' | 'V', market, spec, quantity, price, value, obs, dayTrade: obs.includes('D'), lineIndex, priceDecimals: nums[2]!.split(',')[1]!.length };
   if (nums[4]) r.dc = nums[4] as 'D' | 'C';
   return r;
 }
@@ -174,7 +176,13 @@ const FEE_LABELS: [RegExp, string][] = [
   [/taxa de cust[oó]dia/i, 'custodia'],
   [/impostos|\biss\b/i, 'iss'],
   [/\boutros\b|\boutras\b/i, 'outros'],
+  [/taxa de transf(?:er[eê]ncia|\.)?\s*(?:de\s*)?ativos/i, 'transferencia'],
+  [/\biof\b/i, 'iof'],
+  [/taxa de servi[cç]o/i, 'servico'],
 ];
+
+/** Summary labels that are totals, trade values or IRRF — never a cost of their own. */
+const NON_COST_RE = /valor l[ií]quido|total|l[ií]quido para|vendas|compras|op[cç][oõ]es|deb[eê]ntures|valor das op|opera[cç][oõ]es|clearing|bolsa|custos operacionais|\bbase\b|i\.?\s?r\.?\s?r\.?\s?f|proje[cç][aã]o|day trade|t[ií]tulos p[uú]bl|ajuste|corretagem|subtotal/i;
 
 const BROKER_RE = /(CCTVM|CTVM|DTVM|CORRETORA|DISTRIBUIDORA|INVESTIMENTOS|BANCO DE INVESTIMENTO)/i;
 
@@ -207,12 +215,22 @@ export interface SinacorNote {
   firstLine: number;
   /** Lines of "Negócios realizados" that look like trades but could not be read (OCR noise, broken layout). */
   unparsed: { lineIndex: number; text: string }[];
+  /** Futures / BM&F lines (unsupported, not errors). */
+  futures: { lineIndex: number; text: string }[];
+  /** "Label  value D" pairs of the Resumo Financeiro that are no known cost (I43: "outras taxas" when they reconcile). */
+  otherFees: { label: string; value: number }[];
+}
+
+/** BM&F / futures lines (WIN, WDO, IND, DOL, DI1…): not supported, never "unreadable". */
+function looksLikeFutures(text: string): boolean {
+  const t = normalizeText(text).toUpperCase();
+  return /^(\d+\s*)?(BMF|BM F|B3 BMF)\b/.test(t) || /\b(WIN|WDO|IND|DOL|BGI|CCM|ICF|DI1|SJC|WSP|ISP|DDI|FRC)[FGHJKMNQUVXZ]\d{2}\b/.test(t);
 }
 
 /** A line that should be a trade: starts with the Q Negociação / C/V / market columns. */
 function looksLikeTrade(text: string): boolean {
   const t = normalizeText(text).toUpperCase();
-  return /^(\d+\s*)?(BOVESPA|B3 RV LISTADO|BMF|B3 RF)\b/.test(t) || /^[CV]\s+(VISTA|FRACIONARIO|OPCAO|TERMO|EXERC|LEILAO|FUTURO)\b/.test(t);
+  return /^(\d+\s*)?(BOVESPA|B3 RV LISTADO|B3 RF)\b/.test(t) || /^[CV]\s+(VISTA|FRACIONARIO|OPCAO|TERMO|EXERC|LEILAO|FUTURO)\b/.test(t);
 }
 
 const DATE_RE = /(\d{2}\/\d{2}\/\d{4})/;
@@ -256,15 +274,17 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
   let inTrades = false;
   let obsRange: [number, number] | undefined;
   let specX: number | undefined;
+  let inSummary = false;
   let broker: string | undefined;
   const lines = doc.lines;
   const open = (nr: string, i: number, date: string | undefined) => {
     current = notes.get(nr);
     if (!current) {
-      current = { number: nr, trades: [], fees: new Map(), irrf: 0, irrfDayTrade: 0, firstLine: i, unparsed: [] };
+      current = { number: nr, trades: [], fees: new Map(), irrf: 0, irrfDayTrade: 0, firstLine: i, unparsed: [], futures: [], otherFees: [] };
       notes.set(nr, current);
     }
     if (date && !current.date) current.date = parseDate(date, 'DMY');
+    inSummary = false;
     // The broker name is printed beside / below the header block on each page.
     const near = lines.slice(Math.max(0, i - 4), i + 10).map(brokerCell).find(Boolean);
     if (near) current.broker = near;
@@ -338,10 +358,22 @@ export function parseSinacor(doc: PdfDocument): SinacorNote[] {
         prev.wrapped = (prev.wrapped ?? 0) + 1;
         continue;
       }
-      if (looksLikeTrade(text) || /\d[\d.]*,\d{2}\s*[DC]?\s*$/.test(text.trim())) current.unparsed.push({ lineIndex: i, text: text.trim() });
+      if (looksLikeFutures(text)) current.futures.push({ lineIndex: i, text: text.trim() });
+      else if (looksLikeTrade(text) || /\d[\d.]*,\d{2}\s*[DC]?\s*$/.test(text.trim())) current.unparsed.push({ lineIndex: i, text: text.trim() });
       continue;
     }
-    for (const { key, value } of labelValues(text)) current.fees.set(key, value);
+    const known = labelValues(text);
+    for (const { key, value } of known) current.fees.set(key, value);
+    if (/resumo financeiro/i.test(text)) inSummary = true;
+    if (inSummary) {
+      // Unknown cost labels ("Taxa de Transf. de Ativos 0,50 D"): kept aside; used only if they reconcile.
+      for (const m of text.matchAll(/([A-Za-zÀ-ÿ][^\d\n]{2,60}?)\s+(\d[\d.]*,\d{2})\s*([DC])?(?=\s|$)/g)) {
+        const label = m[1]!.replace(/\s{2,}.*$/, '').trim();
+        if (!label || NON_COST_RE.test(label) || FEE_LABELS.some(([re]) => re.test(label))) continue;
+        if (/^(dc|d|c)$/i.test(label)) continue;
+        current.otherFees.push({ label, value: (parseNumber(m[2]!, 'comma') ?? 0) * (m[3] === 'C' ? -1 : 1) });
+      }
+    }
     if (/I\.?\s?R\.?\s?R\.?\s?F/i.test(text)) {
       const last = /(\d[\d.]*,\d{2})\s*$/.exec(text);
       const v = last ? parseNumber(last[1]!, 'comma') ?? 0 : 0;
@@ -416,10 +448,19 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
       row.issues.push(ctx.issue('UNPARSED_LINE', 'error', params, row.line));
       rows.push(row);
     }
+    // BM&F / futures lines: unsupported (I46), never "unreadable".
+    for (const f of note.futures) {
+      const row = ctx.newRow(f.lineIndex);
+      row.sheet = `pág. ${doc.lines[f.lineIndex]?.page ?? 1}`;
+      row.raw = [f.text];
+      ctx.skip(row, 'UNSUPPORTED_ASSET', { value: 'futuro (BM&F)' }, 'warning');
+      rows.push(row);
+    }
     if (!note.trades.length) {
-      if (!note.unparsed.length) ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: note.number }));
+      if (!note.unparsed.length && !note.futures.length) ctx.fileIssues.push(ctx.issue('NOTE_WITHOUT_TRADES', 'warning', { nota: note.number }));
       continue;
     }
+    const mismatchLines: number[] = [];
     type Item = { row: ParsedRow; tr: SinacorTrade; d?: DraftTransaction; derivative: boolean };
     const items: Item[] = [];
     for (const tr of note.trades) {
@@ -436,6 +477,21 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
       }
       if (!note.date) {
         row.issues.push(ctx.issue('INVALID_DATE', 'error', { value: '' }, row.line));
+        continue;
+      }
+      // Quantity × price must give the printed value (I40): an OCR digit error ("180" for "100") passes
+      // every other check. Tolerance: the value's rounding plus the price's own rounding × quantity.
+      const tol = 0.011 + tr.quantity * 0.5 * 10 ** -(tr.priceDecimals ?? 2);
+      if (Math.abs(tr.quantity * tr.price - tr.value) > tol) {
+        const params: Record<string, string | number> = { nota: note.number, spec: tr.spec, quantity: tr.quantity, price: tr.price, value: tr.value };
+        const q = tr.value / tr.price;
+        const readings: string[] = [];
+        if (Math.abs(q - Math.round(q)) < 1e-6 && Math.round(q) > 0) readings.push(`${Math.round(q)} × ${tr.price}`);
+        const p = round(tr.value / tr.quantity, tr.priceDecimals ?? 2);
+        if (Math.abs(tr.quantity * p - tr.value) <= tol) readings.push(`${tr.quantity} × ${p}`);
+        if (readings.length) params.reading = readings.join(' / ');
+        row.issues.push(ctx.issue('QTY_PRICE_VALUE_MISMATCH', 'error', params, row.line));
+        mismatchLines.push(row.line);
         continue;
       }
       // Order: the user's explicit answers, the certain tables, then what was learned from earlier notes.
@@ -482,10 +538,25 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
     const sells = items.filter((x) => x.tr.side === 'V').reduce((a, x) => a + x.tr.value, 0);
     const buys = items.filter((x) => x.tr.side === 'C').reduce((a, x) => a + x.tr.value, 0);
     const termo = note.fees.get('termo') ?? 0;
-    const general = [...note.fees.entries()].filter(([k]) => k !== 'termo').reduce((a, [, v]) => a + v, 0);
-    const expected = round(sells - buys - general - termo - note.irrf - note.irrfDayTrade, 2);
-    const mismatch = note.net !== undefined && Math.abs(expected - note.net) > 0.05;
+    let general = [...note.fees.entries()].filter(([k]) => k !== 'termo').reduce((a, [, v]) => a + v, 0);
+    let expected = round(sells - buys - general - termo - note.irrf - note.irrfDayTrade, 2);
+    // Tolerance grows with the number of trades (each value is rounded to the cent) — I43.
+    const tolNet = 0.05 + 0.01 * items.length;
+    let mismatch = note.net !== undefined && Math.abs(expected - note.net) > tolNet;
     const firstKept = items.find((x) => x.d);
+    // A cost label we do not know ("Taxa de Transf. de Ativos") that explains the difference exactly is
+    // accepted as "outras taxas" (warning).
+    if (mismatch && note.net !== undefined) {
+      const residual = round(expected - note.net, 2);
+      const other = note.otherFees.find((f) => Math.abs(f.value - residual) <= tolNet);
+      if (other) {
+        general = round(general + other.value, 8);
+        expected = round(expected - other.value, 2);
+        mismatch = false;
+        const x = firstKept ?? items[0]!;
+        x.row.issues.push(ctx.issue('UNKNOWN_FEE_ACCEPTED', 'warning', { nota: note.number, label: other.label, amount: other.value }, x.row.line));
+      }
+    }
     if (mismatch) {
       const x = firstKept ?? items[0]!;
       x.row.issues.push(ctx.issue('NOTA_TOTALS_MISMATCH', 'warning', { nota: note.number, expected, actual: note.net! }, x.row.line));
@@ -494,7 +565,7 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
     // be spread over the wrong trades. Its rows wait for the user: fix the lines / answer, or accept the
     // note with `acceptNotes: [number]`.
     const accepted = (ctx.options.acceptNotes ?? []).includes(note.number);
-    if ((mismatch || note.unparsed.length) && !accepted) {
+    if ((mismatch || note.unparsed.length || mismatchLines.length) && !accepted) {
       for (const x of items) if (x.d) x.row.pending = true;
       if (firstKept) firstKept.row.issues.push(ctx.issue('NOTE_REVIEW_REQUIRED', 'warning', { nota: note.number }, firstKept.row.line));
       else if (items[0]) items[0].row.issues.push(ctx.issue('NOTE_REVIEW_REQUIRED', 'warning', { nota: note.number }, items[0].row.line));
@@ -504,10 +575,20 @@ export function sinacorToRows(doc: PdfDocument, ctx: ParseContext): ParsedRow[] 
         ...(note.net !== undefined ? { actualNet: note.net } : {}),
         expectedNet: expected,
         unparsedLines: note.unparsed.map((u) => ctx.table.lines[u.lineIndex] ?? u.lineIndex + 1),
+        mismatchLines,
         lines: items.map((x) => x.row.line),
         costs: round(general + termo, 2),
       });
       continue;
+    }
+    // Accepted although it does not add up: the leftover that "Líquido para" confirms is a cost too
+    // (I43) — kept as "outras taxas" when it has the sign of a cost.
+    if (accepted && mismatch && note.net !== undefined) {
+      const residual = round(expected - note.net, 2);
+      if (residual > 0) {
+        general = round(general + residual, 8);
+        (firstKept ?? items[0]!).row.issues.push(ctx.issue('OTHER_FEES_FROM_NET', 'info', { nota: note.number, amount: residual }, (firstKept ?? items[0]!).row.line));
+      }
     }
     // Costs: every cost is spread over ALL trades of the note by value (options included, so their
     // share is not loaded onto the spot trades); Taxa de termo/opções only over options/termo trades.

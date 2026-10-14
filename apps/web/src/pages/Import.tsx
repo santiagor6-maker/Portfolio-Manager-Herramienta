@@ -16,6 +16,8 @@ import { createPortfolio } from '../db/repo';
 import { downloadText } from '../lib/export';
 import { IbkrSyncCard, syncErrorText, type SyncOrigin } from '../components/IbkrSync';
 import { clearIbkrInbox } from '../services/ibkrSync';
+import { EmailInboxCard } from '../components/EmailInbox';
+import { clearEmailDrafts } from '../services/emailInbox';
 import { CURRENCY_CODES } from '../lib/currencies';
 import { formatDate, formatMoney, formatNumber } from '../lib/format';
 import { TxTypeBadge } from './Transactions';
@@ -120,8 +122,15 @@ export default function ImportPage() {
     setBusy(true);
     try {
       const pid = await resolvePortfolio();
-      const r = await commitImport(result, pid, syncOrigin ? 'sync:ibkr-flex' : `import:${result.detection.presetId}`);
+      const r = await commitImport(result, pid, syncOrigin === 'email-inbox' ? 'email-inbox' : syncOrigin ? 'sync:ibkr-flex' : `import:${result.detection.presetId}`);
       // Daily-sync inbox: tell the server these transactions were picked up.
+      if (syncOrigin === 'email-inbox') {
+        try {
+          await clearEmailDrafts(pid, inboxIds);
+        } catch (e) {
+          setError(syncErrorText(e, t));
+        }
+      }
       if (syncOrigin === 'ibkr-inbox') {
         try {
           await clearIbkrInbox(pid, inboxIds);
@@ -316,6 +325,7 @@ export default function ImportPage() {
             </div>
           </Card>
           <IbkrSyncCard resolvePortfolio={resolvePortfolio} account={account} onResult={onSyncResult} />
+          <EmailInboxCard resolvePortfolio={resolvePortfolio} onResult={(r, pid, ids) => onSyncResult(r, 'email-inbox', pid, ids)} />
         </div>
       )}
 

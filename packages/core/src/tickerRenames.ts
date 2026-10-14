@@ -53,7 +53,22 @@ export const TICKER_EVENTS: readonly TickerEvent[] = [
   },
   // Brazil — same security, new code
   { kind: 'rename', fromId: 'BVMF:ELET3', fromYahoo: 'ELET3.SA', toId: 'BVMF:AXIA3', toYahoo: 'AXIA3.SA', ratio: 1, note: 'Eletrobras -> AXIA Energia (mudança de nome e código), ON' },
+  { kind: 'rename', fromId: 'BVMF:ELET5', fromYahoo: 'ELET5.SA', toId: 'BVMF:AXIA5', toYahoo: 'AXIA5.SA', ratio: 1, note: 'Eletrobras -> AXIA Energia (mudança de nome e código), PNA' },
   { kind: 'rename', fromId: 'BVMF:ELET6', fromYahoo: 'ELET6.SA', toId: 'BVMF:AXIA6', toYahoo: 'AXIA6.SA', ratio: 1, note: 'Eletrobras -> AXIA Energia (mudança de nome e código), PNB' },
+  // AXIA migration to the Novo Mercado (AGE 2026-04-01): every PNA1 (AXIA5) and PNB1 (AXIA6) became
+  // 1.1 ON (AXIA3); last trading day 2026-06-05, classes extinct on 2026-06-08; fractions auctioned and
+  // paid in cash. Sources: B3 Ofício Circular 035/2026-VNC (index treatment, factor 1.1 on AXIA6);
+  // Investidor10 "Tchau, AXIA5 e AXIA6" and Seu Dinheiro (2026-06-08). AXIA7 (PNC) is NOT a successor of
+  // AXIA6: it was a bonus of 0.2628378881074 PNC per AXIA3/AXIA5/AXIA6 held on 2025-12-19 (ex
+  // 2025-12-22, credited 2025-12-26, unit cost R$ 49,44; InfoMoney / Investidor10), outside this table.
+  {
+    kind: 'conversion', fromId: 'BVMF:AXIA5', fromYahoo: 'AXIA5.SA', toId: 'BVMF:AXIA3', toYahoo: 'AXIA3.SA', ratio: 1.1, effective: '2026-06-08', lastTradingDay: '2026-06-05',
+    note: 'AXIA (Novo Mercado): cada PNA1 (AXIA5) virou 1,1 ON (AXIA3); frações leiloadas e pagas em dinheiro (B3 OC 035/2026-VNC)',
+  },
+  {
+    kind: 'conversion', fromId: 'BVMF:AXIA6', fromYahoo: 'AXIA6.SA', toId: 'BVMF:AXIA3', toYahoo: 'AXIA3.SA', ratio: 1.1, effective: '2026-06-08', lastTradingDay: '2026-06-05',
+    note: 'AXIA (Novo Mercado): cada PNB1 (AXIA6) virou 1,1 ON (AXIA3); frações leiloadas e pagas em dinheiro (B3 OC 035/2026-VNC)',
+  },
   { kind: 'rename', fromId: 'BVMF:EMBR3', fromYahoo: 'EMBR3.SA', toId: 'BVMF:EMBJ3', toYahoo: 'EMBJ3.SA', ratio: 1, note: 'Embraer: novo código EMBJ3' },
   { kind: 'rename', fromId: 'BVMF:CCRO3', fromYahoo: 'CCRO3.SA', toId: 'BVMF:MOTV3', toYahoo: 'MOTV3.SA', ratio: 1, note: 'CCR -> Motiva (mudança de nome e código)' },
   { kind: 'rename', fromId: 'BVMF:TRPL3', fromYahoo: 'TRPL3.SA', toId: 'BVMF:ISAE3', toYahoo: 'ISAE3.SA', ratio: 1, note: 'ISA CTEEP -> ISA Energia Brasil (mudança de nome e código), ON' },
