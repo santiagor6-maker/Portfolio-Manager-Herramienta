@@ -55,7 +55,7 @@ export default function PositionsPage() {
 
   const filtered = rows.filter((r) => {
     const needle = q.trim().toLowerCase();
-    if (needle && !`${r.inst?.symbol} ${r.inst?.name}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${r.inst?.symbol} ${r.inst?.name} ${(r.inst as { renamedFrom?: string } | undefined)?.renamedFrom ?? ''}`.toLowerCase().includes(needle)) return false;
     if (country && r.inst?.country !== country) return false;
     if (cls && r.inst?.assetClass !== cls) return false;
     if (ccy && r.currency !== ccy) return false;
@@ -86,7 +86,12 @@ export default function PositionsPage() {
             {r.inst?.symbol ?? r.instrumentId}
             <span className="ml-1.5 text-[11px] font-normal text-muted">{exchangeLabel(r.inst?.exchange)}</span>
           </div>
-          <div className="text-xs text-muted truncate">{r.inst?.name}</div>
+          <div className="text-xs text-muted truncate">
+            {r.inst?.name}
+            {(r.inst as { renamedFrom?: string } | undefined)?.renamedFrom && (
+              <span className="ml-1" data-testid="renamed-from">· {t('rename.before', { symbol: (r.inst as { renamedFrom?: string }).renamedFrom })}</span>
+            )}
+          </div>
         </div>
       </div>
     ),
@@ -274,6 +279,8 @@ export default function PositionsPage() {
   };
 
   const cash = a?.valuation?.cash.filter((c) => Math.abs(c.amount) > 0.005) ?? [];
+  // Core R8: merger cash not paid yet (cashPayDate in the future) is counted but not available.
+  const hasReceivable = cash.some((c) => (c.receivable ?? 0) > 0.005);
 
   return (
     <div>
@@ -408,6 +415,7 @@ export default function PositionsPage() {
               <tr>
                 <th>{t('dim.currency')}</th>
                 <th className="r">{t('pos.balance')}</th>
+                {hasReceivable && <th className="r">{t('pos.receivable')}</th>}
                 <th className="r">{t('pos.valueBase', { currency: f.currency })}</th>
               </tr>
             </thead>
@@ -416,6 +424,11 @@ export default function PositionsPage() {
                 <tr key={c.currency}>
                   <td className="font-medium">{c.currency}</td>
                   <td className="r num">{formatMoney(c.amount, c.currency, f.locale, { privacy: f.privacy })}</td>
+                  {hasReceivable && (
+                    <td className="r num" title={t('pos.receivableHint')} data-testid={c.receivable ? 'cash-receivable' : undefined}>
+                      {c.receivable ? formatMoney(c.receivable, c.currency, f.locale, { privacy: f.privacy }) : '—'}
+                    </td>
+                  )}
                   <td className="r">
                     <Money value={c.amountBase} />
                   </td>

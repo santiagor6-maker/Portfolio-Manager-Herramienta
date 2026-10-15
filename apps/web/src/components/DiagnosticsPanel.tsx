@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, Plus, Stethoscope, XCircle } from 'lucide-react';
 import type { Diagnostic } from '@pm/core';
@@ -24,6 +25,13 @@ export async function recordSplit(sp: { instrumentId: string; ratio: number; dat
   const pids = portfolioId ? [portfolioId] : [...new Set((await db.transactions.where('instrumentId').equals(sp.instrumentId).toArray()).map((t) => t.portfolioId))];
   for (const pid of pids)
     await saveTransaction({ portfolioId: pid, date: sp.date, type: 'SPLIT', instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note: 'Split sugerido por el historial de precios' });
+}
+
+/** Core R8: rows still under an old ticker move to the current id (same security, renamed). */
+export async function renameInstrumentRows(fromId: string, toId: string): Promise<number> {
+  const rows = (await db.transactions.toArray()).filter((t) => (t.instrumentId === fromId || t.targetInstrumentId === fromId) && t.subtype !== 'TICKER_CHANGE');
+  await db.transactions.bulkPut(rows.map((t) => ({ ...t, instrumentId: t.instrumentId === fromId ? toId : t.instrumentId, targetInstrumentId: t.targetInstrumentId === fromId ? toId : t.targetInstrumentId })));
+  return rows.length;
 }
 
 /** W33: every transaction of the portfolio under `from` moves to the `to` account (same broker). */
@@ -184,6 +192,12 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                   </button>
                 );
               })()}
+            {d.code === 'INSTRUMENT_RENAMED' && d.data?.fromId && d.data?.toId && (
+              <button className="btn btn-sm" data-testid="rename-rows" onClick={() => void renameInstrumentRows(String(d.data!.fromId), String(d.data!.toId))}>
+                {t('diag.renameRows', { to: String(d.data.toId).split(':').pop() })}
+              </button>
+            )}
+            {d.code === 'COST_FRACTION_ESTIMATED' && d.transactionId && <CostFractionEditor txId={d.transactionId} estimate={Number(d.data?.costFraction ?? 0)} />}
             {d.code === 'INTEREST_POSSIBLY_NET' && d.transactionId && !txs?.get(d.transactionId)?.amountIsNet && (
               <button className="btn btn-sm" data-testid="mark-net" onClick={() => void db.transactions.update(d.transactionId!, { amountIsNet: true })}>
                 {t('diag.markNet')}
@@ -204,3 +218,23 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
 function rank(d: Diagnostic): number {
   return d.severity === 'error' ? 0 : d.severity === 'warning' ? 1 : 2;
 }
+
+/** Core R8: the spin-off cost fraction was estimated from market values; the user enters the official one. */
+function CostFractionEditor({ txId, estimate }: { txId: string; estimate: number }) {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const [v, setV] = useState(new Intl.NumberFormat(f.locale, { maximumFractionDigits: 2 }).format(estimate * 100));
+  const save = () => {
+    const n = Number(v.replace(/\./g, '').replace(',', '.'));
+    if (Number.isFinite(n) && n >= 0 && n <= 100) void db.transactions.update(txId, { costFraction: n / 100 });
+  };
+  return (
+    <span className="flex items-center gap-1" data-testid="cost-fraction-editor">
+      <input className="input num !w-20 !h-7 !text-xs" inputMode="decimal" aria-label={t('diag.costFraction')} value={v} onChange={(e) => setV(e.target.value)} />%
+      <button className="btn btn-sm" onClick={save}>
+        {t('diag.saveCostFraction')}
+      </button>
+    </span>
+  );
+}
+

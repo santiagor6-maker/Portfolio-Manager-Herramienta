@@ -10,7 +10,8 @@
  */
 import type { FxSeries, Instrument, ISODate, PricePoint, ProviderId } from '@pm/core';
 import { redactDeep, redactSecrets, registerSecrets } from './redact';
-import { aliasesTo, findAlias, historicalEventsFrom, renameInfo, type TickerAlias } from './aliases';
+import { aliasesTo, findAlias, historicalEventsFrom, renameInfo, reuseGaps, type TickerAlias } from './aliases';
+import { listingNoticeFor, type ListingNotice } from './notices';
 import { DAY, HOUR, MINUTE, historyTtlMs, TieredCache, TTL, type PersistentStore } from './cache';
 import { InstrumentCatalog } from './catalog';
 import { classifySplit } from './corporate';
@@ -131,6 +132,9 @@ interface Resolved {
   target: PriceTarget;
   instrument?: Instrument;
   alias?: TickerAlias;
+  /** Other listings of the same bare symbol (the request went to the US one). */
+  alternatives?: Instrument[];
+  notice?: ListingNotice;
 }
 
 interface MarketResult {
@@ -274,7 +278,15 @@ export class MarketDataService {
       const t = this.target(alias.fromYahoo);
       return { kind: 'delisted', alias, target: { ...t, instrumentId: alias.fromId } };
     }
-    if (alias) key = alias.toId;
+    if (alias) {
+      key = alias.toId;
+      // The renamed security may itself have ended later (ELET6 -> AXIA6 -> 1.1 AXIA3 on 2026-06-08).
+      const next = findAlias(key);
+      if (next && next.kind !== 'rename') {
+        const t = this.target(next.fromYahoo);
+        return { kind: 'delisted', alias: next, target: { ...t, instrumentId: next.fromId } };
+      }
+    }
 
     const feed = this.custom.feedFor(key);
     if (feed) {
@@ -341,14 +353,17 @@ export class MarketDataService {
     const key = typeof input === 'string' ? input.trim() : '';
     if (r.kind !== 'market' || r.instrument || r.alias || !/^[A-Z][A-Z0-9-]{0,4}$/i.test(key)) return r;
     const local = this.catalog.bySymbol(key);
-    if (!local.length) return r;
+    const notice = listingNoticeFor(key);
+    if (!local.length) return notice ? { ...r, notice } : r;
     let us: boolean;
     try {
       us = await this.usListingExists(key.toUpperCase());
     } catch {
       us = true; // cannot tell (Yahoo down): keep Yahoo's semantics
     }
-    return us ? r : this.resolve(local[0]!.id);
+    // US kept: tell the client the same symbol is listed elsewhere (ETB, BVC on the BVC) (M41).
+    if (us) return { ...r, alternatives: local, ...(notice ? { notice } : {}) };
+    return { ...this.resolve(local[0]!.id), ...(notice ? { notice } : {}) };
   }
 
   /** Does Yahoo have a US-dollar listing under this bare symbol? Cached 30 days. */
@@ -511,7 +526,16 @@ export class MarketDataService {
         const inst = this.instrumentFor(r, { currency: q.currency, name: q.name, providerExchange: q.providerExchange, providerType: q.providerType });
         const { providerExchange: _pe, providerType: _pt, ...rest } = q;
         const stale = daysBetween(q.date, this.today()) > 7;
-        return { ...rest, instrumentId: inst.id, requested: input, name: inst.name ?? q.name, ...(stale ? { stale } : {}), ...(renamedFrom ? { renamedFrom } : {}) };
+        return {
+          ...rest,
+          instrumentId: inst.id,
+          requested: input,
+          name: inst.name ?? q.name,
+          ...(stale ? { stale } : {}),
+          ...(renamedFrom ? { renamedFrom } : {}),
+          ...(r.alternatives?.length ? { alternatives: r.alternatives.map(instrumentRef) } : {}),
+          ...(r.notice ? { listingNotice: r.notice } : {}),
+        };
       } catch (e) {
         if (e instanceof MarketDataError && e.code === 'BAD_REQUEST') throw e;
         // fall through to the last close of the provider chain
@@ -808,10 +832,34 @@ export class MarketDataService {
     const adjust: PriceAdjustment = req.adjust ?? 'none';
     if (adjust !== 'none' && adjust !== 'splits' && adjust !== 'total') throw new MarketDataError('BAD_REQUEST', `Invalid adjust "${String(adjust)}" (none|splits|total)`);
     if (typeof req.symbol !== 'string') throw new MarketDataError('BAD_REQUEST', 'Missing "symbol"');
-    const r = await this.resolveListed(req.symbol);
+    const r0 = await this.resolveListed(req.symbol);
+    const explicitNotice = r0.notice ?? listingNoticeFor(r0.target.instrumentId);
+    const r: Resolved = explicitNotice ? { ...r0, notice: explicitNotice } : r0;
     const asOf = this.now().toISOString();
     if (r.kind === 'delisted') return this.delistedHistory(req, r, from, to, interval, asOf);
-    const { h: raw, fallbacks } = r.kind === 'market' ? await this.marketDaily(r, from, to) : await this.otherDaily(r, from, to);
+    let loaded: MarketResult;
+    try {
+      loaded = r.kind === 'market' ? await this.marketDaily(r, from, to) : await this.otherDaily(r, from, to);
+    } catch (e) {
+      // A listing that left its venue (Telefónica NYSE ADS): say so and point to where it trades.
+      if (r.notice && e instanceof MarketDataError && e.code === 'NOT_FOUND' && r.target.instrumentId === r.notice.instrumentId) {
+        throw new MarketDataError('NOT_FOUND', `${r.notice.instrumentId} no longer trades there: ${r.notice.note}`, {
+          ...(e.details && typeof e.details === 'object' ? e.details : {}),
+          listingNotice: r.notice,
+          ...(r.notice.suggest ? { suggest: r.notice.suggest } : {}),
+        });
+      }
+      throw e;
+    }
+    const { fallbacks } = loaded;
+    let raw = loaded.h;
+    // Bars of a reused code while it belonged to no security (NATU3 2019-12-18) (M41).
+    const gaps = reuseGaps(r.instrument?.id ?? r.target.instrumentId);
+    if (gaps.length) {
+      const before = raw.points.length;
+      raw = { ...raw, points: raw.points.filter((p) => !gaps.some((g) => p.date > g.after && p.date < g.before)) };
+      if (raw.points.length < before) raw.notes = [...raw.notes, `dropped ${before - raw.points.length} bar(s) dated while the code belonged to no listed security`];
+    }
     const inst = this.instrumentFor(r, raw);
     if (r.kind === 'market' && !r.instrument && raw.source === 'yahoo') await this.track(r.target.instrumentId);
     const stitched = await this.stitchRenames(r, raw, from, inst.id);
@@ -895,6 +943,7 @@ export class MarketDataService {
         ...(lastTradeDate ? { lastTradeDate } : {}),
         ...(stale ? { stale } : {}),
         ...(seed ? { seed } : {}),
+        ...(adjust !== 'none' || h.basis === 'split-adjusted' ? { splitAdjusted: true as const } : {}),
         ...(h.coverage?.partial ? { partial: true, coverageFrom: h.coverage.from, coverageTo: h.coverage.to } : {}),
       },
       actions,
@@ -903,6 +952,8 @@ export class MarketDataService {
       asOf,
       ...(h.session ? { marketState: open ? ('open' as const) : ('closed' as const) } : {}),
       ...(renamedFrom ? { renamedFrom } : {}),
+      ...(r.alternatives?.length ? { alternatives: r.alternatives.map(instrumentRef) } : {}),
+      ...(r.notice ? { listingNotice: r.notice } : {}),
       ...(notes.length ? { notes: [...new Set(notes)] } : {}),
     };
   }
@@ -960,21 +1011,23 @@ export class MarketDataService {
     }
     if (a.effective && a.effective >= from && a.effective <= to) {
       if (a.components?.length) {
-        // Units split into several securities: the first component replaces the unit (MERGER),
-        // the others arrive alongside it (SPINOFF). The cost split is unknown -> review.
-        a.components.forEach((c, i) =>
+        // Units split into several securities: the other components arrive FIRST as SPINOFF (they take
+        // their share of the cost while the unit still exists), then the main component replaces the
+        // unit (MERGER) with the remaining cost. No official cost split was found -> review.
+        const ordered = [...a.components.slice(1).map((c) => ({ c, subtype: 'SPINOFF' as const })), { c: a.components[0]!, subtype: 'MERGER' as const }];
+        for (const { c, subtype } of ordered) {
           actions.push({
             instrumentId: a.fromId,
             date: a.effective!,
             type: 'SPLIT',
-            subtype: i === 0 ? 'MERGER' : 'SPINOFF',
+            subtype,
             ratio: c.ratio,
             targetInstrumentId: c.toId,
             reviewRequired: true,
             source: 'catalog',
             note: a.note,
-          }),
-        );
+          });
+        }
       } else {
         actions.push({ instrumentId: a.fromId, date: a.effective, type: 'SPLIT', subtype: 'MERGER', ratio: a.ratio, targetInstrumentId: a.toId, source: 'catalog', note: a.note });
       }
@@ -1235,6 +1288,10 @@ export function totalReturn(points: readonly MarketPricePoint[], actions: readon
     out.push({ date: p.date, close: roundTo(tr, 6) });
   }
   return out;
+}
+
+function instrumentRef(i: Instrument): { instrumentId: string; name?: string; exchange: string; currency: string } {
+  return { instrumentId: i.id, ...(i.name ? { name: i.name } : {}), exchange: i.exchange, currency: i.currency };
 }
 
 export function toErrorBody(e: unknown): ApiErrorBody['error'] {

@@ -1,3 +1,4 @@
+import { withRenamedAliases } from '../lib/renames';
 import { useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { CorporateAction, IndexSeries, Instrument, PriceSeries } from '@pm/core';
@@ -24,7 +25,7 @@ export function useInstrumentMap(): Map<string, Instrument> {
   return useMemo(() => {
     const m = new Map<string, Instrument>();
     for (const b of BENCHMARKS) m.set(b.id, b);
-    for (const i of list) m.set(i.id, i);
+    for (const i of withRenamedAliases(list)) m.set(i.id, i);
     return m;
   }, [list]);
 }
@@ -94,7 +95,7 @@ export function toDataset(raw: RawData, settings: AppSettings, asOf = todayIso()
   return {
     portfolios: raw.portfolios,
     transactions: raw.transactions,
-    instruments: [...raw.instruments, ...BENCHMARKS.filter((b) => !known.has(b.id))],
+    instruments: [...withRenamedAliases(raw.instruments), ...BENCHMARKS.filter((b) => !known.has(b.id))],
     prices: prices.map(({ instrumentId, currency, points, source }) => ({ instrumentId, currency, points, source })),
     fx: raw.fx.filter(notDemo).map(({ base, quote, points, source }) => ({ base, quote, points, source })),
     manualPrices: groupManualPrices(raw.manual),

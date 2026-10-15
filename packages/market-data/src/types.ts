@@ -3,6 +3,7 @@
  *
  * Browser-safe: no Node imports. Shared by the server (producer) and `client.ts` (consumer).
  */
+import type { ListingNotice } from './notices';
 import type {
   CorporateAction,
   CurrencyCode,
@@ -58,6 +59,13 @@ export interface MarketPriceSeries extends PriceSeries {
    */
   seed?: PricePoint;
   /**
+   * True when `points` (and `seed`) already include split adjustments, so a consumer must NOT divide
+   * pre-split prices again (core C52): `adjust=splits`, `adjust=total`, or a split-adjusted backup
+   * (FMP, stooq) whose closes could not be un-adjusted. Absent = closes as traded.
+   * A `degraded` response (Yahoo split history unavailable) may still carry later splits: refetch.
+   */
+  splitAdjusted?: true;
+  /**
    * Set when the source covers only part of the requested range (review R4, M34): the local
    * snapshot has only the years this server recorded. `coverageFrom`/`coverageTo` are the first
    * and last dates the source actually has.
@@ -75,6 +83,14 @@ export type MarketCorporateAction = CorporateAction & {
   /** Price factor the provider applied for this event (Yahoo numerator/denominator). */
   priceFactor?: number;
 };
+
+/** A short reference to an instrument (alternatives of an ambiguous symbol). */
+export interface InstrumentRef {
+  instrumentId: string;
+  name?: string;
+  exchange: string;
+  currency: string;
+}
 
 export interface RenameInfo {
   /**
@@ -123,6 +139,13 @@ export interface Quote {
   /** 'open' while the regular session is running (price is intraday), else 'closed'. */
   marketState?: 'open' | 'closed';
   renamedFrom?: RenameInfo;
+  /**
+   * Same bare symbol listed elsewhere (review R6, M41), e.g. `ETB` = the US fund AND XBOG:ETB: the
+   * request was served by the US listing; the web can ask "¿Quisiste decir ETB (BVC)?".
+   */
+  alternatives?: InstrumentRef[];
+  /** The requested listing stopped trading on its venue (e.g. Telefónica's NYSE ADS). */
+  listingNotice?: ListingNotice;
   source: ProviderId;
 }
 
@@ -155,6 +178,13 @@ export interface HistoryResponse {
   /** 'open' while the instrument's regular session is running: the last point is intraday. */
   marketState?: 'open' | 'closed';
   renamedFrom?: RenameInfo;
+  /**
+   * Same bare symbol listed elsewhere (review R6, M41), e.g. `ETB` = the US fund AND XBOG:ETB: the
+   * request was served by the US listing; the web can ask "¿Quisiste decir ETB (BVC)?".
+   */
+  alternatives?: InstrumentRef[];
+  /** The requested listing stopped trading on its venue (e.g. Telefónica's NYSE ADS). */
+  listingNotice?: ListingNotice;
   /** Set when the requested security no longer trades (merger / conversion): see actions MERGER. */
   delisted?: RenameInfo;
   /** Diagnostic notes, e.g. 'currency GBp normalized to GBP'. */

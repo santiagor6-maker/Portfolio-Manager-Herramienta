@@ -213,6 +213,8 @@ export function SecurityMapPrompt({ result, current, onApply, busy }: { result: 
 export interface CaChoice {
   include: boolean;
   costFraction: string;
+  /** Core R8: merger cash payment date (until then it is a receivable). */
+  cashPayDate?: string;
 }
 
 export function CorporateEvents({
@@ -274,6 +276,17 @@ export function CorporateEvents({
                         </>
                       )}
                     </div>
+                  )}
+                  {(c.cashPerShare || (tx?.subtype === 'MERGER' && (tx.amount ?? 0) > 0)) && (
+                    <label className="flex flex-wrap items-center gap-2 mt-2 text-xs" data-testid="ca-cash-pay-date">
+                      {t('impr.cashPayDate', { cash: c.cashPerShare ? new Intl.NumberFormat(f.locale, { maximumFractionDigits: 6 }).format(c.cashPerShare) : '' })}
+                      <input
+                        type="date"
+                        className="input num !w-40 !h-8"
+                        value={ch.cashPayDate ?? c.cashPayDate ?? ''}
+                        onChange={(e) => onChange({ ...choices, [c.line]: { ...ch, cashPayDate: e.target.value || undefined } })}
+                      />
+                    </label>
                   )}
                   {blocked && <div className="text-xs text-warn mt-1">{t('impr.caMissing', { fields: pr.missing.map((m) => t(`impr.caField.${m}`)).join(', ') })}</div>}
                   {!pr.applied && !pr.alreadyImported && !blocked && onAccept && (

@@ -492,7 +492,11 @@ export function computeBalances(transactions: Transaction[], asOf?: string): { p
     const taxes = t.taxes ?? 0;
     if (t.instrumentId) {
       const p = positions.get(t.instrumentId) ?? 0;
-      if (t.type === 'SPLIT' && t.ratio) positions.set(t.instrumentId, p * t.ratio);
+      // Restructurings (core subtypes): the parent's shares move to the target (spin-offs keep the parent).
+      if (t.type === 'SPLIT' && t.targetInstrumentId) {
+        positions.set(t.targetInstrumentId, (positions.get(t.targetInstrumentId) ?? 0) + p * (t.ratio ?? 1));
+        if (t.subtype !== 'SPINOFF') positions.set(t.instrumentId, 0);
+      } else if (t.type === 'SPLIT' && t.ratio) positions.set(t.instrumentId, p * t.ratio);
       else if (t.type === 'STOCK_DIVIDEND') positions.set(t.instrumentId, p + (t.quantity ?? p * (t.ratio ?? 0)));
       else if (POSITION_DELTA[t.type] && t.quantity) positions.set(t.instrumentId, p + POSITION_DELTA[t.type]! * t.quantity);
     }
@@ -714,8 +718,12 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   if (!opts.skipTableEvents) {
     const all = [...existingTx, ...transactions];
     ctx.corporateActions.push(
-      ...tableEventSuggestions(all, transactions, (ids, date) =>
-        ids.reduce((a, id) => a + (computeBalances(all.filter((t) => t.instrumentId === id), date).positions.get(id) ?? 0), 0),
+      // "Touched" includes rows already in the portfolio (re-imports still show pending events).
+      ...tableEventSuggestions(all, work.filter((w) => w.tx && !w.invalid).map((w) => w.tx!), (ids, date) => {
+        // Only events whose chain touches the portfolio get here; the whole history keeps restructurings right.
+        const pos = computeBalances(all, date).positions;
+        return ids.reduce((a, id) => a + (pos.get(id) ?? 0), 0);
+      },
       ).filter((e) => !ctx.corporateActions.some((c) => c.date === e.date && c.target?.id === e.target?.id)),
     );
   }

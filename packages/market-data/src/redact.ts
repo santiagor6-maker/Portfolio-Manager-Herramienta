@@ -46,7 +46,10 @@ function redactKnown(text: string): string {
 
 /** Sanitize every URL in a free text and drop any registered secret value. */
 export function redactSecrets(text: string): string {
-  return redactKnown(text.replace(/https?:\/\/[^\s"'<>]+/g, (u) => sanitizeUrl(u)));
+  const urls = text.replace(/https?:\/\/[^\s"'<>]+/g, (u) => sanitizeUrl(u));
+  // `apikey=...` echoed outside a URL (an upstream error body quoting the query).
+  const pairs = urls.replace(/([\w$-]+)=([^&\s"'<>,;]+)/g, (m, name: string) => (isSecretParam(name) ? `${name}=${MASK}` : m));
+  return redactKnown(pairs);
 }
 
 /** Deep copy of `x` with every string passed through `redactSecrets` (error details). */

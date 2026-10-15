@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { canonicalId } from '../lib/renames';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowLeft, Bell, Plus } from 'lucide-react';
@@ -19,7 +20,8 @@ import { TxTypeBadge } from './Transactions';
 
 export default function InstrumentPage() {
   const { id = '' } = useParams();
-  const instrumentId = decodeURIComponent(id);
+  // Core R8: an old ticker's link (PFBCOLOM) opens the current instrument (PFCIBEST).
+  const instrumentId = canonicalId(decodeURIComponent(id))!;
   const { t } = useTranslation();
   const f = useFmt();
   const map = useInstrumentMap();
@@ -73,6 +75,9 @@ export default function InstrumentPage() {
             <span aria-hidden>{flagEmoji(inst?.country ?? '')}</span>
             {inst?.symbol ?? instrumentId}
             <span className="text-ink-2 font-normal text-base truncate">{inst?.name}</span>
+            {(inst as { renamedFrom?: string } | undefined)?.renamedFrom && (
+              <span className="chip !text-xs font-normal">{t('rename.before', { symbol: (inst as { renamedFrom?: string }).renamedFrom })}</span>
+            )}
           </span>
         }
         subtitle={

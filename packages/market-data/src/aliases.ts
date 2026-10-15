@@ -58,6 +58,21 @@ export function historicalEventsFrom(id: string): TickerAlias[] {
   return TICKER_ALIASES.filter((a) => superseded(a) && up(a.fromId) === up(id));
 }
 
+/**
+ * Periods in which a reused code did NOT trade: after the old security's last trading day and before
+ * the code came back (NATU3: after 2019-12-17, before 2025-07-02). Provider bars inside them (Yahoo
+ * repeats 36.86 on 2019-12-18 with volume 0) belong to no security and are dropped (review R6, M41).
+ */
+export function reuseGaps(id: string): { after: string; before: string }[] {
+  const out: { after: string; before: string }[] = [];
+  for (const a of historicalEventsFrom(id)) {
+    const last = a.lastTradingDay ?? a.effective;
+    const back = TICKER_ALIASES.filter((b) => up(b.toId) === up(id) && !!b.effective && b.effective > a.effective!).map((b) => b.effective!).sort()[0];
+    if (last && back) out.push({ after: last, before: back });
+  }
+  return out;
+}
+
 export function renameInfo(a: TickerAlias): RenameInfo {
   return {
     kind: a.kind,

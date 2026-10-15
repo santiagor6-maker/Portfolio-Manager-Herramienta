@@ -918,3 +918,104 @@ Esa diferencia producía avisos falsos de aportes implícitos. Ahora:
 - Cada transacción importada lleva `brokerId` junto a `account` (tipo `ImportedTransaction`).
   `result.accounts` lista las etiquetas usadas con su `brokerId` y nombre visible.
 - La deduplicación y la conciliación usan la misma clave (`accountKey`).
+
+## Respuesta a la revisión ronda 5
+
+Revisión: `reviews/importers-r5.md` (7,5 frente a 8, con dos brechas altas). Las regresiones están en
+`test/review-r5.test.ts`.
+
+**Línea base:**
+- Antes: 270 pruebas.
+- Ahora: **308 pruebas**, todas pasan.
+- Typecheck sin errores en importers, core, apps/server y los archivos de prueba.
+- Las suites de `apps/server`, `packages/core` y `packages/market-data` siguen pasando.
+
+### I40 (alta) — Cantidad × precio = valor en cada línea de la nota
+
+- Cada operación leída se valida contra `|cantidad × precio − valor| ≤ 0,011 + cantidad × ½·10^-decimales
+  del precio`.
+- Si falla (por ejemplo, `180 × 37,00 ≠ 3.700,00` por un 100 leído como 180), se marca el error
+  `QTY_PRICE_VALUE_MISMATCH`:
+  - incluye la lectura que cuadra (`100 × 37`, o un precio alternativo), propuesta pero nunca aplicada;
+  - la nota queda en revisión, con `noteChecks[].mismatchLines`, igual que con las líneas ilegibles.
+
+### I41 (alta) — Receptor de correo: autenticación del remitente
+
+Se corrigieron los cinco desvíos del revisor, y cada uno tiene su prueba:
+
+| Ataque | Defensa |
+|---|---|
+| DKIM `d=` no alineado / `dmarc=fail` | Alineación tipo DMARC (relajada): `dmarc=pass` con `header.from` alineado, o `dkim=pass` con `header.d`, o `spf=pass` con `smtp.mailfrom`, en el **mismo dominio organizacional** que el From. Hay una lista de sufijos públicos de la región (`com.br`, `com.co`…), así que `d=com.br` no alinea. `dmarc=fail` explícito siempre rechaza. |
+| Authentication-Results falsificado abajo | Solo se confía en el encabezado **superior**, el que agrega tu proveedor. Con `authservIds` (`INBOX_AUTHSERV_ID` en el servidor), solo en el primero de ese authserv-id. |
+| Comentario en el From | Parser RFC 5322 sobre el encabezado crudo: elimina comentarios (anidados) y cadenas entre comillas. |
+| Nombre visible codificado | Se usa el addr-spec y nunca se decodifica el nombre visible. |
+| Dos From / lista de buzones | Se rechaza (400 `BAD_FROM`). |
+
+Helpers exportados: `parseFromAddress`, `authVerdict`, `domainsAligned`, `orgDomain` y `rawHeaderFields`.
+
+### I42 — Límites de recursos
+
+- **Secreto:** el del buzón va solo en la cabecera `x-inbox-secret`. Con `?secret=` en la URL se responde
+  400 `SECRET_IN_URL`. La prueba del servidor se ajustó.
+- **Cuerpo:** se cuenta mientras se lee (stream) y se corta en `maxBytes` aunque no haya content-length.
+- **Adjuntos:** se importan como máximo 20 (`maxAttachments`, `INBOX_MAX_ATTACHMENTS`), de hasta 15 MB
+  cada uno. Los demás quedan en `ignored` con `reason`. El parser MIME se detiene en 500 partes.
+- **PDF** (`ImportOptions.limits`):
+  - páginas: 500 por defecto y 60 en el buzón;
+  - **bytes descomprimidos**: 200 MB por defecto y 50 MB en el buzón;
+  - tiempo: 60 s por defecto y 20 s en el buzón.
+
+  Los bytes descomprimidos se miden antes de pdf.js con `DecompressionStream` en streaming, que se
+  detiene al pasar el presupuesto (bomba FlateDecode → `PDF_LIMIT_EXCEEDED`). El tiempo se controla con un
+  plazo por página.
+- En `apps/server`, `EmailInbox` pasa `authservIds` y `maxAttachments`, y `main.ts` documenta las
+  variables `INBOX_AUTHSERV_ID` e `INBOX_MAX_ATTACHMENTS`.
+
+### I43 — Notas retenidas con más criterio
+
+- La tolerancia contra "Líquido para" es de 0,05 + 0,01 por operación.
+- Nuevas etiquetas de costo: "Taxa de Transf. de Ativos", IOF y "Taxa de serviço".
+- Una etiqueta de costo desconocida que explica exactamente la diferencia se acepta como otras taxas, con
+  el aviso `UNKNOWN_FEE_ACCEPTED`.
+- Al aceptar una nota con `acceptNotes`, el residuo con signo de costo que confirma "Líquido para" se
+  reparte como otras taxas (`OTHER_FEES_FROM_NET`). Antes se perdía.
+
+### I44 — Conversiones y fusiones de la tabla única
+
+- Los eventos `merger` y `conversion` de `TICKER_EVENTS` se proponen como los spin-offs, listos para un
+  clic, cuando afectan una posición existente o importada. Por ejemplo:
+  - NATU3 → NTCO3 (2019) y NTCO3 → NATU3 (2025);
+  - BRFS3 → 0,8521 MBRF3;
+  - CPLE6 → CPLE5 → CPLE3 + R$ 0,7749;
+  - AXIA5 y AXIA6 → 1,1 AXIA3.
+- Los cambios de código se resuelven solos: `@pm/core` canonicaliza los ids (C56).
+- Las cadenas se siguen paso a paso con las acciones que entrega el paso anterior.
+- El dinero va en `amount` y `cashPayDate` (campo de core) y en `proposal.cash`.
+- Cada evento tiene un id estable (`event:BVMF:NATU3>BVMF:NTCO3@2019-12-18`) y se acepta con
+  `acceptCorporateActions: [id]`. No se vuelve a proponer si ya está en el portafolio.
+- `computeBalances` ahora aplica las reestructuraciones de core (`SPLIT` con `targetInstrumentId`).
+- **AXIA5/AXIA6 → AXIA3.** Se agregaron a `packages/core/src/tickerRenames.ts` las conversiones AXIA5 y
+  AXIA6 → 1,1 AXIA3: último pregón el 05/06/2026, efectivas el 08/06/2026, con las fracciones subastadas.
+  Fuentes: B3 Ofício Circular 035/2026-VNC; Investidor10, "Tchau, AXIA5 e AXIA6"; Seu Dinheiro. También
+  ELET5 → AXIA5. AXIA7 no sucede a AXIA6: es una bonificación de 0,2628378881 PNC por acción (data-base
+  19/12/2025, crédito 26/12/2025). Está anotada en la tabla pero queda fuera de ella. Las pruebas de
+  alias de market-data siguen pasando.
+
+### I45 — Nombres de corredor
+
+- Se reconocen por el **nombre completo** y nunca por la primera palabra: "Global Investimentos" ≠ "Global
+  Securities", "Casa de Valores" ≠ "Casa de Bolsa", y Credicorp Colombia ≠ Perú ≠ Chile.
+- Los desconocidos siguen desconocidos (`known: false`, con su nombre) y se comparan por todas sus
+  palabras.
+- Nuevos alias: Banco do Brasil = BB Investimentos, DEGIRO = flatexDEGIRO y Bancolombia = Grupo Cibest.
+
+### I46 — Detalles de PDF
+
+- **Futuros BM&F:** las líneas de WIN, WDO, IND, DOL, DI1… quedan como `UNSUPPORTED_ASSET` y no como
+  `UNPARSED_LINE`.
+- **"Periodo":** "Periodo: 01/03/2024 al 31/03/2024" (también con "-", "a" o "hasta") resuelve el orden
+  DD/MM del extracto.
+- **Retención dentro del texto:**
+  - en la línea siguiente sin columna de valor ("Retención 7% $ 78.778") se suma a la fila anterior;
+  - en la misma fila ("Dividendo ECOPETROL, retención 10% $ 12.000") va a `taxes`, con el aviso
+    `WITHHOLDING_IN_TEXT`.

@@ -51,3 +51,33 @@ describe('core R7 diagnostics', () => {
     expect(splitSuggestion('The price of BVMF:XYZ3 went from 1 (2024-01-02) to 10 (2024-01-03), close to a 1:10 reverse split, and no split is recorded')).toEqual({ instrumentId: 'BVMF:XYZ3', ratio: 0.1, date: '2024-01-03' });
   });
 });
+
+describe('core R8: renamed tickers', async () => {
+  const { canonicalInstrument, canonicalId, withRenamedAliases } = await import('../lib/renames');
+  const old = { id: 'XBOG:PFBCOLOM', symbol: 'PFBCOLOM', name: 'Bancolombia Preferencial', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity' as const, providerSymbols: { yahoo: 'PFBCOLOM.CL' } };
+  it('creates and looks up instruments under the current id, remembering the old symbol', () => {
+    expect(canonicalId('XBOG:PFBCOLOM')).toBe('XBOG:PFCIBEST');
+    expect(canonicalId('XNAS:AAPL')).toBe('XNAS:AAPL');
+    const c = canonicalInstrument(old);
+    expect(c).toMatchObject({ id: 'XBOG:PFCIBEST', symbol: 'PFCIBEST', renamedFrom: 'PFBCOLOM', currency: 'COP' });
+    expect(c.providerSymbols).toBeUndefined();
+    expect(withRenamedAliases([old]).map((i) => i.id)).toEqual(['XBOG:PFBCOLOM', 'XBOG:PFCIBEST']);
+  });
+  it('stores transactions of an old ticker under the new id (but not a ticker-change row)', async () => {
+    const { saveTransaction } = await import('../db/repo');
+    const a = await saveTransaction({ portfolioId: 'p', date: '2026-01-02', type: 'BUY', instrumentId: 'XBOG:PFBCOLOM', quantity: 1, price: 1, currency: 'COP' });
+    expect(a.instrumentId).toBe('XBOG:PFCIBEST');
+    const b = await saveTransaction({ portfolioId: 'p', date: '2026-01-02', type: 'SPLIT', subtype: 'TICKER_CHANGE', instrumentId: 'XBOG:PFBCOLOM', targetInstrumentId: 'XBOG:PFCIBEST', ratio: 1, currency: 'COP' });
+    expect(b.instrumentId).toBe('XBOG:PFBCOLOM');
+  });
+  it('describes the new diagnostics from their structured data', async () => {
+    const { describeDiagnostic } = await import('../lib/diagnosticText');
+    const t = (k: string, o?: Record<string, unknown>) => `${k}|${JSON.stringify(o)}`;
+    const out = describeDiagnostic(
+      { code: 'COST_FRACTION_ESTIMATED', date: '2026-01-02', message: 'x', data: { instrumentId: 'BVMF:ABC3', targetInstrumentId: 'BVMF:XYZ3', costFraction: 0.125 } },
+      { instruments: new Map(), locale: 'es-CO', t },
+    );
+    expect(out).toContain('"target":"XYZ3"');
+    expect(out).toContain('12,5');
+  });
+});

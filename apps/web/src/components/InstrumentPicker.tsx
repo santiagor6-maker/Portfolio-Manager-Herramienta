@@ -7,6 +7,7 @@ import { searchInstruments } from '../services/marketData';
 import type { SearchResult } from '../services/marketClient';
 import { flagEmoji } from '../lib/labels';
 import { exchangeLabel } from '../lib/exchanges';
+import { canonicalInstrument } from '../lib/renames';
 
 export interface ManualRequest {
   name: string;
@@ -17,12 +18,18 @@ export interface ManualRequest {
 }
 
 function strip(r: SearchResult): Instrument {
-  const { origin: _o, providerType: _p, exchangeLabel: _e, template: _t, note: _n, renamedFrom: _r, ...inst } = r as SearchResult & {
+  const { origin: _o, providerType: _p, exchangeLabel: _e, template: _t, note: _n, renamedFrom, ...inst } = r as SearchResult & {
     template?: boolean;
     note?: string;
-    renamedFrom?: unknown;
   };
-  return inst;
+  // Core R8: keep the old ticker of a renamed security ("antes PFBCOLOM").
+  const from = renamedFrom && renamedFrom.kind === 'rename' ? renamedFrom.fromId.split(':').pop() : undefined;
+  return canonicalInstrument(from ? ({ ...inst, renamedFrom: from } as Instrument) : inst);
+}
+
+/** "antes PFBCOLOM" for a search result of a renamed ticker. */
+function renamedNote(r: SearchResult): string | undefined {
+  return r.renamedFrom?.kind === 'rename' ? r.renamedFrom.fromId.split(':').pop() : undefined;
 }
 
 /**
@@ -185,7 +192,10 @@ export function InstrumentPicker({
               >
                 <span aria-hidden>{flagEmoji(r.country)}</span>
                 <span className="font-semibold w-24 truncate">{r.symbol}</span>
-                <span className="flex-1 truncate text-ink-2">{r.name}</span>
+                <span className="flex-1 truncate text-ink-2">
+                  {r.name}
+                  {renamedNote(r) && <span className="text-muted text-[11px] ml-1">({t('rename.before', { symbol: renamedNote(r) })})</span>}
+                </span>
                 {r.origin === 'template' ? (
                   <span className="text-[11px] text-muted whitespace-nowrap">{t('picker.template')}</span>
                 ) : (

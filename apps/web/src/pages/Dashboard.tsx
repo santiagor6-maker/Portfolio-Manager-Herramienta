@@ -14,6 +14,8 @@ import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd } from '../lib/ids';
 import { useInstrumentMap } from '../hooks/useData';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { renamedPair } from '../lib/diagnosticText';
+import { renameInstrumentRows } from '../components/DiagnosticsPanel';
 import { db } from '../db/schema';
 import { previousBusinessDay } from '../services/analysis';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
@@ -448,12 +450,24 @@ function WarningsCard() {
               {t('dashboard.failedSymbol', { symbol: s })}
             </li>
           ))}
-          {issues.slice(0, 6).map((i, k) => (
-            <li key={k} className="flex items-start gap-2">
-              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
-              <span>{i.message}</span>
-            </li>
-          ))}
+          {issues.slice(0, 6).map((i, k) => {
+            const pair = i.code === 'RENAMED_TICKER_MIXED' ? renamedPair(i.message) : undefined;
+            return (
+              <li key={k} className="flex items-start gap-2">
+                <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+                {pair ? (
+                  <span className="flex-1" data-testid="renamed-mixed">
+                    {t('diag.text.RENAMED_TICKER_MIXED', { from: pair.from.split(':').pop(), to: pair.to.split(':').pop() })}{' '}
+                    <button className="text-accent hover:underline" onClick={() => void renameInstrumentRows(pair.from, pair.to)}>
+                      {t('diag.renameRows', { to: pair.to.split(':').pop() })}
+                    </button>
+                  </span>
+                ) : (
+                  <span>{i.message}</span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </Card>

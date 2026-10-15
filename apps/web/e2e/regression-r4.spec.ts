@@ -123,3 +123,22 @@ test('Importers R5: a SINACOR note held for review shows its unread line and tot
   await expect(page.getByTestId('pending-notes')).toHaveCount(0, { timeout: 20_000 });
   await expect.poll(async () => Number((await page.getByTestId('import-confirm').textContent())?.match(/\d+/)?.[0] ?? 0)).toBeGreaterThan(before);
 });
+
+test('Core R8: an imported old ticker (PFBCOLOM) is held under its current id with "antes PFBCOLOM"', async ({ page }) => {
+  // A real portfolio (the sample's PFCIBEST is gone): the instrument is created from the old ticker.
+  await page.goto('/');
+  await page.getByTestId('start-portfolio').click();
+  await page.getByRole('dialog', { name: 'Empieza tu portafolio' }).getByTestId('onboarding-create').click();
+  await importFile(page, 'extracto-trii.csv');
+  await page.getByTestId('import-confirm').click();
+  await expect(page.getByText(/importado/)).toBeVisible();
+  await page.goto('/posiciones');
+  const table = page.getByTestId('positions-table');
+  await expect(table).toContainText('PFCIBEST', { timeout: 20_000 });
+  const row = table.locator('tr', { hasText: 'PFCIBEST' }).first();
+  await expect(row).toContainText('PFBCOLOM'); // "antes PFBCOLOM"
+  await expect(table.locator('tr', { hasText: /^PFBCOLOM/ })).toHaveCount(0);
+  // An old link resolves to the current instrument.
+  await page.goto('/posiciones/XBOG%3APFBCOLOM');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('PFCIBEST');
+});

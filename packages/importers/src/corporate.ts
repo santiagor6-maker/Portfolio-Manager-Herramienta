@@ -149,6 +149,7 @@ export function proposeCorporateActions(suggestions: CorporateActionSuggestion[]
       if (held > 0) {
         cash = { amount: round(ca.cashPerShare * held, 2), ...(ca.cashPayDate ? { payDate: ca.cashPayDate } : {}) };
         tx.amount = cash.amount;
+        if (ca.cashPayDate) tx.cashPayDate = ca.cashPayDate;
         tx.note = `${tx.note} · R$ ${ca.cashPerShare} por ação${ca.cashPayDate ? `, pago em ${ca.cashPayDate}` : ''}`;
       }
     }
@@ -189,15 +190,24 @@ export function tableEventSuggestions(
   const family = (id: string) => [id, ...Object.keys(renames).filter((k) => renames[k] === id)];
   const lastImported = imported.reduce((a, t) => (t.date > a ? t.date : a), '');
   const touched = new Set(imported.map((t) => t.instrumentId).filter(Boolean) as string[]);
+  // Holdings reached through restructurings already booked (NATU3 → NTCO3) are touched too.
+  const restructures = base.filter((t) => t.type === 'SPLIT' && t.instrumentId && t.targetInstrumentId);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const t of restructures) if (touched.has(t.instrumentId!) && !touched.has(t.targetInstrumentId!)) (touched.add(t.targetInstrumentId!), (grew = true));
+  }
+  // Only events whose chain the portfolio holds at all (cheap pre-filter before computing balances).
+  const held = new Set(base.flatMap((t) => [t.instrumentId, t.targetInstrumentId]).filter(Boolean) as string[]);
   const virtual = new Map<string, number>();
   const events = TICKER_EVENTS.filter((e) => e.kind !== 'rename' && e.effective && !e.components).sort((a, b) => a.effective!.localeCompare(b.effective!));
   for (const e of events) {
     const fam = family(e.fromId);
+    if (!fam.some((id) => held.has(id)) && !virtual.has(e.fromId)) continue;
     const done = base.some((t) => t.type === 'SPLIT' && t.instrumentId && fam.includes(t.instrumentId) && t.targetInstrumentId && family(e.toId).includes(t.targetInstrumentId));
     if (done) continue;
     const before = e.lastTradingDay ?? new Date(Date.parse(`${e.effective}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-    const held = balanceOn(fam, before) + (virtual.get(e.fromId) ?? 0);
-    if (held <= 1e-9) continue;
+    const qty = balanceOn(fam, before) + (virtual.get(e.fromId) ?? 0);
+    if (qty <= 1e-9) continue;
     const relevant = fam.some((id) => touched.has(id)) || virtual.has(e.fromId) || lastImported >= e.effective!;
     if (!relevant) continue;
     const heldId = fam.find((id) => base.some((t) => t.instrumentId === id)) ?? e.fromId;
@@ -209,19 +219,19 @@ export function tableEventSuggestions(
       kind: e.kind === 'merger' ? 'merger' : 'conversion',
       description: e.note,
       legs: [
-        { direction: 'out', symbol: sym(heldId), quantity: held },
-        { direction: 'in', symbol: sym(e.toId), quantity: round(held * e.ratio, 8) },
+        { direction: 'out', symbol: sym(heldId), quantity: qty },
+        { direction: 'in', symbol: sym(e.toId), quantity: round(qty * e.ratio, 8) },
       ],
       parent: { id: heldId },
       target: { id: e.toId },
       ratio: e.ratio,
-      heldQuantity: held,
+      heldQuantity: qty,
     };
     if (e.cashPerShare) s.cashPerShare = e.cashPerShare;
     if (e.cashPayDate) s.cashPayDate = e.cashPayDate;
     out.push(s);
-    virtual.set(e.fromId, (virtual.get(e.fromId) ?? 0) - held);
-    virtual.set(e.toId, (virtual.get(e.toId) ?? 0) + held * e.ratio);
+    virtual.set(e.fromId, (virtual.get(e.fromId) ?? 0) - qty);
+    virtual.set(e.toId, (virtual.get(e.toId) ?? 0) + qty * e.ratio);
   }
   return out;
 }

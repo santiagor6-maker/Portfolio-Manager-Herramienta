@@ -79,9 +79,10 @@ describe('M29 Copel chain with real dates, CPLE11 units', () => {
     const { service } = createTestService();
     const h = await service.history({ symbol: 'CPLE11', from: '2023-12-01', to: '2024-01-31' });
     expect(h.delisted).toMatchObject({ kind: 'conversion', lastTradingDay: '2023-12-22' });
+    // Spin-off first (round 7): the CPLE6 leg takes its cost share while the unit still exists.
     expect(h.actions).toEqual([
-      expect.objectContaining({ subtype: 'MERGER', ratio: 1, targetInstrumentId: 'BVMF:CPLE3', reviewRequired: true, date: '2023-12-26' }),
       expect.objectContaining({ subtype: 'SPINOFF', ratio: 4, targetInstrumentId: 'BVMF:CPLE6', reviewRequired: true, date: '2023-12-26' }),
+      expect.objectContaining({ subtype: 'MERGER', ratio: 1, targetInstrumentId: 'BVMF:CPLE3', reviewRequired: true, date: '2023-12-26' }),
     ]);
   });
 

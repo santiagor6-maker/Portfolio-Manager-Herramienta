@@ -1,3 +1,4 @@
+import { canonicalId, canonicalInstrument } from '../lib/renames';
 import type { AllocationDimension, CorporateAction, CostMethod, CurrencyCode, FxSeries, IndexSeries, PriceSeries } from '@pm/core';
 import {
   db,
@@ -130,7 +131,8 @@ export async function deletePortfolio(id: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function upsertInstruments(list: StoredInstrument[]): Promise<void> {
-  if (list.length) await db.instruments.bulkPut(list);
+  // Core R8: renamed tickers are stored under their current id (PFBCOLOM → PFCIBEST).
+  if (list.length) await db.instruments.bulkPut(list.map((i) => canonicalInstrument(i)));
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,7 @@ export async function saveTransaction(t: Omit<StoredTransaction, 'id'> & { id?: 
   const now = Date.now();
   const row: StoredTransaction = {
     ...t,
+    ...(t.subtype === 'TICKER_CHANGE' ? {} : { instrumentId: canonicalId(t.instrumentId), targetInstrumentId: canonicalId(t.targetInstrumentId) }),
     id: t.id ?? newId('tx'),
     source: t.source ?? 'manual',
     createdAt: t.createdAt ?? now,
@@ -152,7 +155,15 @@ export async function saveTransaction(t: Omit<StoredTransaction, 'id'> & { id?: 
 
 export async function bulkAddTransactions(rows: StoredTransaction[]): Promise<number> {
   const now = Date.now();
-  await db.transactions.bulkPut(rows.map((r) => ({ ...r, id: r.id || newId('tx'), createdAt: r.createdAt ?? now, updatedAt: now })));
+  await db.transactions.bulkPut(
+    rows.map((r) => ({
+      ...r,
+      ...(r.subtype === 'TICKER_CHANGE' ? {} : { instrumentId: canonicalId(r.instrumentId), targetInstrumentId: canonicalId(r.targetInstrumentId) }),
+      id: r.id || newId('tx'),
+      createdAt: r.createdAt ?? now,
+      updatedAt: now,
+    })),
+  );
   return rows.length;
 }
 

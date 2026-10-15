@@ -122,6 +122,14 @@ export default function ImportPage() {
     setBusy(true);
     try {
       const pid = await resolvePortfolio();
+      // Core R8: merger cash is a receivable until its payment date (set or confirmed in the review).
+      for (const c of result.corporateActions ?? []) {
+        const ptx = c.proposal?.applied ? c.proposal.transaction : undefined;
+        const payDate = caChoices[c.line]?.cashPayDate ?? c.cashPayDate;
+        if (!ptx || !payDate) continue;
+        const target = result.transactions.find((x) => x.id === ptx.id) ?? ptx;
+        target.cashPayDate = payDate;
+      }
       const r = await commitImport(result, pid, syncOrigin === 'email-inbox' ? 'email-inbox' : syncOrigin ? 'sync:ibkr-flex' : `import:${result.detection.presetId}`);
       // Daily-sync inbox: tell the server these transactions were picked up.
       if (syncOrigin === 'email-inbox') {

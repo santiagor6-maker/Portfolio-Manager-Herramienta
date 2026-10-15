@@ -185,9 +185,10 @@ test('W15: importing the Trii statement enriches names and flags duplicates on r
       const q = db.transaction('instruments').objectStore('instruments').getAll();
       q.onsuccess = () => r(q.result);
     });
-    return all.filter((i) => i.id === 'XBOG:ISA' || i.id === 'XBOG:PFBCOLOM').map((i) => i.name);
+    return all.filter((i) => i.id === 'XBOG:ISA' || i.id === 'XBOG:PFCIBEST').map((i) => i.name);
   });
-  for (const n of names) expect(n).not.toMatch(/^(ISA|PFBCOLOM)$/);
+  expect(names).toHaveLength(2); // PFBCOLOM is stored under its current id (core R8 rename)
+  for (const n of names) expect(n).not.toMatch(/^(ISA|PFBCOLOM|PFCIBEST)$/);
   await page.getByRole('button', { name: 'Importar otro archivo' }).click();
   await page.getByTestId('import-file').setInputFiles('e2e/fixtures/extracto-trii.csv');
   await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 30_000 });

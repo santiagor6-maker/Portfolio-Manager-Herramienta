@@ -13,6 +13,7 @@ import { addDays, todayIso } from '../lib/ids';
 import { BENCHMARKS } from '../lib/benchmarks';
 import { createHttpMarketClient, MarketDataApiError, type FxRequest, type HistoryRequest, type MarketClient, type SearchResult } from './marketClient';
 import { evaluateAlerts } from './alerts';
+import { canonicalInstrument, type RenamedInstrument } from '../lib/renames';
 
 let inflight: Promise<void> | null = null;
 let lastAuto = 0;
@@ -330,16 +331,26 @@ export async function localCatalogSearch(q: string): Promise<SearchResult[]> {
   const needle = q.toLowerCase();
   const { CATALOG } = await import('../lib/catalog');
   const mine = await db.instruments.toArray();
-  const all = new Map<string, Instrument>();
-  for (const i of [...CATALOG, ...mine]) all.set(i.id, i);
+  const all = new Map<string, RenamedInstrument>();
+  // Core R8: an old ticker (PFBCOLOM) is offered as the current one (PFCIBEST, "antes PFBCOLOM").
+  for (const raw of [...CATALOG, ...mine]) {
+    const i = canonicalInstrument(raw);
+    const prev = all.get(i.id);
+    all.set(i.id, prev ? { ...prev, renamedFrom: prev.renamedFrom ?? i.renamedFrom } : i);
+  }
   return [...all.values()]
     .filter(
       (i) =>
         i.symbol.toLowerCase().includes(needle) ||
+        (i.renamedFrom ?? '').toLowerCase().includes(needle) ||
         i.name.toLowerCase().includes(needle) ||
         (i.isin ?? '').toLowerCase() === needle,
     )
     .sort((a, b) => Number(b.symbol.toLowerCase() === needle) - Number(a.symbol.toLowerCase() === needle) || Number(b.symbol.toLowerCase().startsWith(needle)) - Number(a.symbol.toLowerCase().startsWith(needle)))
     .slice(0, 15)
-    .map((i) => ({ ...i, origin: 'catalog' as const }));
+    .map(({ renamedFrom, ...i }) => ({
+      ...i,
+      origin: 'catalog' as const,
+      ...(renamedFrom ? { renamedFrom: { kind: 'rename' as const, fromId: `${i.exchange}:${renamedFrom}`, toId: i.id, ratio: 1 } } : {}),
+    }));
 }

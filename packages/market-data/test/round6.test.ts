@@ -17,13 +17,30 @@ describe('one source of truth: @pm/core TICKER_EVENTS', () => {
   });
 });
 
+describe('a rename whose new code later ended: ELET5/ELET6 -> AXIA5/AXIA6 -> 1.1 AXIA3 (2026-06-08)', () => {
+  it.each([
+    ['ELET6', 'BVMF:AXIA6'],
+    ['ELET6.SA', 'BVMF:AXIA6'],
+    ['ELET5', 'BVMF:AXIA5'],
+    ['AXIA6', 'BVMF:AXIA6'],
+  ])('%s resolves as the delisted %s, converted into AXIA3', async (sym, id) => {
+    expect(findAlias(sym.startsWith('ELET') ? sym : 'AXIA6')).toBeDefined();
+    const { service } = createTestService();
+    const r = service.resolve(sym);
+    expect(r.kind).toBe('delisted');
+    expect(r.target.instrumentId).toBe(id);
+    const h = await service.history({ symbol: sym, from: '2026-01-01', to: '2026-09-30' });
+    expect(h.delisted).toMatchObject({ kind: 'conversion', fromId: id, toId: 'BVMF:AXIA3', ratio: 1.1, effective: '2026-06-08', lastTradingDay: '2026-06-05' });
+    expect(h.actions).toEqual(expect.arrayContaining([expect.objectContaining({ subtype: 'MERGER', ratio: 1.1, targetInstrumentId: 'BVMF:AXIA3', date: '2026-06-08' })]));
+    await expect(service.quote(sym)).rejects.toMatchObject({ code: 'DELISTED' });
+  });
+});
+
 describe('renames added by the shared table', () => {
   it.each([
     ['TRPL3', 'BVMF:ISAE3', 'ISAE3.SA'],
     ['TRPL4.SA', 'BVMF:ISAE4', 'ISAE4.SA'],
     ['BVMF:TRPL4', 'BVMF:ISAE4', 'ISAE4.SA'],
-    ['ELET6', 'BVMF:AXIA6', 'AXIA6.SA'],
-    ['ELET6.SA', 'BVMF:AXIA6', 'AXIA6.SA'],
   ])('%s -> %s (same security, history continues)', (sym, id, yahoo) => {
     expect(findAlias(sym)).toMatchObject({ kind: 'rename', toId: id, ratio: 1 });
     const { service } = createTestService();
@@ -40,6 +57,7 @@ function natu3(): YahooChartResult {
   const bars: [string, number, number][] = [
     ['2019-12-16', 36.5, 900_000],
     ['2019-12-17', 36.86, 750_000],
+    ['2019-12-18', 36.86, 0], // Yahoo repeats the close on the conversion day (M41): no security traded as NATU3
     ['2025-07-02', 10.19, 5_000_000],
     ['2025-07-03', 10.05, 3_000_000],
   ];

@@ -162,7 +162,7 @@ src/
 - `src/__tests__/emailInbox.test.ts` y `e2e/email-inbox.spec.ts` — buzón de correo: borradores, vista
   previa con deduplicación, confirmación por `ids` y mensajes para 401/403/503.
 
-Totales: 78 pruebas unitarias (14 archivos) y 42 pruebas e2e (+1 en vivo que se omite sin servidor).
+Totales: 81 pruebas unitarias (14 archivos) y 43 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
@@ -330,4 +330,17 @@ Revisión: `reviews/web-r3.md`.
   - «Registrar split» usa los campos estructurados del diagnóstico (`data.splitRatio`, `dateTo`), sin
     leer el texto; el mensaje queda solo como respaldo;
   - también se cubre `POSSIBLE_REDENOMINATION`.
+- **Core R8 (contrato):**
+  - **Tickers renombrados:** se usa la misma tabla que el motor (`tickerRenames` de `@pm/core`).
+    - Al crear activos y movimientos se guarda el id vigente (PFBCOLOM → PFCIBEST), salvo en las filas
+      `TICKER_CHANGE`.
+    - El buscador y el catálogo ofrecen el activo vigente con «antes PFBCOLOM».
+    - Posiciones y la ficha del activo muestran «antes …», y un enlace con el id viejo abre el activo
+      vigente.
+    - `INSTRUMENT_RENAMED` y `RENAMED_TICKER_MIXED` ofrecen «Pasar los movimientos a PFCIBEST».
+  - **Efectivo de fusión por cobrar:** la tabla de efectivo muestra la columna «Por cobrar»
+    (`CashBalance.receivable`). Al aceptar una propuesta de fusión se puede fijar `cashPayDate`.
+  - **Nuevos códigos:** `MERGER_CASH_PENDING`, `COST_FRACTION_ESTIMATED` (permite escribir la fracción
+    oficial) y `CORPORATE_ACTION_WITHOUT_POSITION`, con textos en es/pt/en armados desde
+    `Diagnostic.data`. Los códigos que traen `data` ya no se leen del mensaje.
 

@@ -80,6 +80,23 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
     case 'INTEREST_NET_ASSUMED':
       r = m.match(new RegExp(`gross ${NUM} with an estimated ${NUM} withheld`));
       return r && c.tx ? { ...base, gross: money(r[1]!, c.tx.currency), withheld: money(r[2]!, c.tx.currency) } : undefined;
+    // Core R8: structured `data` (no text parsing).
+    case 'INSTRUMENT_RENAMED':
+      return d.data?.fromId && d.data?.toId ? { from: sym(String(d.data.fromId)), to: sym(String(d.data.toId)) } : undefined;
+    case 'MERGER_CASH_PENDING':
+      return d.data?.amount !== undefined && d.data?.currency
+        ? { ...base, symbol: sym(String(d.data.instrumentId ?? instId)), amount: money(Number(d.data.amount), String(d.data.currency)), date: String(d.data.payDate ?? '') }
+        : undefined;
+    case 'COST_FRACTION_ESTIMATED':
+      return d.data?.costFraction !== undefined
+        ? {
+            symbol: sym(String(d.data.instrumentId ?? instId)),
+            target: sym(String(d.data.targetInstrumentId ?? '')),
+            pct: `${new Intl.NumberFormat(c.locale, { maximumFractionDigits: 1 }).format(Number(d.data.costFraction) * 100)} %`,
+          }
+        : undefined;
+    case 'CORPORATE_ACTION_WITHOUT_POSITION':
+      return d.data?.instrumentId ? { ...base, symbol: sym(String(d.data.instrumentId)), target: sym(String(d.data.targetInstrumentId ?? '')) } : undefined;
     case 'TRADE_PRICE_UNIT_SUSPECT': {
       const f = unitFactor(m);
       return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—', factor: f ? (f >= 1 ? `×${f}` : `÷${Math.round(1 / f)}`) : '?' };
@@ -152,4 +169,10 @@ export function splitSuggestion(
   const r = a / b;
   const snap = (x: number) => SPLIT_FACTORS.reduce((best, k) => (Math.abs(Math.log(x / k)) < Math.abs(Math.log(x / best)) ? k : best), SPLIT_FACTORS[0]!);
   return { instrumentId: m[1]!, date: m[5]!, ratio: r >= 1 ? snap(r) : 1 / snap(1 / r) };
+}
+
+/** Validation issue RENAMED_TICKER_MIXED: "<old> and <new> are the same security…". */
+export function renamedPair(message: string): { from: string; to: string } | undefined {
+  const m = message.match(/^(\S+) and (\S+) are the same security/);
+  return m ? { from: m[1]!, to: m[2]! } : undefined;
 }
