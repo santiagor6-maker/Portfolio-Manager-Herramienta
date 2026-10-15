@@ -92,14 +92,22 @@ export const coStatementParser: PdfParser = {
       ctx.table.lines.length = Math.min(ctx.table.lines.length, cut);
       const positions = parseHoldings(doc.lines.slice(cut + 1));
       if (positions.length) {
-        const period = /(\d{2}\/\d{2}\/\d{4})\s*[-–a]\s*(\d{2}\/\d{2}\/\d{4})/.exec(doc.text);
+        const period = PERIOD_RE.exec(doc.text);
         const asOf = ctx.options.asOfDate ?? (period ? parseDate(period[2]!, 'DMY') : undefined);
         ctx.reported = { source: 'extracto-co-pdf', positions, cash: [], ...(asOf ? { asOf } : {}), accountIds: [coBroker(doc.text) ?? ''].filter(Boolean) };
       }
     }
     const s = suggestMappingFromHeaders((table.rows[h] ?? []).map((c) => cellToString(c)));
     const broker = coBroker(doc.text);
-    const mapping = { ...s.mapping, headerRow: h, defaultExchange: 'XBOG', defaultCurrency: ctx.options.defaultCurrency ?? 'COP' };
+    const mapping: Parameters<typeof parseWithMapping>[2] = { ...s.mapping, headerRow: h, defaultExchange: 'XBOG', defaultCurrency: ctx.options.defaultCurrency ?? 'COP' };
+    // The statement period ("Periodo: 01/03/2024 al 31/03/2024") is evidence of the day/month order (I46).
+    const per = PERIOD_RE.exec(doc.text);
+    if (per && !ctx.options.dateFormat) {
+      const firsts = [per[1]!, per[2]!].map((d) => Number(d.slice(0, 2)));
+      const seconds = [per[1]!, per[2]!].map((d) => Number(d.slice(3, 5)));
+      if (firsts.some((x) => x > 12)) mapping.dateFormat = 'DMY';
+      else if (seconds.some((x) => x > 12)) mapping.dateFormat = 'MDY';
+    }
     const opts: Parameters<typeof parseWithMapping>[3] = { numberHint: 'comma', statementLines: true };
     if (broker) opts.account = broker;
     const rows = parseWithMapping(table, ctx, mapping, opts);
@@ -107,6 +115,8 @@ export const coStatementParser: PdfParser = {
     return rows;
   },
 };
+
+const PERIOD_RE = /(\d{2}\/\d{2}\/\d{4})\s*(?:-|–|al|a|hasta|to)\s*(\d{2}\/\d{2}\/\d{4})/i;
 
 const HOLDINGS_RE = /^(portafolio( al cierre| de inversion)?|posicion( al cierre| consolidada)?|saldos? (de )?(titulos|acciones|valores)|composicion del portafolio|resumen (del )?portafolio|tenencias)\b/;
 

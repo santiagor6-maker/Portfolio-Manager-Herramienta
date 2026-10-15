@@ -12,6 +12,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import {
   INDEX_IDS,
+  isSecretParam,
   MarketDataError,
   MarketDataService,
   startOfMonth,
@@ -23,7 +24,7 @@ import {
   type Interval,
   type PriceAdjustment,
 } from '@pm/market-data';
-import type { EmailInboxMount } from './emailInbox';
+import type { EmailInboxMount, InboxFullError } from './emailInbox';
 import { PORTFOLIO_ID_RE, type IbkrFlexSyncMount } from './ibkrSync';
 
 export const VERSION = '0.2.0';
@@ -74,6 +75,8 @@ export interface AppOptions {
   inboxPerHour?: number;
   /** Max body of POST /api/sync/* (it may carry the portfolio's transactions). Default 5 MiB. */
   syncMaxBodyBytes?: number;
+  /** Secret values that must never be written to the log (API_TOKEN is added automatically). */
+  logSecrets?: string[];
   /** Request log sink (default console.log). Pass null to silence. */
   log?: ((line: string) => void) | null;
   now?: () => number;
@@ -162,6 +165,47 @@ export async function tokenMatches(given: string | undefined, expected: string):
   return diff === 0;
 }
 
+/**
+ * Query string for the request log (review R6, M40): parameters are DECODED before matching, so
+ * `?api%5Fkey=` or `?Secret=` are caught; credential-named parameters and any value containing a
+ * configured secret (in any encoding) become `***`.
+ */
+export function maskQuery(search: string, secrets: readonly string[]): string {
+  if (!search || search === '?') return '';
+  const live = secrets.filter((x) => x && x.length >= 6);
+  const hasSecret = (v: string) => live.some((x) => v.includes(x));
+  let params: [string, string][];
+  try {
+    params = [...new URLSearchParams(search).entries()];
+  } catch {
+    return '?***';
+  }
+  const out = params.map(([k, v]) => {
+    const secret = isSecretParam(k) || /^(secret|api_key)$/i.test(k) || hasSecret(k) || hasSecret(v);
+    return `${encodeURIComponent(hasSecret(k) ? '***' : k)}=${secret ? '***' : encodeURIComponent(v)}`;
+  });
+  let line = `?${out.join('&')}`;
+  // Belt and braces: no configured secret, raw or encoded, survives anywhere in the line.
+  for (const x of live) for (const form of [x, encodeURIComponent(x)]) line = line.split(form).join('***');
+  return line;
+}
+
+/** A query parameter by its RAW (undecoded) name: `api%5Fkey` is not `api_key` (M40). */
+function rawQueryParam(url: string, name: string): string | undefined {
+  const q = new URL(url).search.slice(1);
+  for (const part of q.split('&')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i) === name) {
+      try {
+        return decodeURIComponent(part.slice(i + 1).replace(/\+/g, ' '));
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 function hostName(host: string | undefined): string {
   if (!host) return '';
   if (host.startsWith('[')) return host.slice(0, host.indexOf(']') + 1).toLowerCase();
@@ -178,6 +222,7 @@ export function createApp(opts: AppOptions = {}): Hono {
   const maxBody = opts.maxBodyBytes ?? 64 * 1024;
   const syncMaxBody = opts.syncMaxBodyBytes ?? 5 * 1024 * 1024;
   const inboxPerHour = opts.inboxPerHour ?? 60;
+  const logSecrets = [...(opts.logSecrets ?? []), ...(opts.apiToken ? [opts.apiToken] : [])];
   const inboxLimiter = inboxPerHour > 0 ? new RateLimiter({ capacity: inboxPerHour, refillPerSecond: inboxPerHour / 3600 }, opts.now) : undefined;
   const allowedHosts = opts.allowedHosts ? new Set(opts.allowedHosts.map((h) => h.toLowerCase())) : undefined;
   let warnedShared = false;
@@ -189,8 +234,8 @@ export function createApp(opts: AppOptions = {}): Hono {
     await next();
     const ms = performance.now() - started;
     c.header('Server-Timing', `total;dur=${ms.toFixed(1)}`);
-    // Secrets that webhook URLs may carry (?secret=, ?api_key=) never reach the log.
-    const search = new URL(c.req.url).search.replace(/([?&](?:secret|api_key|token)=)[^&]*/gi, '$1***');
+    // Secrets that webhook URLs may carry (?secret=, ?api_key=) never reach the log (M40).
+    const search = maskQuery(new URL(c.req.url).search, logSecrets);
     log?.(`${c.req.method} ${c.req.path}${search.slice(0, 200)} -> ${c.res.status} ${ms.toFixed(0)}ms`);
   });
 
@@ -230,7 +275,8 @@ export function createApp(opts: AppOptions = {}): Hono {
       const auth = c.req.header('authorization');
       // Inbound-mail providers that cannot set headers (Mailgun routes, Postmark) put the API token in
       // the webhook URL: accepted as ?api_key= on that route only (and redacted from the log).
-      const webhookKey = c.req.method === 'POST' && c.req.path === '/api/inbox/email' ? c.req.query('api_key') : undefined;
+      // Only the exact raw name `api_key` (not `api%5Fkey` or other spellings Hono would decode).
+      const webhookKey = c.req.method === 'POST' && c.req.path === '/api/inbox/email' ? rawQueryParam(c.req.url, 'api_key') : undefined;
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (c.req.header('x-api-key') ?? webhookKey);
       if (!(await tokenMatches(token, opts.apiToken))) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API token' } }, 401);
     }
@@ -472,9 +518,18 @@ export function createApp(opts: AppOptions = {}): Hono {
       onError: (c) => c.json({ error: { code: 'TOO_LARGE', message: `Message too large (max ${inboxMaxBody} bytes)` } }, 413),
     }),
     async (c) => {
-      const res = await opts.emailInbox!.handler(c.req.raw);
-      res.headers.set('cache-control', 'no-store');
-      return res;
+      try {
+        const res = await opts.emailInbox!.handler(c.req.raw);
+        res.headers.set('cache-control', 'no-store');
+        return res;
+      } catch (e) {
+        // By name: app.ts stays free of a runtime import of @pm/importers.
+        if (e instanceof Error && e.name === 'InboxFullError') {
+          const f = e as InboxFullError;
+          return c.json({ error: { code: 'INBOX_FULL', message: f.message, details: { portfolioId: f.portfolioId, limit: f.limit } } }, 507);
+        }
+        throw e;
+      }
     },
   );
   app.get('/api/inbox/email/drafts', async (c) => {

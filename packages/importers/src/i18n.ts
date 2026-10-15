@@ -476,7 +476,12 @@ const R3: Catalog = {
     pt: 'O PDF excede o limite de segurança ({reason}: {limit}). Não foi processado.',
     en: 'The PDF exceeds the safety limit ({reason}: {limit}). It was not processed.',
   },
-  TICKER_RENAMED: {
+  WITHHOLDING_IN_TEXT: {
+    es: 'Retención de {amount} leída en la descripción del movimiento.',
+    pt: 'Retenção de {amount} lida na descrição da movimentação.',
+    en: 'Withholding of {amount} read from the movement description.',
+  },
+    TICKER_RENAMED: {
     es: '{from} cambió de código: se usa {to} (misma acción).',
     pt: '{from} mudou de código: usa-se {to} (mesma ação).',
     en: '{from} was renamed: {to} is used (same security).',

@@ -1,3 +1,5 @@
+import { redactDeep, redactSecrets } from './redact';
+
 export type MarketDataErrorCode =
   | 'BAD_REQUEST'
   | 'NOT_FOUND'
@@ -24,14 +26,15 @@ export class MarketDataError extends Error {
   readonly details?: unknown;
 
   constructor(code: MarketDataErrorCode, message: string, details?: unknown) {
-    super(message);
+    // Messages and details reach API clients: no provider key may survive in them (R6, M38).
+    super(redactSecrets(message));
     this.name = 'MarketDataError';
     this.code = code;
     this.status = STATUS[code];
-    this.details = details;
+    this.details = details === undefined ? undefined : redactDeep(details);
   }
 }
 
 export function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return redactSecrets(e instanceof Error ? e.message : String(e));
 }

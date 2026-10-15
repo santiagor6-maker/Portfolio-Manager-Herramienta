@@ -158,7 +158,8 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     const numericCols = [c.quantity, c.price, c.amount, c.netAmount, ...c.fees, ...c.taxes];
     const hasNumbers = numericCols.some((i) => i !== undefined && /\d/.test(str(raw, i)));
     const dateCell = cell(raw, c.date);
-    if (cellToString(dateCell) === '' && !hasNumbers) {
+    const textHasMoney = /\$\s*-?\s*\d|\bcop\s*\d/i.test(raw.map((x) => cellToString(x)).join(' '));
+    if (cellToString(dateCell) === '' && !hasNumbers && !(gopts.statementLines && textHasMoney)) {
       row.skipped = true; // section titles / spacer rows
       continue;
     }
@@ -174,7 +175,9 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
         const dummy = { line: row.line, issues: [] };
         // The amount is the last number of the line (percentages excluded).
         const nums = numericCols.map((i) => (i === undefined ? undefined : cellToString(cell(raw, i)))).filter((v): v is string => !!v && /\d/.test(v) && !/%/.test(v));
-        const textNums = raw.map((x) => cellToString(x)).join(' ').split(/\s{2,}|\s(?=\$)|\s(?=-\$)/).filter((t) => /\d/.test(t) && !/%/.test(t));
+        // Amount written inside the text ("Retención 7% $ 9.437"): the money after a "$" / "COP".
+        const joined = raw.map((x) => cellToString(x)).join(' ');
+        const textNums = [...joined.matchAll(/(?:\$|\bCOP)\s*(-?\s*\d[\d.,]*)/gi)].map((m) => m[1]!.replace(/\s/g, ''));
         const v = ctx.num(nums.at(-1) ?? textNums.at(-1) ?? '', dummy, 'amount');
         if (v !== undefined && v !== 0) {
           prev[kind] = (prev[kind] ?? 0) + Math.abs(v);
@@ -341,6 +344,15 @@ export function parseWithMapping(table: RawTable, ctx: ParseContext, mapping: Co
     if (note) draft.note = note;
     const account = str(raw, c.account) || gopts.account;
     if (account) draft.account = account;
+    // Withholding written inside the description of the same line ("Dividendo ISA, retención 7% $ 9.437").
+    if (gopts.statementLines && (draft.type === 'DIVIDEND' || draft.type === 'INTEREST') && draft.taxes === undefined) {
+      const w = /(retenci[oó]n|retefuente|rete\s*fuente)[^$]*?\$\s*(\d[\d.,]*)/i.exec(raw.map((x) => cellToString(x)).join(' '));
+      const v = w ? ctx.num(w[2]!, row, 'taxes') : undefined;
+      if (v) {
+        draft.taxes = Math.abs(v);
+        row.issues.push(ctx.issue('WITHHOLDING_IN_TEXT', 'info', { amount: Math.abs(v) }, row.line));
+      }
+    }
     row.draft = draft;
     lastDraftRow = row;
   }

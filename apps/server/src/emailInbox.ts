@@ -44,7 +44,7 @@ export interface EmailInboxMount {
 }
 
 export interface EmailInboxOptions {
-  /** INBOX_SECRET (≥ 16 chars): the provider sends it in `x-inbox-secret` or `?secret=`. */
+  /** INBOX_SECRET (≥ 16 chars): the provider sends it in the `x-inbox-secret` header (never in the URL). */
   secret: string;
   store: PersistentStore;
   /** Recipient token (importar+TOKEN@…) → portfolio id. */
@@ -53,11 +53,29 @@ export interface EmailInboxOptions {
   allowedSenders: (string | RegExp)[];
   maxBytes?: number;
   requireAuthResults?: boolean;
+  /** INBOX_AUTHSERV_ID: authserv-id(s) of the provider's Authentication-Results header (importers I41). */
+  authservIds?: string[];
+  /** INBOX_MAX_ATTACHMENTS: attachments imported per message (default 20; importers I42). */
+  maxAttachments?: number;
   /** Candidate passwords for encrypted PDF notes (e.g. first CPF digits). */
   pdfPasswords?: string[];
-  /** Max drafts kept per portfolio (oldest dropped). Default 200. */
+  /** Max unconfirmed drafts per portfolio; beyond it new mail is refused with 507. Default 200. */
   maxDrafts?: number;
   now?: () => Date;
+}
+
+/**
+ * The portfolio's draft inbox is full (review R6, M42): the message is refused with 507 instead of
+ * silently dropping unconfirmed drafts; the provider will retry or bounce it.
+ */
+export class InboxFullError extends Error {
+  constructor(
+    readonly portfolioId: string,
+    readonly limit: number,
+  ) {
+    super(`The e-mail draft inbox of ${portfolioId} is full (${limit} drafts not yet confirmed): confirm or delete drafts in the web app`);
+    this.name = 'InboxFullError';
+  }
 }
 
 const key = (portfolioId: string) => `email-inbox:default:${portfolioId}`;
@@ -68,7 +86,7 @@ export class EmailInbox implements EmailInboxMount {
   readonly maxBytes: number;
   private readonly lock = new KeyedLock();
   private readonly now: () => Date;
-  private seq = 0;
+  private readonly maxDrafts: number;
 
   constructor(private readonly o: EmailInboxOptions) {
     if (!o.allowedSenders.length) throw new Error('INBOX_ALLOWED_SENDERS is required (a sender allowlist)');
@@ -77,17 +95,21 @@ export class EmailInbox implements EmailInboxMount {
       if (!PORTFOLIO_ID_RE.test(pid)) throw new Error(`INBOX_RECIPIENTS: invalid portfolio id "${pid}"`);
     }
     this.now = o.now ?? (() => new Date());
+    this.maxDrafts = o.maxDrafts ?? 200;
     this.maxBytes = o.maxBytes ?? 10 * 1024 * 1024;
     this.handler = createEmailInboxHandler({
       secret: o.secret,
       allowedSenders: o.allowedSenders,
       maxBytes: this.maxBytes,
       requireAuthResults: o.requireAuthResults !== false,
+      ...(o.authservIds?.length ? { authservIds: o.authservIds } : {}),
+      ...(o.maxAttachments ? { maxAttachments: o.maxAttachments } : {}),
       resolveRecipient: async (token) => {
         const portfolioId = Object.prototype.hasOwnProperty.call(o.recipients, token) ? o.recipients[token] : undefined;
         if (!portfolioId) return undefined;
         // Dedupe against what is already waiting in the inbox (the same mail forwarded twice).
         const pending = await this.drafts(portfolioId);
+        if (pending.drafts.length >= this.maxDrafts) throw new InboxFullError(portfolioId, this.maxDrafts); // before importing
         const t: InboxTarget = { portfolioId, existingTransactions: pending.drafts.flatMap((d) => d.transactions) };
         if (o.pdfPasswords?.length) t.pdfPasswords = o.pdfPasswords;
         return t;
@@ -108,13 +130,15 @@ export class EmailInbox implements EmailInboxMount {
   private save(portfolioId: string, r: EmailImportResult): Promise<void> {
     return this.lock.run(portfolioId, async () => {
       const s = await this.state(portfolioId);
+      if (s.drafts.length >= this.maxDrafts) throw new InboxFullError(portfolioId, this.maxDrafts);
       const seen = new Set(s.drafts.flatMap((d) => d.transactions.map(txKey)));
       const transactions = r.transactions.filter((t) => !seen.has(txKey(t)));
       const instruments = new Map<string, Instrument>();
       for (const a of r.attachments) for (const i of a.result.instruments) instruments.set(i.id, i);
       const at = this.now();
       const draft: EmailDraft = {
-        id: `mail-${at.getTime().toString(36)}-${(this.seq++).toString(36)}`,
+        // Random ids: unique across restarts and processes (M42).
+        id: `mail-${globalThis.crypto.randomUUID()}`,
         receivedAt: at.toISOString(),
         ...(r.from ? { from: r.from } : {}),
         ...(r.subject ? { subject: r.subject.slice(0, 300) } : {}),
@@ -131,8 +155,7 @@ export class EmailInbox implements EmailInboxMount {
         needsPassword: r.needsPassword,
         ignored: r.ignored.slice(0, 20),
       };
-      const drafts = [...s.drafts, draft].slice(-(this.o.maxDrafts ?? 200));
-      await this.write({ portfolioId, drafts });
+      await this.write({ portfolioId, drafts: [...s.drafts, draft] });
     });
   }
 

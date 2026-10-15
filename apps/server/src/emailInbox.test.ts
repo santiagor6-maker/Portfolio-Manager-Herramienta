@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryStore } from '@pm/market-data';
 import { createTestService } from '../../../packages/market-data/test/helpers';
-import { createApp } from './app';
+import { createApp, maskQuery } from './app';
 import { EmailInbox, parseAllowedSenders, parseRecipients } from './emailInbox';
 
 const API = 'secret-api-token';
@@ -23,7 +23,7 @@ function setup(o: { apiToken?: string; inbox?: boolean; perHour?: number; maxByt
     o.inbox === false
       ? undefined
       : new EmailInbox({ secret: SECRET, store, recipients: { [TOKEN]: 'p1' }, allowedSenders: parseAllowedSenders('@xpi.com.br,confirm@broker.exemplo'), maxBytes: o.maxBytes });
-  const app = createApp({ service: createTestService().service, log: (l) => lines.push(l), apiToken: o.apiToken ?? API, emailInbox: inbox, inboxPerHour: o.perHour });
+  const app = createApp({ service: createTestService().service, log: (l) => lines.push(l), apiToken: o.apiToken ?? API, emailInbox: inbox, inboxPerHour: o.perHour, logSecrets: [SECRET] });
   const post = (body: string, q = '', headers: Record<string, string> = { Authorization: `Bearer ${API}`, 'x-inbox-secret': SECRET }) =>
     app.request(`/api/inbox/email${q}`, { method: 'POST', headers: { 'content-type': 'message/rfc822', ...headers }, body });
   const auth = { Authorization: `Bearer ${API}` };
@@ -66,9 +66,11 @@ describe('e-mail inbox mounted on the server (importers createEmailInboxHandler)
     expect([...store.data.keys()]).toEqual([]);
   });
 
-  it('URL-only providers (Mailgun, Postmark): ?api_key= and ?secret= are accepted on the webhook only, and never logged', async () => {
+  it('?api_key= is accepted on the webhook only and never logged; the inbox secret only in its header (importers I42)', async () => {
     const { app, post, lines, auth } = setup();
-    const res = await post(mail({ from: 'confirm@broker.exemplo' }), `?api_key=${API}&secret=${SECRET}`, {});
+    const brokerAuth = 'Authentication-Results: mx.exemplo; dkim=pass header.d=broker.exemplo; spf=pass smtp.mailfrom=broker.exemplo';
+    expect((await post(mail({ from: 'confirm@broker.exemplo', auth: brokerAuth }), `?api_key=${API}&secret=${SECRET}`, {})).status).toBe(400); // SECRET_IN_URL
+    const res = await post(mail({ from: 'confirm@broker.exemplo', auth: brokerAuth }), `?api_key=${API}`, { 'x-inbox-secret': SECRET });
     expect(res.status).toBe(200);
     expect(lines.join('\n')).not.toContain(API);
     expect(lines.join('\n')).not.toContain(SECRET);
@@ -76,6 +78,19 @@ describe('e-mail inbox mounted on the server (importers createEmailInboxHandler)
     // ?api_key= does not open the drafts endpoints.
     expect((await app.request(`/api/inbox/email/drafts?portfolioId=p1&api_key=${API}`)).status).toBe(401);
     expect((await app.request('/api/inbox/email/drafts?portfolioId=p1', { headers: auth })).status).toBe(200);
+  });
+
+  it('M40 masking cannot be bypassed: encoded names, mistyped variants, secrets under any name', async () => {
+    const { post, lines } = setup();
+    // Encoded name: Hono would decode it, but only the exact raw `api_key` authenticates.
+    expect((await post(mail(), `?api%5Fkey=${API}&secret=${SECRET}`, {})).status).toBe(401);
+    expect((await post(mail(), `?x=1;api_key=${API}&secret=${SECRET}`, {})).status).toBe(401);
+    expect((await post(mail(), `?api_key%3D=${API}`, {})).status).toBe(401);
+    expect((await post(mail(), `?Secret=${encodeURIComponent(SECRET)}&note=${API}`, {})).status).toBe(401);
+    const log = lines.join('\n');
+    for (const leaked of [API, SECRET, encodeURIComponent(SECRET), 'api%5Fkey=s']) expect(log).not.toContain(leaked);
+    expect(maskQuery('?q=ok&Api_Key=zz&token=t1&other=has-secret-api-token-inside', [API])).toBe('?q=ok&Api_Key=***&token=***&other=***');
+    expect(maskQuery('', [API])).toBe('');
   });
 
   it('size limit (streamed) and hourly cap for all senders together', async () => {
@@ -87,6 +102,28 @@ describe('e-mail inbox mounted on the server (importers createEmailInboxHandler)
     const third = await capped.post(mail());
     expect(third.status).toBe(429);
     expect(third.headers.get('retry-after')).toBeTruthy();
+  });
+
+  it('M42 a full draft inbox refuses new mail with 507 (nothing dropped); draft ids are random', async () => {
+    const store = new MemoryStore();
+    const mk = () => new EmailInbox({ secret: SECRET, store, recipients: { [TOKEN]: 'p1' }, allowedSenders: ['notas@mail.xpi.com.br'], maxDrafts: 2 });
+    const app = createApp({ service: createTestService().service, log: null, apiToken: API, emailInbox: mk() });
+    const post = (q: number) => app.request('/api/inbox/email', { method: 'POST', headers: { Authorization: `Bearer ${API}`, 'x-inbox-secret': SECRET, 'content-type': 'message/rfc822' }, body: mail({ body: csv(q) }) });
+    expect((await post(1)).status).toBe(200);
+    expect((await post(2)).status).toBe(200);
+    const full = await post(3);
+    expect(full.status).toBe(507);
+    expect(await full.json()).toMatchObject({ error: { code: 'INBOX_FULL', details: { portfolioId: 'p1', limit: 2 } } });
+    const drafts = (await mk().drafts('p1')).drafts;
+    expect(drafts.map((d) => d.transactions[0]!.quantity)).toEqual([1, 2]); // the oldest were kept
+    expect(drafts[0]!.id).toMatch(/^mail-[0-9a-f-]{36}$/);
+    expect(new Set(drafts.map((d) => d.id)).size).toBe(2);
+    // After confirming, mail is accepted again (a new process: ids stay unique).
+    await mk().clearDrafts('p1', [drafts[0]!.id]);
+    const app2 = createApp({ service: createTestService().service, log: null, apiToken: API, emailInbox: mk() });
+    const again = await app2.request('/api/inbox/email', { method: 'POST', headers: { Authorization: `Bearer ${API}`, 'x-inbox-secret': SECRET, 'content-type': 'message/rfc822' }, body: mail({ body: csv(4) }) });
+    expect(again.status).toBe(200);
+    expect(new Set((await mk().drafts('p1')).drafts.map((d) => d.id)).size).toBe(2);
   });
 
   it('not configured -> 503; without API_TOKEN only an opted-in loopback socket reaches the drafts', async () => {

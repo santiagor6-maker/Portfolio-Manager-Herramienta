@@ -7,7 +7,7 @@ import type { Instrument, Transaction, TransactionType } from '@pm/core';
 import { businessDaysBetween, calendarFor, dayNumber, type CalendarId } from './calendars';
 import { makeIssue } from './i18n';
 import { InstrumentResolver } from './instruments';
-import { proposeCorporateActions } from './corporate';
+import { proposeCorporateActions, tableEventSuggestions } from './corporate';
 import { accountKey, accountNumber, accountsCompatible, normalizeBrokerName } from './brokers';
 export { accountKey, accountNumber, accountsCompatible } from './brokers';
 import { importTransactionBatch, isTransactionBatch } from './sync/inbox';
@@ -710,6 +710,15 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
   }
   // Corporate actions (I33): ready-to-confirm transactions; accepted + complete ones are applied now.
   const appliedInstruments: Instrument[] = [];
+  // Conversions / mergers of the shared table that affect a holding (I44).
+  if (!opts.skipTableEvents) {
+    const all = [...existingTx, ...transactions];
+    ctx.corporateActions.push(
+      ...tableEventSuggestions(all, transactions, (ids, date) =>
+        ids.reduce((a, id) => a + (computeBalances(all.filter((t) => t.instrumentId === id), date).positions.get(id) ?? 0), 0),
+      ).filter((e) => !ctx.corporateActions.some((c) => c.date === e.date && c.target?.id === e.target?.id)),
+    );
+  }
   if (ctx.corporateActions.length) {
     const base = [...existingTx, ...transactions];
     const applied = proposeCorporateActions(ctx.corporateActions, {
@@ -723,14 +732,16 @@ export function finalizeRows(parsed: ParsedRow[], ctx: ParseContext, source: str
       },
     });
     for (const a of applied) {
-      const out = outRows.find((r) => r.line === a.line);
-      if (out && !pending) {
-        if (out.status === 'skipped') stats.skipped--;
-        out.status = 'ok';
-        out.transaction = a.tx;
-        const k = out.issues.findIndex((i) => i.code === 'CORPORATE_ACTION_PENDING');
-        if (k >= 0) out.issues.splice(k, 1);
-        out.issues.push(ctx.issue('CORPORATE_ACTION_APPLIED', 'info', { type: a.tx.subtype ?? 'SPLIT' }, a.line));
+      const out = a.line > 0 ? outRows.find((r) => r.line === a.line) : undefined;
+      if ((out || a.line === 0) && !pending) {
+        if (out) {
+          if (out.status === 'skipped') stats.skipped--;
+          out.status = 'ok';
+          out.transaction = a.tx;
+          const k = out.issues.findIndex((i) => i.code === 'CORPORATE_ACTION_PENDING');
+          if (k >= 0) out.issues.splice(k, 1);
+          out.issues.push(ctx.issue('CORPORATE_ACTION_APPLIED', 'info', { type: a.tx.subtype ?? 'SPLIT' }, a.line));
+        } else ctx.fileIssues.push(ctx.issue('CORPORATE_ACTION_APPLIED', 'info', { type: a.tx.subtype ?? 'SPLIT' }));
         transactions.push(a.tx);
         stats.imported++;
         stats.byType[a.tx.type] = (stats.byType[a.tx.type] ?? 0) + 1;

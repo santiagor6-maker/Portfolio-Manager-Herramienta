@@ -7,18 +7,53 @@
  */
 import { normalizeText } from './util';
 
-const ACCOUNT_NOISE = /\b(cctvm|ctvm|dtvm|s a|sa|s a s|sas|ltda|corretora|corredores|comisionista|de|do|da|del|y|e|valores|investimentos|investimento|invest|banco|bank|llc|inc|plc|grupo|the)\b/g;
+const ACCOUNT_NOISE = /\b(cctvm|ctvm|dtvm|s a|sa|s a s|sas|ltda|corretora|corredores|comisionista|de|do|da|del|y|e|valores|investimentos|investimento|invest|banco|bank|llc|inc|plc|grupo|the|ltd|co)\b/g;
 
-/** Same institution under different spellings (after noise removal, first word). */
-const INSTITUTION_ALIASES: Record<string, string> = {
-  interactive: 'ibkr', ib: 'ibkr', ibkr: 'ibkr',
-  nubank: 'nu', nuinvest: 'nu', easynvest: 'nu',
-  charles: 'schwab', schwab: 'schwab',
-  t212: 'trading212', trading: 'trading212', trading212: 'trading212',
-  modalmais: 'modal', btgpactual: 'btg', itau: 'itau', itaú: 'itau', ion: 'itau',
-  xpi: 'xp', xpinvestimentos: 'xp', agora: 'agora', valores: 'bancolombia', clearcorretora: 'clear', ricoinvestimentos: 'rico',
-  orama: 'orama', bancointer: 'inter', intermedium: 'inter', trii: 'trii', a: 'acciones', av: 'acciones',
-};
+/**
+ * Known institutions, matched on the WHOLE normalized label (I45 — never on the first word alone: "Global
+ * Investimentos" is not "Global Securities", "Casa de Valores" is not "Casa de Bolsa"). Order matters
+ * (Clear and Rico before XP — "CLEAR CORRETORA - GRUPO XP"; Interactive before Inter).
+ */
+const BROKER_PATTERNS: [RegExp, string][] = [
+  [/\binteractive brokers?\b|\bibkr\b|^ib$/, 'ibkr'],
+  [/\bclear\b/, 'clear'],
+  [/\brico\b/, 'rico'],
+  [/^xp$|^xp\b|\bxp investimentos\b|\bxpi\b/, 'xp'],
+  [/\bnu ?invest\b|\bnubank\b|\beasynvest\b|^nu$|^nu (corretora|dtvm)\b/, 'nu'],
+  [/^inter$|^inter (dtvm|invest|distribuidora|co|corretora|de titulos)\b|\bbanco inter\b|\bintermedium\b/, 'inter'],
+  [/\bbtg\b.*\bcolombia\b/, 'btg-co'],
+  [/\bbtg\b/, 'btg'],
+  [/\bitau\b|\bion itau\b/, 'itau'],
+  [/\bagora\b/, 'agora'],
+  [/\bmodal ?(mais)?\b/, 'modal'],
+  [/\bgenial\b/, 'genial'],
+  [/^toro\b|\btoro investimentos\b/, 'toro'],
+  [/\borama\b/, 'orama'],
+  [/\bsafra\b/, 'safra'],
+  [/\bbradesco\b/, 'bradesco'],
+  [/\bsantander\b/, 'santander'],
+  [/\bavenue\b/, 'avenue'],
+  [/\bbanco do brasil\b|\bbb (investimentos|dtvm|corretora|banco de investimento)\b|^bb$/, 'bb'],
+  [/^b3\b|\bb3 s a\b|\barea do investidor\b/, 'b3'],
+  [/\btesouro direto\b/, 'tesouro'],
+  [/\btrii\b/, 'trii'],
+  [/\btyba\b/, 'tyba'],
+  [/\bdavivienda\b/, 'davivienda'],
+  [/\bacciones (y |e )?valores\b|^a v$|^a y v$/, 'acciones'],
+  [/\bcredicorp\b.*\b(peru|pe)\b/, 'credicorp-pe'],
+  [/\bcredicorp\b.*\bchile\b/, 'credicorp-cl'],
+  [/\bcredicorp\b/, 'credicorp'],
+  [/\bcasa de bolsa\b/, 'casadebolsa'],
+  [/\bbancolombia\b|\bcibest\b/, 'bancolombia'],
+  [/\bglobal securities\b/, 'global-securities'],
+  [/\balianza valores\b|\balianza fiduciaria\b/, 'alianza'],
+  [/\bhapi\b/, 'hapi'],
+  [/\bschwab\b/, 'schwab'],
+  [/\bfidelity\b/, 'fidelity'],
+  [/degiro/, 'degiro'],
+  [/trading ?212|\bt212\b/, 'trading212'],
+  [/\betoro\b/, 'etoro'],
+];
 
 /** Broker account numbers that identify ONE account (IBKR U1234567 / DU1234567 paper / F-prefixed FA). */
 const ACCOUNT_NUMBER_RE = /\b(D?U\d{5,10}|F\d{6,10})\b/i;
@@ -29,14 +64,24 @@ export function accountNumber(account: string | undefined): string | undefined {
   return m ? m[1]!.toUpperCase() : undefined;
 }
 
-/** Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu"; "U1234567" → "ibkr". */
+function knownBroker(label: string): string | undefined {
+  const n = normalizeText(label);
+  return BROKER_PATTERNS.find(([re]) => re.test(n))?.[1];
+}
+
+/**
+ * Normalized institution key: "XP INVESTIMENTOS CCTVM S/A" and "XP" → "xp"; "NU INVEST CORRETORA" → "nu";
+ * "U1234567" → "ibkr". Unknown labels keep ALL their words (legal noise removed): "Foo Corretora" and
+ * "Foo" match, "Global Investimentos" and "Global Securities" do not.
+ */
 export function accountKey(account: string | undefined): string | undefined {
   if (!account) return undefined;
   if (accountNumber(account)) return 'ibkr';
+  const known = knownBroker(account);
+  if (known) return known;
   const n = normalizeText(account);
   const k = n.replace(ACCOUNT_NOISE, ' ').replace(/\s+/g, ' ').trim();
-  const first = (k || n).split(' ')[0]!;
-  return INSTITUTION_ALIASES[first] ?? first;
+  return (k || n).replace(/ /g, '-');
 }
 
 /**
@@ -55,12 +100,14 @@ export function accountsCompatible(a: string | undefined, b: string | undefined)
 
 /** Known institutions: brokerId → display name. */
 export const BROKERS: Record<string, string> = {
+  bb: 'BB Investimentos', 'btg-co': 'BTG Pactual Colombia', 'credicorp-pe': 'Credicorp Capital Perú', 'credicorp-cl': 'Credicorp Capital Chile',
+  'global-securities': 'Global Securities', casadebolsa: 'Casa de Bolsa',
   xp: 'XP Investimentos', clear: 'Clear', rico: 'Rico', btg: 'BTG Pactual', nu: 'Nu Invest', inter: 'Inter Invest',
   itau: 'Itaú Corretora', agora: 'Ágora Investimentos', modal: 'Modal', genial: 'Genial Investimentos', toro: 'Toro Investimentos',
   orama: 'Órama', safra: 'Safra Corretora', bradesco: 'Bradesco Corretora', santander: 'Santander Corretora', avenue: 'Avenue',
   b3: 'B3', tesouro: 'Tesouro Direto',
   trii: 'Trii', tyba: 'tyba', davivienda: 'Davivienda Corredores', acciones: 'Acciones & Valores', credicorp: 'Credicorp Capital',
-  casa: 'Casa de Bolsa', bancolombia: 'Valores Bancolombia', global: 'Global Securities', alianza: 'Alianza Valores', hapi: 'Hapi',
+  bancolombia: 'Valores Bancolombia', alianza: 'Alianza Valores', hapi: 'Hapi',
   ibkr: 'Interactive Brokers', schwab: 'Charles Schwab', fidelity: 'Fidelity', degiro: 'DEGIRO', trading212: 'Trading 212', etoro: 'eToro',
 };
 

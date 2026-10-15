@@ -4,6 +4,7 @@
  * identical in-flight GETs. Runtime-agnostic (uses global fetch, injectable for tests).
  */
 import { MarketDataError } from './errors';
+import { redactSecrets, sanitizeUrl } from './redact';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -73,12 +74,19 @@ export class Limiter {
 }
 
 export class HttpError extends Error {
+  readonly url: string;
+  readonly body: string;
   constructor(
     readonly status: number,
-    readonly url: string,
-    readonly body: string,
+    url: string,
+    body: string,
   ) {
-    super(`HTTP ${status} for ${url}${body ? `: ${body.slice(0, 200)}` : ''}`);
+    // The URL (and an upstream body that may echo it) never carry the provider key (R6, M38).
+    const safeUrl = sanitizeUrl(url);
+    const safeBody = redactSecrets(body);
+    super(`HTTP ${status} for ${safeUrl}${safeBody ? `: ${safeBody.slice(0, 200)}` : ''}`);
+    this.url = safeUrl;
+    this.body = safeBody;
     this.name = 'HttpError';
   }
 }
@@ -141,7 +149,7 @@ export class HttpClient {
       let retryAfterMs: number | undefined;
       try {
         const res = await limiter.run(() => this.fetchWithTimeout(url, headers));
-        this.opts.onRequest?.({ url, status: res.status, ms: Date.now() - started, attempt });
+        this.opts.onRequest?.({ url: sanitizeUrl(url), status: res.status, ms: Date.now() - started, attempt });
         if (res.ok) return await res.text();
         const body = await res.text().catch(() => '');
         const err = new HttpError(res.status, url, body);
@@ -154,7 +162,7 @@ export class HttpClient {
       } catch (e) {
         if (e instanceof HttpError && e.status !== 429 && e.status < 500) throw e;
         if (!(e instanceof HttpError)) {
-          this.opts.onRequest?.({ url, status: 'error', ms: Date.now() - started, attempt });
+          this.opts.onRequest?.({ url: sanitizeUrl(url), status: 'error', ms: Date.now() - started, attempt });
         }
         lastError = e;
       }
@@ -165,10 +173,10 @@ export class HttpClient {
       }
     }
     if (lastError instanceof HttpError && lastError.status === 429) {
-      throw new MarketDataError('RATE_LIMITED', `Upstream rate limit (429) persisted after ${this.opts.retries} retries: ${url}`);
+      throw new MarketDataError('RATE_LIMITED', `Upstream rate limit (429) persisted after ${this.opts.retries} retries: ${sanitizeUrl(url)}`);
     }
     if (lastError instanceof Error && lastError.name === 'TimeoutError') {
-      throw new MarketDataError('TIMEOUT', `Upstream timeout: ${url}`);
+      throw new MarketDataError('TIMEOUT', `Upstream timeout: ${sanitizeUrl(url)}`);
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }

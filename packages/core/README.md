@@ -5,7 +5,7 @@ multi-divisa, valoración, ganancias realizadas/no realizadas, tabla mensual, TW
 asignación. El contrato está en `src/types.ts` (tipos) y `src/api.ts` (funciones).
 
 ```
-npx vitest run packages/core        # 244 pruebas
+npx vitest run packages/core        # 261 pruebas
 npx tsc -p packages/core --noEmit   # typecheck
 ```
 
@@ -252,10 +252,23 @@ Precios de operación atípicos (rondas 3 a 5):
   10 % de ×10, ×100, ÷1.000...) parece un error de unidad o de formato. Ejemplos: separador de miles leído
   como decimal, peniques por libras, precio por lote. Se informa `TRADE_PRICE_UNIT_SUSPECT` y **nunca** se
   confirma automáticamente: exige `priceConfirmed`.
-- Ronda 7: un salto entre dos precios consecutivos (cierres o precios de operación aceptados) cercano a una
-  razón de split común (2, 3, 4, 5, 8, 10, 20, 25, 50, 100 o sus inversos), mientras se tiene la posición y
-  sin un `SPLIT` registrado alrededor, se informa `POSSIBLE_UNRECORDED_SPLIT`. Es un aviso en filas y
-  resumen. Las razones 2 y 3 solo se evalúan con saltos de 10 días o menos.
+- Rondas 7 y 8: un salto entre dos precios consecutivos (cierres o precios de operación aceptados) cercano
+  a una razón de split, mientras se tiene la posición y sin un `SPLIT` registrado alrededor, se informa
+  `POSSIBLE_UNRECORDED_SPLIT`. El diagnóstico trae `data` estructurado: `ratioFrom` acciones viejas →
+  `ratioTo` acciones nuevas (un split 10:1 es 1 → 10 y un grupamento 1:10 es 10 → 1), `splitRatio` (la
+  `ratio` del `SPLIT` a registrar), precios, fechas y `source`. Reglas:
+  - Si el proveedor lista un split ahí (acciones corporativas de `MarketData`), es aviso con `source:
+    'provider'`.
+  - Con solo precios, las razones 4, 5, 8, 10, 20, 25, 50 y 100 (o inversas) deben estar a ±3 % en saltos
+    diarios (hasta ~11 % en series de fin de mes), y el nuevo nivel debe persistir. Es un aviso en filas y
+    resumen.
+  - Las razones 2 y 3 exigen ±1 % y saltos de 4 días o menos, y quedan solo como diagnóstico informativo:
+    una caída real se ve igual.
+  - Las criptos se excluyen.
+  - Una caída a ~1/1.000 se informa como `POSSIBLE_REDENOMINATION`. El motor no redenomina la caja.
+- Ronda 8 (C53): un factor cercano a ×10 o ÷10 se acepta como movimiento real con 3 precios consistentes
+  en días distintos, conservando `TRADE_PRICE_UNIT_SUSPECT` y `TRADE_PRICE_CONFIRMED_BY_RUN`. ×100, ÷1.000
+  y similares nunca se aceptan solos. Un `priceConfirmed` en el primer precio re-ancla los siguientes.
 - Tampoco se usan las operaciones de menos del 0,5 % de la posición cuando hay un cierre en la misma semana.
 Los flujos se convierten a base con la tasa de mercado del día del flujo. Un denominador ≤ 1e-9 × la escala
 de los flujos del portafolio (o negativo) hace que el sub-periodo aporte 0 y se informa en `warnings`
@@ -376,6 +389,28 @@ español; la UI puede traducir por `key`.
   `fxStaleDays` (7) días de antigüedad y otra ruta es más fresca, gana la más fresca.
 - Índices de tasa e inflación (`indexSeries`) y acciones corporativas (`corporateActions`, para benchmarks
   de retorno total ajustados por splits).
+- **Splits registrados (ronda 8, C52).** Los precios son sin ajustar. Un precio observado antes de un
+  `SPLIT`, una bonificación (`STOCK_DIVIDEND`) o un `SPINOFF` con `costFraction` registrados se divide por el
+  factor acumulado hasta el día de uso. Eso aplica a la valoración, a `P(f)`, a la referencia de los
+  controles de atípicos y a los precios de operación. Así, con series de fin de mes, el día ex ya valora en
+  términos post-split. Un cierre en la fecha ex ya es post-split. Si el proveedor entrega cierres ajustados
+  por splits, no hay que registrar el split en el libro.
+- **Renombres de ticker (ronda 8, C56).** Con la tabla compartida `tickerRenames.ts` (solo `kind: 'rename'`,
+  el mismo valor), los movimientos con el id viejo se registran con el id actual. Por ejemplo,
+  `XBOG:PFBCOLOM` → `XBOG:PFCIBEST`, con `INSTRUMENT_RENAMED` (info). Si solo hay precios con el id viejo,
+  se usan. Se desactiva con `options.tickerRenames: false`. El validador avisa `RENAMED_TICKER_MIXED`.
+- **Efectivo de fusiones (ronda 8, C56).** `Transaction.cashPayDate` (lo llena `applyCorporateActions` con
+  el `payDate` del `DIVIDEND/EXTRAORDINARY` absorbido) deja el efectivo como cuenta por cobrar hasta su
+  pago. Ese efectivo cuenta en el valor, `CashBalance.receivable` lo muestra, y no financia operaciones antes
+  de esa fecha (`MERGER_CASH_PENDING`).
+- **Reestructuraciones del mismo día (ronda 8, C55).** Los splits, bonificaciones y spin-offs van antes que
+  las fusiones y cambios de ticker que consumen el origen. Así, el desarme de una unit emitido como `MERGER`
+  y luego `SPINOFF` (CPLE11 = 1 CPLE3 + 4 CPLE6) entrega todos los componentes. Un `SPINOFF` sin
+  `costFraction` reparte el costo por valor de mercado (`COST_FRACTION_ESTIMATED`). Una acción sobre un
+  origen ya vacío se informa `CORPORATE_ACTION_WITHOUT_POSITION`.
+- **VNA de NTN-B (C57).** El devengo con IPCA mensual queda a 0,05–0,3 % del VNA de ANBIMA, que se actualiza
+  el día 15. Para cuadrar con el extracto, market-data puede entregar el VNA diario de ANBIMA como índice
+  `level`, que el motor ya soporta.
 
 ## Validación
 
@@ -645,3 +680,29 @@ Cambios aditivos al contrato:
 - Avisos nuevos en filas y resúmenes: `TRADE_PRICE_UNIT_SUSPECT:<ids>`, `TRADE_PRICE_CONFIRMED_BY_RUN:<ids>`
   y `POSSIBLE_UNRECORDED_SPLIT:<ids>`.
 - `IndexData.capitalized` es interno y marca los índices de inflación.
+
+## Respuesta a la revisión ronda 7
+
+Revisión: `reviews/core-r7.md`; estos cambios forman la **ronda 8** del motor. Los escenarios del revisor
+(`r7-a`, `r7-b`, `r7-c`) quedaron como pruebas en `src/review-r7.test.ts`. Total: **261 pruebas**, que pasan
+también con `TZ=America/Bogota` y `TZ=Pacific/Kiritimati`. Los 21 scripts del revisor (rondas 1–7) pasan,
+salvo los ya aceptados (F1, F4, S2a, S2b). Los demás paquetes y apps pasan sus pruebas y compilan sin errores.
+
+| Hallazgo | Severidad | Arreglo |
+|---|---|---|
+| C52 Split registrado sin cierre en la fecha ex | Alta | Tabla de factores por instrumento construida con el libro (`SPLIT`, `STOCK_DIVIDEND`, `SPINOFF` con `costFraction`). Todo precio observado antes de la fecha ex se divide por el factor acumulado hasta el día de uso: valoración (`priceInfo`, `quickValue`), `P(f)`, referencias de los controles de atípicos y precios de operación (que ya no se reescalan en sitio). F: 10.000 el 15-feb (antes 20.000) y TWR de febrero 0 (antes +20 %). Demo: WEGE3 el 2024-04-20 a 19,63 y 7.713.721 (antes 39,26 y 15.427.442). A2: grupamento 10:1 registrado y compra a 10,2 sin `TRADE_PRICE_UNIT_SUSPECT`, valor 11.220 y MTD +2 % (antes 1.100 y −94,5 %). |
+| C55 Desarme de units en el orden de market-data | Media | En el mismo día, `MERGER`/`TICKER_CHANGE` van después de splits, bonificaciones y spin-offs. Un `SPINOFF` sin `costFraction` reparte el costo por valor de mercado (`COST_FRACTION_ESTIMATED`). Una acción sobre un origen vacío avisa `CORPORATE_ACTION_WITHOUT_POSITION`. E2: 100 CPLE3 + 400 CPLE6 con el costo total de 4.000 (antes solo CPLE3) y diciembre +5 % (de 40 a 42; antes −80 %). Market-data puede emitir los `SPINOFF` primero con el `costFraction` de B3. |
+| C56 Tabla de renombres y fecha de pago del efectivo | Media | `createContext` canonicaliza los ids con `renamedTickerId`, solo para renombres puros (`INSTRUMENT_RENAMED`), y usa los precios del id viejo si el nuevo no tiene. El validador avisa `RENAMED_TICKER_MIXED`. E1: una sola posición PFCIBEST de 50 a precio de mercado, sin `OVERSELL` ni posición fantasma. `applyCorporateActions` pone `cashPayDate` en la fusión cuando el dividendo absorbido se paga después. Hasta esa fecha el efectivo es una cuenta por cobrar: cuenta en el valor, se ve en `CashBalance.receivable` y no financia compras (CPLE5 → CPLE3: R$ 0,7749 pagado el 2025-12-30). |
+| C53 Movimientos reales de 8–12× | Baja | Con 3 o más precios consistentes en días distintos, un factor ≈ ×10 o ÷10 se acepta, con `TRADE_PRICE_UNIT_SUSPECT` y `TRADE_PRICE_CONFIRMED_BY_RUN` como avisos. A1: 12.360 (antes 1.030). ×100 o ÷1.000 nunca se aceptan solos. A3 (cripto ×9 con dos precios) sigue esperando el tercero o `priceConfirmed`. El mensaje indica que `priceConfirmed` en el primer precio re-ancla los siguientes. |
+| C54 Falsos positivos del detector de splits | Baja | Excluye cripto. Las razones 2 y 3 exigen ±1 % en 4 días o menos y quedan como diagnóstico informativo, no como aviso en filas. Las demás razones exigen que el nivel persista. Si el proveedor lista el split, se usa (`source: 'provider'`). B1–B5 ya no avisan en filas. A4: ÷1.000 da `POSSIBLE_REDENOMINATION`. |
+| Etiqueta invertida de `POSSIBLE_UNRECORDED_SPLIT` | — | Una caída de 1.200 a 121 es un split 10:1 (10 acciones nuevas por una); una subida ×10 es un grupamento 1:10. El diagnóstico trae `data` (`ratioFrom`, `ratioTo`, `splitRatio`, `priceFrom`, `priceTo`, `dateFrom`, `dateTo`, `instrumentId`, `source`), y su fecha es la del salto. |
+| C57 VNA de ANBIMA | Baja | No se cambia la convención sin datos confiables. Queda documentado que market-data puede entregar el VNA diario de ANBIMA como índice `level`. |
+
+Cambios aditivos al contrato:
+- `Transaction.cashPayDate?`, `CashBalance.receivable?`, `Diagnostic.data?` y `EngineOptions.tickerRenames?`.
+- Diagnósticos nuevos: `POSSIBLE_REDENOMINATION` (warning), `INSTRUMENT_RENAMED` (info),
+  `MERGER_CASH_PENDING` (info), `COST_FRACTION_ESTIMATED` (info) y `CORPORATE_ACTION_WITHOUT_POSITION`
+  (warning). En el validador: `RENAMED_TICKER_MIXED`.
+- `POSSIBLE_UNRECORDED_SPLIT` puede ser `info` (razones 2 y 3 sin confirmación del proveedor).
+- Las posiciones de un ticker renombrado salen con el id actual. Si la lista de instrumentos solo trae el
+  viejo, el motor registra una copia con el id nuevo.

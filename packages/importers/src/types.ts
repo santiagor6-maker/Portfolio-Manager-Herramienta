@@ -343,6 +343,16 @@ export interface CorporateActionSuggestion {
   /** Account the event belongs to (IBKR U-number). */
   account?: string;
   /**
+   * Stable id of events found in the shared @pm/core table (I44: "event:BVMF:NATU3>BVMF:NTCO3@2019-12-18"):
+   * they have no file line (`line` 0); accept them with `acceptCorporateActions: [id]`.
+   */
+  id?: string;
+  /** Shares of the parent held before the event (events from the table). */
+  heldQuantity?: number;
+  /** Cash per old share and its payment date (conversions with redemption, e.g. CPLE5 → CPLE3 + R$ 0,7749). */
+  cashPerShare?: number;
+  cashPayDate?: ISODate;
+  /**
    * Ready-to-confirm transaction for @pm/core (I33): SPLIT with subtype SPINOFF / MERGER / TICKER_CHANGE,
    * `targetInstrumentId`, `ratio` and (spin-off) `costFraction` pre-filled. The UI shows it and confirms
    * with one click by passing `acceptCorporateActions: [line]` (plus `corporateActionAnswers` for
@@ -363,6 +373,8 @@ export interface CorporateActionProposal {
   applied: boolean;
   /** The same event was imported before (same importHash): nothing to do. */
   alreadyImported?: boolean;
+  /** Cash received with the new shares (amount on the transaction) and its payment date. */
+  cash?: { amount: number; payDate?: ISODate };
 }
 
 /** User answers for a corporate-action proposal, by row line. */
@@ -484,7 +496,9 @@ export interface ImportOptions {
    */
   acceptDuplicates?: 'none' | 'in-file' | 'all' | number[];
   /** Apply the proposed corporate-action transactions (spin-offs, mergers) of these lines, or all complete ones. */
-  acceptCorporateActions?: 'all' | number[];
+  acceptCorporateActions?: 'all' | (number | string)[];
+  /** Do not look for conversions / mergers of the shared @pm/core table (I44). */
+  skipTableEvents?: boolean;
   /**
    * Brokerage notes (by number) the user accepts although they do not reconcile with "Líquido para" or
    * have unreadable lines: costs are then allocated over the trades that were read (I35).

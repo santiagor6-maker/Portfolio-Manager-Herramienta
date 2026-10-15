@@ -9,6 +9,7 @@
  * Tesouro Direto, Colombian FICs and pension funds, and user-defined feeds have their own providers.
  */
 import type { FxSeries, Instrument, ISODate, PricePoint, ProviderId } from '@pm/core';
+import { redactDeep, redactSecrets, registerSecrets } from './redact';
 import { aliasesTo, findAlias, historicalEventsFrom, renameInfo, type TickerAlias } from './aliases';
 import { DAY, HOUR, MINUTE, historyTtlMs, TieredCache, TTL, type PersistentStore } from './cache';
 import { InstrumentCatalog } from './catalog';
@@ -166,6 +167,9 @@ export class MarketDataService {
   constructor(opts: MarketDataServiceOptions = {}) {
     this.now = opts.now ?? (() => new Date());
     const keys = { ...opts.keys, socrata: opts.keys?.socrata ?? opts.trmAppToken };
+    // Configured keys are removed from any error text, whatever parameter name carried them (M38).
+    registerSecrets([keys.brapi, keys.stooq, keys.twelvedata, keys.fmp, keys.eodhd, keys.alphavantage, keys.coingecko, keys.socrata]);
+    for (const f of opts.customFeeds ?? []) registerSecrets(Object.values((f as { headers?: Record<string, string> }).headers ?? {}));
     this.http =
       opts.http ??
       new HttpClient({
@@ -1235,7 +1239,7 @@ export function totalReturn(points: readonly MarketPricePoint[], actions: readon
 
 export function toErrorBody(e: unknown): ApiErrorBody['error'] {
   if (e instanceof MarketDataError) {
-    return { code: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) };
+    return { code: e.code, message: redactSecrets(e.message), ...(e.details !== undefined ? { details: redactDeep(e.details) } : {}) };
   }
   // Never leak internal JavaScript errors verbatim.
   return { code: 'INTERNAL', message: 'Internal error' };

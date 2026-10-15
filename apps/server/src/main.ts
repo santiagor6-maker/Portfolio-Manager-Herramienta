@@ -15,6 +15,8 @@
  *   INBOX_SECRET (≥16 chars; enables POST /api/inbox/email), INBOX_RECIPIENTS ("token:portfolioId,..."),
  *   INBOX_ALLOWED_SENDERS ("@xpi.com.br,confirm@broker.com"), INBOX_MAX_BYTES (10 MiB), INBOX_PER_HOUR (60),
  *   INBOX_REQUIRE_AUTH (1; 0 = accept mail without SPF/DKIM pass), INBOX_PDF_PASSWORDS (optional),
+ *   INBOX_AUTHSERV_ID (your mail provider's authserv-id(s), comma-separated, e.g. "mx.cloudflare.net":
+ *   only that Authentication-Results header is trusted; unset = the topmost one), INBOX_MAX_ATTACHMENTS (20),
  *   IBKR_FLEX_DAILY ("portfolioId[:credentialId],..."; daily Flex sync into the inbox) / IBKR_FLEX_HOUR (6 UTC),
  *   SNAPSHOT_EXCHANGES (default XBOG,XLON; 'none' disables) / SNAPSHOT_HOURS (12) / SNAPSHOT_YEARS (5,
  *   closed years recorded on the first run): local price snapshot,
@@ -110,8 +112,11 @@ if (env.INBOX_SECRET) {
     allowedSenders: parseAllowedSenders(env.INBOX_ALLOWED_SENDERS),
     maxBytes: Number(env.INBOX_MAX_BYTES ?? 10 * 1024 * 1024),
     requireAuthResults: env.INBOX_REQUIRE_AUTH !== '0',
+    ...(env.INBOX_AUTHSERV_ID ? { authservIds: env.INBOX_AUTHSERV_ID.split(',').map((x) => x.trim()).filter(Boolean) } : {}),
+    ...(env.INBOX_MAX_ATTACHMENTS ? { maxAttachments: Number(env.INBOX_MAX_ATTACHMENTS) } : {}),
     ...(env.INBOX_PDF_PASSWORDS ? { pdfPasswords: env.INBOX_PDF_PASSWORDS.split(',').map((x) => x.trim()).filter(Boolean) } : {}),
   });
+  if (!env.INBOX_AUTHSERV_ID) console.warn('  WARNING: set INBOX_AUTHSERV_ID to your mail provider\'s authserv-id (the topmost Authentication-Results header is trusted meanwhile)');
   if (env.INBOX_REQUIRE_AUTH === '0') console.warn('  WARNING: INBOX_REQUIRE_AUTH=0 accepts mail without SPF/DKIM pass');
   if (!env.API_TOKEN) console.warn('  WARNING: the e-mail webhook needs API_TOKEN to be reachable from a mail provider');
   console.log(`E-mail inbox enabled for ${Object.keys(recipients).length} recipient(s) (store: ${syncDir})`);
@@ -128,6 +133,7 @@ const app = createApp({
   ibkrFlexSync,
   emailInbox,
   inboxPerHour: Number(env.INBOX_PER_HOUR ?? 60),
+  logSecrets: [env.INBOX_SECRET, env.SYNC_SECRET].filter((x): x is string => !!x),
 });
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {

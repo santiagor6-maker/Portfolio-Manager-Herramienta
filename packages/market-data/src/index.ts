@@ -15,6 +15,7 @@ export * from './cache';
 export * from './catalog';
 export * from './aliases';
 export * from './frozen';
+export * from './redact';
 export * from './dividend-calendar';
 export * from './corporate';
 export * from './templates';
