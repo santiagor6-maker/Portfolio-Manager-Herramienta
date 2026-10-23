@@ -1,0 +1,113 @@
+{
+  "id": "web-r5",
+  "score": 7.9,
+  "competitorScore": 8.0,
+  "competitor": "Sharesight",
+  "approved": false,
+  "fixed": [
+    "W40",
+    "W41",
+    "W42",
+    "W43",
+    "W44",
+    "W46",
+    "W47",
+    "W48",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7",
+    "D8",
+    "D10",
+    "D11",
+    "D12",
+    "D13",
+    "D14",
+    "D15",
+    "D17",
+    "D18",
+    "D20",
+    "D23",
+    "D24",
+    "D25"
+  ],
+  "gaps": [
+    {
+      "id": "D1",
+      "severity": "alta",
+      "text": "No corregida: break-words (ui.tsx:172) cambió la elipsis por un salto dentro del número. Pasa en pt a 1280/1440 px («+COP 21.081.⏎632», «+COP 85.032.⏎008», «+COP 704.12⏎6»), en es a 1280 px («+$ 21.081.63⏎2»), en BRL a 1280/1366 px («+R$ 11.583,3⏎9») y a 390 px. Los subtítulos siguen cortados («inflación publicada hasta Se…»). La prueba e2e solo busca elipsis. Corrección: whitespace-nowrap en la cifra y formato compacto cuando no cabe (ResizeObserver o container queries), y una prueba que verifique una sola línea."
+    },
+    {
+      "id": "W49",
+      "severity": "media",
+      "text": "Si se recarga o cierra la pestaña ~1,5 s después de importar, el portafolio queda valorado al precio de la operación («Cotações de 8 de mar. de 2024»), con «Último mês fechado R$ 0,00 · 0,00 %», mapa en 0,0 % y gráfico plano, sin ningún aviso, hasta volver a abrir la app pasados 2 min. Causa: marketData.ts:151-157 guarda lastAttempt antes de terminar el lote, Import.tsx:164 no deja la actualización pendiente y Dashboard.tsx:394-398 solo avisa de precios viejos en activos manuales."
+    },
+    {
+      "id": "W50",
+      "severity": "media",
+      "text": "Al abrir /mensual en frío con un portafolio BRL, la comparación es contra COLCAP (Total +228,35 % frente a +16,73 %); navegando dentro de la app sale Ibovespa. Monthly.tsx:126 inicializa el useState antes de cargar los ajustes y no lo recalcula, ni al cambiar de moneda."
+    },
+    {
+      "id": "W51",
+      "severity": "media",
+      "text": "Las tablas «esenciales» siguen con desplazamiento horizontal: Mensual en BRL oculta COLCAP y Diferença a 1440 px (y Ef. câmbio a 1280); Movimientos oculta Cuenta y Acciones a 1440 px (residuo de D9); Posiciones oculta Peso a 1440; Dividendos oculta Neto y S/ valor a 1280; «Por periodo» oculta Ganancia."
+    },
+    {
+      "id": "D9",
+      "severity": "media",
+      "text": "Parcial (detalle en W51): a 1440 px, Movimientos todavía oculta «Cuenta / corredor» y «Acciones» detrás de una barra horizontal; a 1280 px oculta también «Costos»."
+    },
+    {
+      "id": "W52",
+      "severity": "baja",
+      "text": "«Rentabilidad acumulada» dibuja 7 series solo con leyenda. Ibovespa (#0e9384) e IBR (#008300) dan ΔE 13,8 con visión normal (FAIL) y MSCI (#c2457a) e Ibovespa dan ΔE 2,0 con deuteranopía (FAIL, validador con todos los pares). Los índices se colorean por rango (Performance.tsx:100), no por entidad, y la serie del portafolio no destaca. Con colores por entidad, el donut deja verde azulado junto a verde."
+    },
+    {
+      "id": "W53",
+      "severity": "baja",
+      "text": "Textos y formatos fuera del idioma: ejes de tiempo de ECharts con meses en inglés («Apr», «Sep», «Oct») en es y pt; bonificações con nota en inglés y «×1.03» en Movimentações pt, y GOAU4 «1:1 (33.33 %)» contradictorio; avisos de importación con «0.07», «(-2000.6)» y «2023-01-02»; Divisas «(1 0,00 %)» sin signo (Currencies.tsx:112)."
+    },
+    {
+      "id": "W54",
+      "severity": "baja",
+      "text": "En el teléfono (390 px), el primer gráfico del Resumen empieza a ~920–950 px por «Primeros pasos» (5 filas) y los 4 KPIs; los 3 KPIs secundarios en 2 columnas dejan una celda vacía."
+    },
+    {
+      "id": "W45",
+      "severity": "baja",
+      "text": "Parcial: las alertas fiscales repiten «Alguns parâmetros de 2023/2024/2025/2026 estão marcados para verificação» (4 líneas) y muestran el nombre interno «ver gcapPre2024»."
+    },
+    {
+      "id": "D16",
+      "severity": "baja",
+      "text": "Parcial: ejes de tiempo en inglés y eje Y con etiquetas repetidas («R$ 50,1 mil» ×3) cuando el rango es estrecho; números y fechas sin formatear en los avisos de importación (ver W53)."
+    },
+    {
+      "id": "D19",
+      "severity": "baja",
+      "text": "Parcial: la leyenda ya dibuja las líneas punteadas, pero no hay etiquetas directas en los gráficos de ≤5 series y el de rentabilidad acumulada tiene 7 series."
+    },
+    {
+      "id": "D21",
+      "severity": "baja",
+      "text": "Parcial: a 1280 px, la leyenda del donut corta los porcentajes («38,8») y causa desplazamiento horizontal de la página (scrollWidth 1295; charts.tsx:190, ul min-w-[160px]). «ECOPETROL» se corta en Dividendos a 1440 px."
+    },
+    {
+      "id": "D22",
+      "severity": "baja",
+      "text": "Parcial: la tarjeta «Frescura de datos» sigue ocupando media fila en el Resumen, con 5 índices «falhou» (incluidos CPI y HICP en un portafolio BRL), y los estados se contradicen: punto verde con «Sin actualizar» y «Conectado · Aún no se han descargado precios»."
+    },
+    {
+      "id": "W20",
+      "severity": "baja",
+      "text": "Parcial: en la primera visita se cargan 800 kB de JS/CSS antes de los KPIs (en R4 eran 746) y 559 kB en las siguientes, más ECharts (568 kB) después. No se reproduce la cifra de 520 kB del README. Los KPIs aparecen en 0,55–0,77 s."
+    },
+    {
+      "id": "W10",
+      "severity": "baja",
+      "text": "Sigue sin haber sincronización entre dispositivos ni con corredores o B3, salvo IBKR y el buzón de correo con servidor propio."
+    }
+  ]
+}
