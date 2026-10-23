@@ -82,6 +82,7 @@ const NAV_GROUPS: { key: string; items: NavItem[] }[] = [
 ];
 
 function Brand() {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2.5 px-2">
       <div className="size-8 rounded-lg bg-accent grid place-items-center text-white dark:text-[#04201d] shadow-sm">
@@ -89,7 +90,7 @@ function Brand() {
       </div>
       <div className="leading-tight">
         <div className="font-semibold text-[14.5px] tracking-tight">Portafolio Pro</div>
-        <div className="text-[11px] text-muted">Local-first · multi-divisa</div>
+        <div className="text-[11px] text-muted">{t('brand.tagline')}</div>
       </div>
     </div>
   );

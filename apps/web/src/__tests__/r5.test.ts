@@ -12,7 +12,7 @@ import { localizeNumbers, tidyTaxIssues } from '../lib/taxText';
 import { darfDueOn, redemptionsFromEngine, redemptionTransactions } from '../services/tax';
 import { compactReportHtml, decodeShare, encodeShare } from '../lib/share';
 import { encryptText } from '../lib/crypto';
-import { downsample } from '../lib/downsample';
+import { downsample } from '../lib/chartMath';
 
 const ISA: Instrument = { id: 'XBOG:ISA', symbol: 'ISA', name: 'ISA', exchange: 'XBOG', currency: 'COP', country: 'CO', assetClass: 'equity' };
 const tx = (t: Partial<Transaction>): Transaction => ({ id: `t${Math.random()}`, portfolioId: 'p1', date: '2024-01-02', type: 'DEPOSIT', currency: 'COP', ...t }) as Transaction;

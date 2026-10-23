@@ -8,6 +8,7 @@ function systemDark(): boolean {
 /** Resolves the theme preference and keeps the <html class="dark"> flag in sync. */
 export function useTheme(): { resolved: 'light' | 'dark' } {
   const pref = useApp((s) => s.settings.theme);
+  const heat = useApp((s) => s.settings.heatPalette);
   const [sys, setSys] = useState(systemDark);
   useEffect(() => {
     if (typeof matchMedia === 'undefined') return;
@@ -20,6 +21,7 @@ export function useTheme(): { resolved: 'light' | 'dark' } {
   // Layout effect: runs before charts read the CSS tokens in their passive effects.
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', resolved === 'dark');
-  }, [resolved]);
+    document.documentElement.classList.toggle('heat-cvd', heat === 'cvd');
+  }, [resolved, heat]);
   return { resolved };
 }

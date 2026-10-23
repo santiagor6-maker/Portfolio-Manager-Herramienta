@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
+import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 
 export interface Column<T> {
@@ -62,10 +63,11 @@ export function DataTable<T>({
     });
   }, [rows, sort, columns]);
 
+  const { t } = useTranslation();
   const allSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(rowKey(r)));
 
   return (
-    <div className="overflow-auto rounded-b-xl" style={{ maxHeight }} data-testid={testId}>
+    <div className="table-scroll rounded-b-xl" style={maxHeight ? { maxHeight } : undefined} data-testid={testId}>
       <table className="table">
         <caption className="sr-only">{caption}</caption>
         <thead>
@@ -74,7 +76,7 @@ export function DataTable<T>({
               <th className="w-8 !pr-0">
                 <input
                   type="checkbox"
-                  aria-label="Seleccionar todo"
+                  aria-label={t('common.selectAll')}
                   checked={!!allSelected}
                   onChange={(e) => onSelectedChange?.(new Set(e.target.checked ? rows.map(rowKey) : []))}
                 />
@@ -157,7 +159,7 @@ export function DataTable<T>({
                   <td className="w-8 !pr-0" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      aria-label={`Seleccionar ${key}`}
+                      aria-label={t('common.selectRow', { key })}
                       checked={!!isSel}
                       onChange={(e) => {
                         const n = new Set(selected);

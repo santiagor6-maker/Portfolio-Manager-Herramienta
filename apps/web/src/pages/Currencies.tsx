@@ -118,7 +118,7 @@ export default function CurrenciesPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 mt-3">
         <Card title={t('fx.exposure')} subtitle={t('fx.exposureSub')}>
-          {loading ? <Skeleton className="h-44" /> : <AllocationDonut slices={exposure} labelFor={sliceLabel} />}
+          {loading ? <Skeleton className="h-44" /> : <AllocationDonut slices={exposure} labelFor={sliceLabel} dim="currency" />}
           {table.length > 0 && (
             <table className="table mt-3">
               <thead>

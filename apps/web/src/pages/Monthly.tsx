@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { CalendarCheck, CalendarRange, ChevronDown, Columns3, Download, FileSpreadsheet, FileText, Rows3 } from 'lucide-react';
 import type { MonthlyRow } from '@pm/core';
 import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
-import { useAnalysis } from '../hooks/useAnalysis';
+import { monthWithoutPrices, useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
 import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
@@ -59,14 +59,21 @@ export function benchValue(r: MonthlyRow, id: string): number | undefined {
   return r.benchmarkReturns?.[id] ?? r.indexReturns?.[id];
 }
 
-export function heatStyle(r: number | undefined): React.CSSProperties | undefined {
+/** Monthly returns saturate at ±8 %; the year column uses ±24 % (stated in the legend). */
+export const HEAT_CAP = 0.08;
+export const HEAT_CAP_YEAR = 0.24;
+
+/**
+ * Diverging fill over the surface. D10: the hues and the strongest mix come from theme tokens
+ * (--heat-pos/--heat-neg/--heat-span): dark mode mixes at most 45 % so the text keeps ≥ 4.5:1, and the
+ * "blue/orange" accessibility palette swaps the hues for colour-vision deficiencies.
+ */
+export function heatStyle(r: number | undefined, cap = HEAT_CAP): React.CSSProperties | undefined {
   if (r === undefined || !Number.isFinite(r)) return undefined;
-  const cap = 0.08;
   const strength = Math.min(1, Math.abs(r) / cap);
   if (strength < 0.02) return { background: 'var(--surface-2)' };
-  const pct = Math.round(10 + strength * 55);
-  const color = r > 0 ? 'var(--pos)' : 'var(--neg)';
-  return { background: `color-mix(in srgb, ${color} ${pct}%, var(--surface))` };
+  const color = r > 0 ? 'var(--heat-pos)' : 'var(--heat-neg)';
+  return { background: `color-mix(in srgb, ${color} calc(10% + var(--heat-span) * ${strength.toFixed(3)}), var(--surface))` };
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +329,7 @@ export default function MonthlyPage() {
           </div>
         ) : (
           <div className="px-4" data-testid="monthly-heatmap">
-            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} onPick={(m) => {
+            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} openMonth={monthWithoutPrices(a)} onPick={(m) => {
               setFocus(m);
               setYear('all');
               setTimeout(() => document.getElementById(`m-${m}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
@@ -367,7 +374,7 @@ export default function MonthlyPage() {
           <>
             {(a?.fxMissing.length ?? 0) > 0 && <FxUnavailable className="py-2 border-b border-line text-warn" />}
             {/* Desktop / tablet table */}
-            <div className="hidden md:block overflow-x-auto print:block print:overflow-visible" data-testid="monthly-table">
+            <div className="hidden md:block table-scroll print:block print:overflow-visible" data-testid="monthly-table">
               <table className={clsx('table monthly-table', compact && 'table-compact')}>
                 <thead>
                   <tr>
@@ -519,17 +526,32 @@ export function Heatmap({
   bench,
   focus,
   onPick,
+  openMonth,
 }: {
   heat: YearRow[];
   mode: ReturnMode;
   bench?: string;
   focus?: string;
   onPick?: (month: string) => void;
+  /** D4: current month without prices yet: dashed "en curso", not a 0,0 % month. */
+  openMonth?: string;
 }) {
   const { t } = useTranslation();
   const f = useFmt();
   const cell = (m: MonthlyRow | undefined, i: number, small = false) => {
     if (!m) return <div className={clsx('rounded-md border border-dashed border-line', small ? 'h-8' : 'h-9')} aria-hidden key={i} />;
+    if (m.month === openMonth)
+      return (
+        <div
+          key={i}
+          className={clsx('rounded-md border border-dashed border-line-strong grid place-items-center text-[10.5px] text-muted leading-tight text-center', small ? 'h-8' : 'h-9')}
+          title={t('monthly.openMonthHint', { month: formatMonth(m.month, f.locale, 'long') })}
+          data-testid="heat-open-month"
+        >
+          {small && <span className="block text-[9px]">{monthName(i, f.locale)}</span>}
+          {t('monthly.inProgress')}
+        </div>
+      );
     const v = rowReturn(m, mode);
     const bv = bench ? benchValue(m, bench) : undefined;
     return (
@@ -546,7 +568,7 @@ export function Heatmap({
         )}
         style={heatStyle(v)}
       >
-        {small ? <span className="block leading-tight"><span className="block text-[9px] text-ink-2">{monthName(i, f.locale)}</span>{formatPct(v, f.locale, { signed: true, decimals: 1 })}</span> : formatPct(v, f.locale, { signed: true, decimals: 1 })}
+        {small ? <span className="block leading-tight"><span className="block text-[9px] text-ink">{monthName(i, f.locale)}</span>{formatPct(v, f.locale, { signed: true, decimals: 1 })}</span> : formatPct(v, f.locale, { signed: true, decimals: 1 })}
       </button>
     );
   };
@@ -577,7 +599,7 @@ export function Heatmap({
                 </td>
               ))}
               <td className="p-0">
-                <div className="num h-9 rounded-md grid place-items-center font-semibold border border-line-strong print-heat" style={heatStyle(y.annual / 3)}>
+                <div className="num h-9 rounded-md grid place-items-center font-semibold border border-line-strong print-heat" style={heatStyle(y.annual, HEAT_CAP_YEAR)}>
                   {formatPct(y.annual, f.locale, { signed: true, decimals: 1 })}
                 </div>
               </td>
@@ -592,7 +614,7 @@ export function Heatmap({
           <div key={y.year}>
             <div className="flex items-center justify-between mb-1 text-[13px]">
               <span className="font-semibold num">{y.year}</span>
-              <span className="num font-semibold px-1.5 rounded" style={heatStyle(y.annual / 3)}>
+              <span className="num font-semibold px-1.5 rounded" style={heatStyle(y.annual, HEAT_CAP_YEAR)}>
                 {formatPct(y.annual, f.locale, { signed: true, decimals: 1 })}
                 {bench && y.annualBench !== undefined && <span className="text-ink-2 font-normal"> · {formatPct(y.annualBench, f.locale, { signed: true, decimals: 1 })}</span>}
               </span>
@@ -617,6 +639,7 @@ export function HeatLegend() {
           {formatPct(s, locale, { signed: true, decimals: 0 })}
         </span>
       ))}
+      <span>{t('monthly.legendYear', { cap: formatPct(HEAT_CAP_YEAR, locale, { decimals: 0 }) })}</span>
     </div>
   );
 }

@@ -67,4 +67,14 @@ export const enR5: typeof esR5 = {
       useDue: 'Use the computed amount',
     },
   },
+  common: { selectAll: 'Select all', selectRow: 'Select {{key}}' },
+  brand: { tagline: 'Local-first · multi-currency' },
+  monthly: {
+    inProgress: 'in progress',
+    openMonthHint: '{{month}}: in progress, no new prices yet.',
+    legendYear: 'Year column: same scale up to ±{{cap}}',
+    lastClosed: 'Last closed month ({{month}})',
+    openNoPrices: '{{month}} in progress: no new prices',
+  },
+  settings: { heatCvd: 'Blue/orange heat map (easier to tell apart with colour blindness)' },
 };

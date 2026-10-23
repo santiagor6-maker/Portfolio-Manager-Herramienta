@@ -16,21 +16,22 @@ import { formatDate, formatMoney, formatMonth, formatPct, monthName, MASK } from
 import { currencyDecimals } from '../lib/currencies';
 import { parsePriceWarnings } from '../components/PriceWarnings';
 import { fxPairs } from '../components/FxNotice';
-import { downsample } from '../lib/downsample';
+import { downsample, niceTicks } from '../lib/chartMath';
+import { colorSlots } from '../lib/seriesColors';
 import { addMonths, monthEnd, todayIso } from '../lib/ids';
 import { indexName, useSliceLabel } from '../lib/labels';
 import { benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { exchangeLabel } from '../lib/exchanges';
 import { downloadText } from '../lib/export';
 import { customSummary } from '../services/engineDirect';
-import { compound, benchValue } from './Monthly';
+import { compound, benchValue, HEAT_CAP, HEAT_CAP_YEAR } from './Monthly';
 import { annualize, yearsOf } from './Performance';
 import type { SeriesPoint } from '../services/analysis';
 
 type Scope = 'month' | 'year' | 'all';
 
 export const REPORT_CSS = `
-.rp{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#0e1525;background:#fff;font-size:12px;line-height:1.45;max-width:1080px;margin:0 auto;padding:28px 32px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.rp{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#0e1525;background:#fff;font-size:12px;line-height:1.45;max-width:1080px;margin:0 auto;padding:28px 32px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .rp *{box-sizing:border-box}
 .rp .num{font-variant-numeric:tabular-nums}
 .rp h1{font-size:24px;margin:0;letter-spacing:-.01em}
@@ -74,9 +75,9 @@ export const REPORT_CSS = `
 const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#8a8f99'];
 
 /** Diverging heat colour (green/red over white) as a plain rgb() string (no color-mix: portable). */
-export function heatColor(r: number | undefined): string {
+export function heatColor(r: number | undefined, cap = HEAT_CAP): string {
   if (r === undefined || !Number.isFinite(r)) return '#ffffff';
-  const s = Math.min(1, Math.abs(r) / 0.08);
+  const s = Math.min(1, Math.abs(r) / cap);
   if (s < 0.02) return '#f3f5f8';
   const a = 0.1 + s * 0.55;
   const [R, G, B] = r > 0 ? [4, 120, 87] : [194, 49, 47];
@@ -325,20 +326,23 @@ function ReportBody({
           : [t('report.k.flows'), m(s?.netFlowsBase ?? tot((r) => r.netFlowsBase), true)],
   ];
 
-  const bars = (slices: { key: string; label: string; valueBase: number; weight: number }[], lab: (x: never) => string) =>
-    slices
+  const bars = (slices: { key: string; label: string; valueBase: number; weight: number }[], lab: (x: never) => string, dim: string) => {
+    const top = slices
       .slice()
       .sort((x, y) => y.weight - x.weight)
-      .slice(0, 7)
-      .map((x, i) => (
+      .slice(0, 7);
+    // D6: the same entity keeps its colour (COP blue, USD orange…) whatever its rank.
+    const slot = colorSlots(dim, top.map((x) => x.key));
+    return top.map((x) => (
         <div className="bar" key={x.key}>
           <span>{lab(x as never)}</span>
           <span className="t">
-            <span className="f" style={{ width: `${Math.max(1, x.weight * 100)}%`, background: SERIES[i] }} />
+            <span className="f" style={{ width: `${Math.max(1, x.weight * 100)}%`, background: SERIES[slot.get(x.key)!] }} />
           </span>
           <span className="num">{p(x.weight, false, 1)}</span>
         </div>
       ));
+  };
 
   return (
     <>
@@ -428,7 +432,7 @@ function ReportBody({
                     );
                   })}
                   <td>
-                    <div className="c num" style={{ background: heatColor(compound(yr.map((r) => r.twr)) / 3), fontWeight: 700 }}>
+                    <div className="c num" style={{ background: heatColor(compound(yr.map((r) => r.twr)), HEAT_CAP_YEAR), fontWeight: 700 }}>
                       {p(compound(yr.map((r) => r.twr)), true, 1)}
                     </div>
                   </td>
@@ -524,15 +528,15 @@ function ReportBody({
         <div className="grid3">
           <div>
             <div className="muted" style={{ marginBottom: 4 }}>{t('dim.assetClass')}</div>
-            {bars(a?.allocations.assetClass ?? [], lc as never)}
+            {bars(a?.allocations.assetClass ?? [], lc as never, 'assetClass')}
           </div>
           <div>
             <div className="muted" style={{ marginBottom: 4 }}>{t('dim.country')}</div>
-            {bars(a?.allocations.country ?? [], lco as never)}
+            {bars(a?.allocations.country ?? [], lco as never, 'country')}
           </div>
           <div>
             <div className="muted" style={{ marginBottom: 4 }}>{t('dim.currency')}</div>
-            {bars(a?.allocations.currency ?? [], lcu as never)}
+            {bars(a?.allocations.currency ?? [], lcu as never, 'currency')}
           </div>
         </div>
       </section>
@@ -638,12 +642,13 @@ function SvgValueChart({ data: full, privacy, locale, currency, inflation }: { d
   const pad = { l: 70, r: 10, t: 10, b: 24 };
   // Edge labels are anchored inward so the first/last date is never clipped (W23).
   const vals = data.flatMap((d) => [d.valueBase, d.netInvestedBase, d.investedRealBase ?? d.netInvestedBase]);
-  const min = Math.min(...vals) * 0.97;
-  const max = Math.max(...vals) * 1.02;
+  // D16: round 1-2-5 ticks that bracket the data (no "$404,7 M").
+  const ticks = niceTicks(Math.min(...vals), Math.max(...vals));
+  const min = ticks[0]!;
+  const max = ticks[ticks.length - 1]!;
   const x = (i: number) => pad.l + (i / Math.max(1, data.length - 1)) * (W - pad.l - pad.r);
   const y = (v: number) => pad.t + (1 - (v - min) / (max - min || 1)) * (H - pad.t - pad.b);
   const path = (fn: (d: SeriesPoint) => number) => data.map((d, i) => `${i ? 'L' : 'M'}${Math.round(x(i))},${Math.round(y(fn(d)))}`).join('');
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => min + (max - min) * k);
   const xt = [0, Math.floor(data.length / 3), Math.floor((2 * data.length) / 3), data.length - 1];
   const hasReal = !!inflation && data.some((d) => d.investedRealBase !== undefined);
   return (
@@ -661,7 +666,6 @@ function SvgValueChart({ data: full, privacy, locale, currency, inflation }: { d
           {data[i] ? formatDate(data[i]!.date, locale, 'short') : ''}
         </text>
       ))}
-      <path d={`${path((d) => d.valueBase)}L${x(data.length - 1)},${y(min)}L${x(0)},${y(min)}Z`} fill="rgba(42,120,214,.12)" />
       <path d={path((d) => d.valueBase)} fill="none" stroke="#2a78d6" strokeWidth="2" />
       <path d={path((d) => d.netInvestedBase)} fill="none" stroke="#7a8396" strokeWidth="1.5" />
       {hasReal && <path d={path((d) => d.investedRealBase ?? d.netInvestedBase)} fill="none" stroke="#eb6834" strokeWidth="1.5" strokeDasharray="3 3" />}

@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, CalendarClock, Database, Plus, Upload, Walle
 import type { AllocationDimension } from '@pm/core';
 import { Banner, Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { AllocationDonut, ReturnBars, ValueChart } from '../components/charts';
-import { seriesForPeriod, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
+import { monthWithoutPrices, seriesForPeriod, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMonth, formatRelative } from '../lib/format';
@@ -53,7 +53,11 @@ export default function DashboardPage() {
 
   if (!loading && a && !a.hasTransactions) return <EmptyDashboard />;
 
-  const last12 = (a?.monthly ?? []).slice(-12);
+  // D4: with no price yet in the current month, "Este mes" is not 0 %: show the last closed month and
+  // keep the empty month out of the 12-month bars.
+  const openMonth = monthWithoutPrices(a);
+  const lastClosed = openMonth ? [...(a?.monthly ?? [])].reverse().find((r) => r.month < openMonth && !r.partial) : undefined;
+  const last12 = (a?.monthly ?? []).filter((m) => m.month !== openMonth).slice(-12);
   const bench = primaryBenchmark(benchmarks, f.currency);
 
   return (
@@ -69,8 +73,9 @@ export default function DashboardPage() {
       />
 
       <GettingStarted />
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" data-testid="kpis">
+      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3" data-testid="kpis">
         <Kpi
+          primary
           loading={loading}
           label={t('dashboard.totalValue')}
           value={<Money value={v?.totalMarketValueBase} />}
@@ -93,12 +98,21 @@ export default function DashboardPage() {
             )
           }
         />
-        <Kpi
-          loading={loading}
-          label={t('dashboard.month')}
-          value={<Money value={mtd?.gainBase} signed />}
-          sub={<Pct value={mtd?.twr} signed colored />}
-        />
+        {lastClosed ? (
+          <Kpi
+            loading={loading}
+            label={t('monthly.lastClosed', { month: formatMonth(lastClosed.month, f.locale) })}
+            value={<Money value={lastClosed.gainBase} signed />}
+            sub={
+              <span className="flex items-center gap-2 flex-wrap" data-testid="kpi-open-month">
+                <Pct value={lastClosed.twr} signed colored />
+                <span className="text-muted text-xs">{t('monthly.openNoPrices', { month: formatMonth(openMonth!, f.locale) })}</span>
+              </span>
+            }
+          />
+        ) : (
+          <Kpi loading={loading} label={t('dashboard.month')} value={<Money value={mtd?.gainBase} signed />} sub={<Pct value={mtd?.twr} signed colored />} />
+        )}
         <Kpi
           loading={loading}
           label={t('dashboard.ytd')}
@@ -178,7 +192,7 @@ export default function DashboardPage() {
               options={DIMS.map((d) => ({ value: d, label: t(`dim.${d}`) }))}
             />
           </div>
-          {loading ? <Skeleton className="h-[170px]" /> : noFx ? <FxUnavailable className="py-10" /> : <AllocationDonut slices={a?.allocations[dim] ?? []} labelFor={sliceLabel} />}
+          {loading ? <Skeleton className="h-[170px]" /> : noFx ? <FxUnavailable className="py-10" /> : <AllocationDonut slices={a?.allocations[dim] ?? []} labelFor={sliceLabel} dim={dim} />}
         </Card>
       </div>
 

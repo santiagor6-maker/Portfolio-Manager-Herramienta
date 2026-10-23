@@ -210,7 +210,7 @@ export default function TransactionsPage() {
             }
           />
         ) : (
-          <div className="overflow-x-auto" data-testid="tx-table">
+          <div className="table-scroll" data-testid="tx-table">
             <table className="table">
               <caption className="sr-only">{t('tx.title')}</caption>
               <thead>

@@ -67,4 +67,14 @@ export const ptR5: typeof esR5 = {
       useDue: 'Usar o valor calculado',
     },
   },
+  common: { selectAll: 'Selecionar tudo', selectRow: 'Selecionar {{key}}' },
+  brand: { tagline: 'Local-first · multimoeda' },
+  monthly: {
+    inProgress: 'em curso',
+    openMonthHint: '{{month}}: em curso, ainda sem cotações novas.',
+    legendYear: 'Coluna Ano: mesma escala até ±{{cap}}',
+    lastClosed: 'Último mês fechado ({{month}})',
+    openNoPrices: '{{month}} em curso: sem cotações novas',
+  },
+  settings: { heatCvd: 'Mapa de calor em azul/laranja (mais fácil de distinguir com daltonismo)' },
 };

@@ -62,3 +62,13 @@ export function useInstrumentLabel(): (id: string | undefined) => { symbol: stri
     [map],
   );
 }
+
+/**
+ * D4: the current month when no holding has a price inside it yet (e.g. prices to 30-sep on 23-oct).
+ * Its row is all zeros: the UI says "en curso, sin precios nuevos" instead of showing a flat month.
+ */
+export function monthWithoutPrices(a: Pick<Analysis, 'asOf' | 'latestPriceDate'> | undefined): string | undefined {
+  if (!a?.latestPriceDate) return undefined;
+  const month = a.asOf.slice(0, 7);
+  return a.latestPriceDate < `${month}-01` ? month : undefined;
+}

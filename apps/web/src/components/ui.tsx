@@ -148,15 +148,18 @@ export function Kpi({
   sub,
   loading,
   hint,
+  primary,
 }: {
   label: ReactNode;
   value: ReactNode;
   sub?: ReactNode;
   loading?: boolean;
   hint?: string;
+  /** D13: the page's headline figure (two columns wide, larger number). */
+  primary?: boolean;
 }) {
   return (
-    <div className="card px-4 py-3.5 min-w-0" title={hint}>
+    <div className={clsx('card px-4 py-3.5 min-w-0', primary && 'col-span-2 kpi-primary')} title={hint}>
       <div className="text-xs font-medium text-muted truncate">{label}</div>
       {loading ? (
         <>
@@ -165,8 +168,9 @@ export function Kpi({
         </>
       ) : (
         <>
-          <div className="text-[22px] font-semibold tracking-tight mt-1 truncate text-ink">{value}</div>
-          {sub && <div className="mt-1 text-[13px] truncate">{sub}</div>}
+          {/* D1: the figure is never cut ("COP 396.779.1…"): it scales with the viewport and may wrap. */}
+          <div className="kpi-value font-semibold tracking-tight mt-1 text-ink break-words">{value}</div>
+          {sub && <div className="mt-1 text-[13px] line-clamp-2">{sub}</div>}
         </>
       )}
     </div>

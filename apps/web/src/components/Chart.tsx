@@ -68,7 +68,7 @@ export function readTokens(): ChartTokens {
 export function baseOption(t: ChartTokens): EChartsOption {
   return {
     animationDuration: 350,
-    textStyle: { fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif', color: t.text2 },
+    textStyle: { fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif', color: t.text2 },
     grid: { left: 8, right: 12, top: 16, bottom: 8, containLabel: true },
     tooltip: {
       backgroundColor: t.surface,

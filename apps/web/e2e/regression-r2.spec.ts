@@ -139,7 +139,7 @@ test('W10: read-only share link (data in the URL fragment), optionally encrypted
   // Encrypted link: asks for the passphrase.
   await page.getByLabel('Contraseña (opcional)').fill('secreto-123');
   await page.getByTestId('share-create').click();
-  await expect(page.getByTestId('share-url')).toHaveValue(/#e1\./);
+  await expect(page.getByTestId('share-url')).toHaveValue(/#e2\./); // W46: compact encrypted format
   const enc = await page.getByTestId('share-url').inputValue();
   const v2 = await ctx.newPage();
   await v2.goto(enc);

@@ -6,6 +6,7 @@ import { baseOption, Chart, type ChartTokens } from './Chart';
 import { formatDate, formatMoney, formatMonth, formatPct, MASK } from '../lib/format';
 import { useFmt } from '../store/app';
 import type { SeriesPoint } from '../services/analysis';
+import { colorSlots } from '../lib/seriesColors';
 
 function hexA(hex: string, a: number): string {
   const h = hex.replace('#', '');
@@ -90,19 +91,7 @@ export function ValueChart({ data, height = 300, inflationLabel }: { data: Serie
             data: data.map((p) => [p.date, p.valueBase]),
             lineStyle: { width: 2, color: tk.series[0] },
             itemStyle: { color: tk.series[0] },
-            areaStyle: {
-              color: {
-                type: 'linear',
-                x: 0,
-                y: 0,
-                x2: 0,
-                y2: 1,
-                colorStops: [
-                  { offset: 0, color: hexA(tk.series[0]!, 0.18) },
-                  { offset: 1, color: hexA(tk.series[0]!, 0.0) },
-                ],
-              },
-            },
+            // D5: no area: the axis does not start at 0 (scale), a fill would exaggerate growth.
           },
           {
             name: t('chart.invested'),
@@ -164,10 +153,11 @@ export function foldSlices(slices: AllocationSlice[], max = 6, otherLabel = 'Otr
   ];
 }
 
-export function AllocationDonut({ slices, labelFor }: { slices: AllocationSlice[]; labelFor?: (s: AllocationSlice) => string }) {
+export function AllocationDonut({ slices, labelFor, dim }: { slices: AllocationSlice[]; labelFor?: (s: AllocationSlice) => string; dim?: string }) {
   const { t } = useTranslation();
   const f = useFmt();
   const folded = foldSlices(slices, 6, t('common.other'));
+  const slot = colorSlots(dim, folded.map((s) => s.key));
   const option = useCallback(
     (tk: ChartTokens): EChartsOption => ({
       ...baseOption(tk),
@@ -187,29 +177,27 @@ export function AllocationDonut({ slices, labelFor }: { slices: AllocationSlice[
           label: { show: false },
           itemStyle: { borderColor: tk.surface, borderWidth: 2, borderRadius: 3 },
           emphasis: { scale: true, scaleSize: 4 },
-          data: folded.map((s, i) => ({
+          data: folded.map((s) => ({
             name: labelFor ? labelFor(s) : s.label,
             value: s.valueBase,
-            itemStyle: { color: s.key === '__other' ? tk.series[7] : tk.series[i] },
+            itemStyle: { color: tk.series[slot.get(s.key)!] },
           })),
         },
       ],
     }),
-    [folded, f.currency, f.locale, f.privacy, labelFor],
+    [folded, f.currency, f.locale, f.privacy, labelFor, slot],
   );
   if (!folded.length) return <p className="text-sm text-muted py-8 text-center">{t('common.noData')}</p>;
   return (
     <div className="flex items-center gap-4 flex-wrap sm:flex-nowrap">
       <Chart option={option} height={170} ariaLabel={t('chart.allocationAria')} className="w-[170px] shrink-0 mx-auto" />
       <ul className="flex-1 min-w-[160px] flex flex-col gap-1.5 text-[13px]">
-        {folded.map((s, i) => (
+        {folded.map((s) => (
           <li key={s.key} className="flex items-center gap-2 min-w-0">
-            <span
-              className="size-2.5 rounded-[3px] shrink-0"
-              style={{ background: s.key === '__other' ? 'var(--series-8)' : `var(--series-${i + 1})` }}
-              aria-hidden
-            />
-            <span className="truncate text-ink-2 flex-1">{labelFor ? labelFor(s) : s.label}</span>
+            <span className="size-2.5 rounded-[3px] shrink-0" style={{ background: `var(--series-${slot.get(s.key)! + 1})` }} aria-hidden />
+            <span className="text-ink-2 flex-1 min-w-0 break-words" title={labelFor ? labelFor(s) : s.label}>
+              {labelFor ? labelFor(s) : s.label}
+            </span>
             <span className="num font-medium text-ink">{formatPct(s.weight, f.locale, { decimals: 1 })}</span>
           </li>
         ))}
@@ -355,7 +343,8 @@ export function LineChart({
           data: s.data,
           lineStyle: { width: i === 0 ? 2 : 1.5, color, type: s.dashed ? ('dotted' as const) : ('solid' as const) },
           itemStyle: { color },
-          areaStyle: s.area ? { color: hexA(color, 0.14) } : undefined,
+          // D5: an area only over a zero baseline (drawdown); scaled axes keep plain lines.
+          areaStyle: s.area && !scale ? { color: hexA(color, 0.14) } : undefined,
         };
       }),
     }),

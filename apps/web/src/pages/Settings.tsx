@@ -107,6 +107,10 @@ function Preferences() {
           />
         </div>
         <label className="sm:col-span-2 flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={s.heatPalette === 'cvd'} onChange={(e) => set('heatPalette', e.target.checked ? 'cvd' : 'standard')} data-testid="heat-cvd" />{' '}
+          {t('settings.heatCvd')}
+        </label>
+        <label className="sm:col-span-2 flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={s.privacy} onChange={(e) => set('privacy', e.target.checked)} />
           {t('settings.privacy')}
         </label>

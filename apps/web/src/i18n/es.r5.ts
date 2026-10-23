@@ -65,4 +65,14 @@ export const esR5 = {
       useDue: 'Usar el valor calculado',
     },
   },
+  common: { selectAll: 'Seleccionar todo', selectRow: 'Seleccionar {{key}}' },
+  brand: { tagline: 'Local-first · multidivisa' },
+  monthly: {
+    inProgress: 'en curso',
+    openMonthHint: '{{month}}: en curso, todavía sin precios nuevos.',
+    legendYear: 'Columna Año: misma escala hasta ±{{cap}}',
+    lastClosed: 'Último mes cerrado ({{month}})',
+    openNoPrices: '{{month}} en curso: sin precios nuevos',
+  },
+  settings: { heatCvd: 'Mapa de calor en azul/naranja (más fácil de distinguir con daltonismo)' },
 };

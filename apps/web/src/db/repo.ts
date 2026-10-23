@@ -55,6 +55,8 @@ export interface AppSettings {
   onboarded: boolean;
   /** Notification API permission was requested for alerts. */
   notifications: boolean;
+  /** D10: heat-map hues: green/red (default) or blue/orange (colour-vision friendly). */
+  heatPalette: 'standard' | 'cvd';
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   targets: {},
   onboarded: false,
   notifications: false,
+  heatPalette: 'standard',
 };
 
 export async function loadSettings(): Promise<AppSettings> {
