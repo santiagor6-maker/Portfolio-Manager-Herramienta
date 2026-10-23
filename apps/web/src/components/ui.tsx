@@ -160,7 +160,7 @@ export function Kpi({
 }) {
   return (
     <div className={clsx('card px-4 py-3.5 min-w-0', primary && 'col-span-2 kpi-primary')} title={hint}>
-      <div className="text-xs font-medium text-muted truncate">{label}</div>
+      <div className="text-xs font-medium text-muted line-clamp-2">{label}</div>
       {loading ? (
         <>
           <div className="skeleton h-7 w-3/4 mt-2" />
