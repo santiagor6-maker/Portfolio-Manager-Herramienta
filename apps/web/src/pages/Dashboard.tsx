@@ -5,14 +5,15 @@ import { AlertTriangle, ArrowRight, CalendarClock, Database, Plus, Upload, Walle
 import type { AllocationDimension } from '@pm/core';
 import { Banner, Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { AllocationDonut, ReturnBars, ValueChart } from '../components/charts';
-import { monthWithoutPrices, seriesForPeriod, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
+import { monthWithoutPrices, seriesForPeriod, unpricedMonths, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMonth, formatRelative } from '../lib/format';
 import { indexName } from '../lib/labels';
 import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd, previousBusinessDay } from '../lib/ids';
-import { useInstrumentMap } from '../hooks/useData';
+import { useInstrumentMap, usePortfolios } from '../hooks/useData';
+import { refreshMarketData } from '../services/marketData';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { renamedPair } from '../lib/diagnosticText';
 import { renameInstrumentRows } from '../components/DiagnosticsPanel';
@@ -56,8 +57,10 @@ export default function DashboardPage() {
   // D4: with no price yet in the current month, "Este mes" is not 0 %: show the last closed month and
   // keep the empty month out of the 12-month bars.
   const openMonth = monthWithoutPrices(a);
-  const lastClosed = openMonth ? [...(a?.monthly ?? [])].reverse().find((r) => r.month < openMonth && !r.partial) : undefined;
-  const last12 = (a?.monthly ?? []).filter((m) => m.month !== openMonth).slice(-12);
+  // W49: months without any close are not "0 %": skipped by the KPI and the 12-month bars.
+  const noPrice = unpricedMonths(a);
+  const lastClosed = openMonth ? [...(a?.monthly ?? [])].reverse().find((r) => r.month < openMonth && !r.partial && !noPrice.has(r.month)) : undefined;
+  const last12 = (a?.monthly ?? []).filter((m) => !noPrice.has(m.month)).slice(-12);
   const bench = primaryBenchmark(benchmarks, f.currency);
 
   return (
@@ -401,8 +404,15 @@ function WarningsCard() {
   const pendingIds = new Set(pending.map((p) => p.instrumentId));
   const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
   const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error' && !(d.code === 'MISSING_FX' && a?.fxMissing.length));
+  // W49: market-priced holdings without a recent close (an interrupted refresh, a server down…). The
+  // frozen sample is excluded: its prices end on purpose.
+  const portfolios = usePortfolios();
+  const selected = useApp((s) => s.settings.selectedPortfolioId);
+  const sampleOnly = portfolios.filter((p) => selected === 'all' || p.id === selected).every((p) => p.isDemo);
+  const staleMarket = sampleOnly ? [] : (a?.staleMarket ?? []);
+  const staleSince = staleMarket.reduce<string | undefined>((m, h) => (h.priceDate && (!m || h.priceDate < m) ? h.priceDate : m), undefined);
   const demoPriced = a?.demoPriced ?? [];
-  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0);
+  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0);
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -420,6 +430,19 @@ function WarningsCard() {
               </span>
             </li>
           ))}
+          {staleMarket.length > 0 && (
+            <li className="flex items-start gap-2" data-testid="stale-market">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {staleSince
+                  ? t('dashboard.staleMarket', { count: staleMarket.length, date: formatDate(staleSince, f.locale), symbols: staleMarket.slice(0, 4).map((h) => label(h.instrumentId).symbol).join(', ') })
+                  : t('dashboard.staleMarketNever', { count: staleMarket.length, symbols: staleMarket.slice(0, 4).map((h) => label(h.instrumentId).symbol).join(', ') })}{' '}
+                <button className="text-accent hover:underline" disabled={market.status === 'loading'} onClick={() => void refreshMarketData({ force: true })}>
+                  {t('market.refresh')}
+                </button>
+              </span>
+            </li>
+          )}
           {demoPriced.length > 0 && (
             <li className="flex items-start gap-2" data-testid="demo-priced">
               <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />

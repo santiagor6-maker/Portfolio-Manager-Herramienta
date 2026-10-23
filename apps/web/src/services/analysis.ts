@@ -31,7 +31,7 @@ import type {
   Valuation,
   ValidationIssue,
 } from '@pm/core';
-import { addDays, previousBusinessDay } from '../lib/ids';
+import { addDays, addMonths, previousBusinessDay } from '../lib/ids';
 
 export { previousBusinessDay };
 import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
@@ -162,6 +162,13 @@ export interface Analysis {
   fxMissing: CurrencyCode[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
+  /**
+   * W49: months (after the first purchase of a market-priced asset) in which none of the portfolio's
+   * market-priced assets has a close: their 0 % is "no price", not a flat month.
+   */
+  unpricedMonths: string[];
+  /** W49: market-priced holdings whose last close is older than the previous business day. */
+  staleMarket: { instrumentId: string; priceDate?: ISODate }[];
   /** Risk-free rate used by Sharpe/Sortino and where it came from (W29). */
   riskFree?: { rate: number; source: IndexId | 'setting' };
   /** Closes compared by the day change (W26). */
@@ -268,6 +275,8 @@ export function computeAnalysis(ds: Dataset): Analysis {
     implicitFunding: [],
     demoPriced: ds.demoPricedInstruments ?? [],
     fxMissing: [],
+    unpricedMonths: [],
+    staleMarket: [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
@@ -426,8 +435,33 @@ export function computeAnalysis(ds: Dataset): Analysis {
         .sort((a, b) => (a.date < b.date ? -1 : 1)),
     ) ?? [];
   out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
+  const pricing = attempt('priceCoverage', () => priceCoverage(ds, txs, out.valuation));
+  if (pricing) {
+    out.unpricedMonths = pricing.unpricedMonths;
+    out.staleMarket = pricing.staleMarket;
+  }
 
   return finish(out, t0);
+}
+
+/** W49: months without any market close for the portfolio's market-priced assets, and stale holdings. */
+export function priceCoverage(
+  ds: Pick<Dataset, 'instruments' | 'prices' | 'asOf'>,
+  txs: Transaction[],
+  valuation: Valuation | undefined,
+): { unpricedMonths: string[]; staleMarket: { instrumentId: string; priceDate?: ISODate }[] } {
+  const market = new Set(ds.instruments.filter((i) => i.pricing !== 'manual' && !i.accrual && i.assetClass !== 'cash').map((i) => i.id));
+  const traded = new Set(txs.filter((t) => t.instrumentId && market.has(t.instrumentId)).map((t) => t.instrumentId!));
+  const firstBuy = txs.filter((t) => t.instrumentId && traded.has(t.instrumentId) && (t.type === 'BUY' || t.type === 'TRANSFER_IN')).reduce<string | undefined>((m, t) => (!m || t.date < m ? t.date : m), undefined);
+  const priced = new Set<string>();
+  for (const ps of ds.prices) if (traded.has(ps.instrumentId)) for (const p of ps.points) priced.add(p.date.slice(0, 7));
+  const unpricedMonths: string[] = [];
+  if (firstBuy) for (let m = firstBuy.slice(0, 7); m <= ds.asOf.slice(0, 7); m = addMonths(m, 1)) if (!priced.has(m)) unpricedMonths.push(m);
+  const cutoff = previousBusinessDay(ds.asOf);
+  const staleMarket = (valuation?.holdings ?? [])
+    .filter((h) => h.quantity > 0 && market.has(h.instrumentId) && (!h.priceDate || h.priceDate < cutoff))
+    .map((h) => ({ instrumentId: h.instrumentId, priceDate: h.priceDate }));
+  return { unpricedMonths, staleMarket };
 }
 
 /** Adds the inflation-adjusted invested line: previous value grown by inflation + new net flows. */

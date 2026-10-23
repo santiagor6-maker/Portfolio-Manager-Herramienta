@@ -43,6 +43,10 @@ async function start() {
     void checkEmailDrafts(); // forwarded e-mails waiting for review
     void import('./lib/noteNames').then((m) => m.repairNoteNames()); // W43: names from brokerage notes
     if (settings.autoRefresh) void refreshMarketData();
+    // W49: keep prices current while the tab stays open (throttled to one refresh per 5 min inside).
+    setInterval(() => {
+      if (useApp.getState().settings.autoRefresh && document.visibilityState === 'visible') void refreshMarketData();
+    }, 10 * 60_000);
     registerServiceWorker();
   } catch (e) {
     console.error('Bootstrap failed', e);

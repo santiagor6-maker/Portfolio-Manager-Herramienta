@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { CalendarCheck, CalendarRange, ChevronDown, Columns3, Download, FileSpreadsheet, FileText, Rows3 } from 'lucide-react';
 import type { MonthlyRow } from '@pm/core';
 import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
-import { monthWithoutPrices, useAnalysis } from '../hooks/useAnalysis';
+import { monthWithoutPrices, unpricedMonths, useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
 import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
@@ -113,6 +113,18 @@ export default function MonthlyPage() {
   const { analysis: a, loading } = useAnalysis();
   // W22: months whose purchases were funded by an implicit deposit (inflated contributions).
   const implicitMonths = useMemo(() => new Set((a?.implicitFunding ?? []).map((x) => x.month)), [a]);
+  // W49: months whose 0 % only means that no market close exists for them.
+  const noPriceMonths = useMemo(() => unpricedMonths(a), [a]);
+  const monthBadges = (month: string) => (
+    <>
+      {noPriceMonths.has(month) && (
+        <span className="chip !h-5 !text-[10.5px] ml-1.5" title={t('monthly.noPriceHint', { month })} data-testid="no-price-month">
+          {t('monthly.noPrice')}
+        </span>
+      )}
+      {implicitBadge(month)}
+    </>
+  );
   const implicitBadge = (month: string) =>
     implicitMonths.has(month) ? (
       <Link to="/movimientos" className="chip !h-5 !text-[10.5px] !text-warn !border-warn/30 ml-1.5" title={t('diag.code.IMPLICIT_DEPOSIT')} data-testid="implicit-month">
@@ -329,7 +341,7 @@ export default function MonthlyPage() {
           </div>
         ) : (
           <div className="px-4" data-testid="monthly-heatmap">
-            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} openMonth={monthWithoutPrices(a)} onPick={(m) => {
+            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} openMonth={monthWithoutPrices(a)} unpriced={unpricedMonths(a)} onPick={(m) => {
               setFocus(m);
               setYear('all');
               setTimeout(() => document.getElementById(`m-${m}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
@@ -406,7 +418,7 @@ export default function MonthlyPage() {
                                 <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} compact />
                               </span>
                             ) : null}
-                            {implicitBadge(r.month)}
+                            {monthBadges(r.month)}
                             {(r.partial || r.month === currentMonth) && <span className="block text-[10.5px] font-normal text-muted leading-tight">{t('monthly.inProgress')}</span>}
                           </td>
                           {cols.map((c) => (
@@ -448,7 +460,7 @@ export default function MonthlyPage() {
                               <PriceWarnings warnings={r.warnings} from={`${r.month}-01`} to={`${r.month}-31`} />
                             </span>
                           ) : null}
-                          {implicitBadge(r.month)}
+                          {monthBadges(r.month)}
                         </div>
                         <div className="text-xs text-muted">
                           <Money value={r.endValueBase} /> · <Money value={r.gainBase} signed />
@@ -527,6 +539,7 @@ export function Heatmap({
   focus,
   onPick,
   openMonth,
+  unpriced,
 }: {
   heat: YearRow[];
   mode: ReturnMode;
@@ -535,23 +548,27 @@ export function Heatmap({
   onPick?: (month: string) => void;
   /** D4: current month without prices yet: dashed "en curso", not a 0,0 % month. */
   openMonth?: string;
+  /** W49: months without any market close: dashed "sin precio". */
+  unpriced?: Set<string>;
 }) {
   const { t } = useTranslation();
   const f = useFmt();
   const cell = (m: MonthlyRow | undefined, i: number, small = false) => {
     if (!m) return <div className={clsx('rounded-md border border-dashed border-line', small ? 'h-8' : 'h-9')} aria-hidden key={i} />;
-    if (m.month === openMonth)
+    if (m.month === openMonth || unpriced?.has(m.month)) {
+      const open = m.month === openMonth;
       return (
         <div
           key={i}
           className={clsx('rounded-md border border-dashed border-line-strong grid place-items-center text-[10.5px] text-muted leading-tight text-center', small ? 'h-8' : 'h-9')}
-          title={t('monthly.openMonthHint', { month: formatMonth(m.month, f.locale, 'long') })}
-          data-testid="heat-open-month"
+          title={t(open ? 'monthly.openMonthHint' : 'monthly.noPriceHint', { month: formatMonth(m.month, f.locale, 'long') })}
+          data-testid={open ? 'heat-open-month' : 'heat-no-price'}
         >
           {small && <span className="block text-[9px]">{monthName(i, f.locale)}</span>}
-          {t('monthly.inProgress')}
+          {t(open ? 'monthly.inProgress' : 'monthly.noPrice')}
         </div>
       );
+    }
     const v = rowReturn(m, mode);
     const bv = bench ? benchValue(m, bench) : undefined;
     return (

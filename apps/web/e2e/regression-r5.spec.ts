@@ -191,3 +191,54 @@ for (const locale of ['es-CO', 'pt-BR']) {
     });
   });
 }
+
+/** W49 (R5 review): an interrupted price refresh is retried at the next start and never goes unnoticed. */
+test('W49: holdings without market prices are flagged and the refresh is retried after a reload', async ({ page }) => {
+  let serve = false;
+  await page.route('**/api/health', (route) => route.fulfill({ json: { ok: true, service: 'mock', version: '0', time: new Date().toISOString() } }));
+  await page.route('**/api/batch', async (route) => {
+    if (!serve) return route.abort('connectionreset');
+    const req = route.request().postDataJSON() as { histories?: { symbol: string; from: string }[]; fx?: { base: string; quote: string; from: string }[]; quotes?: unknown[]; indices?: unknown[] };
+    const today = new Date().toISOString().slice(0, 10);
+    const err = { ok: false, error: { code: 'NOT_FOUND', message: 'mock' } };
+    await route.fulfill({
+      json: {
+        histories: (req.histories ?? []).map((h) =>
+          h.symbol.includes('PETR4') ? { ok: true, data: { requested: h.symbol, providerSymbol: 'PETR4.SA', interval: '1d', actions: [], series: { currency: 'BRL', source: 'mock', points: [{ date: h.from, close: 20 }, { date: today, close: 25 }] } } } : err,
+        ),
+        fx: (req.fx ?? []).map((r) => ({ ok: true, data: { interval: '1d', series: { base: r.base, quote: r.quote, source: 'mock', points: [{ date: r.from, rate: RATES[r.quote] ?? 1 }, { date: today, rate: RATES[r.quote] ?? 1 }] } } })),
+        quotes: (req.quotes ?? []).map(() => err),
+        indices: (req.indices ?? []).map(() => err),
+        tookMs: 1,
+      },
+    });
+  });
+  await page.goto('/');
+  await page.getByTestId('start-portfolio').click();
+  const wizard = page.getByRole('dialog', { name: 'Empieza tu portafolio' });
+  await wizard.getByLabel('Nombre').fill('Carteira');
+  await wizard.getByLabel('Moneda base').selectOption('BRL');
+  await wizard.getByTestId('onboarding-create').click();
+  await wizard.getByLabel(/Aporte inicial/).fill('10.000');
+  await wizard.getByLabel('¿Desde cuándo inviertes?').fill('2025-01-02');
+  await wizard.getByRole('button', { name: 'Siguiente' }).click();
+  await wizard.getByRole('button', { name: /Ir al resumen/ }).click();
+  await page.goto('/importar');
+  await page.getByTestId('import-file').setInputFiles('e2e/fixtures/br-hold.csv');
+  await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('import-confirm').click();
+  await expect(page.getByText(/importado/)).toBeVisible();
+
+  // The refresh after the import failed: reload — the holding is flagged, months are "sin precio".
+  await page.goto('/');
+  await expect(page.getByTestId('stale-market')).toContainText('PETR4', { timeout: 30_000 });
+  await page.screenshot({ path: `${SHOTS}/r6-stale-market.png` });
+  await page.goto('/mensual');
+  await expect(page.getByTestId('heat-no-price').first()).toBeVisible({ timeout: 30_000 });
+
+  // The server is back: the very next start retries at once (no 2-minute throttle) and prices arrive.
+  serve = true;
+  await page.goto('/');
+  await expect(page.getByTestId('kpis')).toContainText('10.500', { timeout: 30_000 }); // R$ 8.000 cash + 100 × R$ 25
+  await expect(page.getByTestId('stale-market')).toHaveCount(0);
+});

@@ -70,6 +70,7 @@ export const enR5: typeof esR5 = {
   common: { selectAll: 'Select all', selectRow: 'Select {{key}}' },
   brand: { tagline: 'Local-first · multi-currency' },
   monthly: {
+    noPrice: 'no price', noPriceHint: '{{month}}: there are no market prices in this month; its 0 % is not a real return.',
     inProgress: 'in progress',
     openMonthHint: '{{month}}: in progress, no new prices yet.',
     legendYear: 'Year column: same scale up to ±{{cap}}',
@@ -82,4 +83,5 @@ export const enR5: typeof esR5 = {
   fx: { fromPrice: 'Price (open positions)', fromFx: 'Currency (open positions)', approxNote: 'monthly, without the daily cross term', cumulativeSplit: 'TWR since inception' },
   alerts: { thresholdPriceNoCcy: 'Price' },
   perf: { groupReturn: 'Return', groupRisk: 'Risk' },
+  dashboard: { staleMarket_one: '{{count}} asset without a market price since {{date}} ({{symbols}}): its value and the following months do not reflect the market.', staleMarket_other: '{{count}} assets without a market price since {{date}} ({{symbols}}): their value and the following months do not reflect the market.', staleMarketNever_one: '{{count}} asset without any market price ({{symbols}}): valued at its purchase price.', staleMarketNever_other: '{{count}} assets without any market price ({{symbols}}): valued at their purchase price.' },
 };

@@ -72,3 +72,11 @@ export function monthWithoutPrices(a: Pick<Analysis, 'asOf' | 'latestPriceDate'>
   const month = a.asOf.slice(0, 7);
   return a.latestPriceDate < `${month}-01` ? month : undefined;
 }
+
+/** W49: every month whose 0 % means "no price" (the current one included), for heat maps and tables. */
+export function unpricedMonths(a: Pick<Analysis, 'asOf' | 'latestPriceDate' | 'unpricedMonths'> | undefined): Set<string> {
+  const out = new Set(a?.unpricedMonths ?? []);
+  const open = monthWithoutPrices(a);
+  if (open) out.add(open);
+  return out;
+}

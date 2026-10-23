@@ -68,6 +68,7 @@ export const esR5 = {
   common: { selectAll: 'Seleccionar todo', selectRow: 'Seleccionar {{key}}' },
   brand: { tagline: 'Local-first · multidivisa' },
   monthly: {
+    noPrice: 'sin precio', noPriceHint: '{{month}}: no hay cotizaciones de mercado en este mes; su 0 % no es una rentabilidad real.',
     inProgress: 'en curso',
     openMonthHint: '{{month}}: en curso, todavía sin precios nuevos.',
     legendYear: 'Columna Año: misma escala hasta ±{{cap}}',
@@ -80,4 +81,5 @@ export const esR5 = {
   fx: { fromPrice: 'Precio (posiciones abiertas)', fromFx: 'Divisa (posiciones abiertas)', approxNote: 'mensual, sin el término cruzado diario', cumulativeSplit: 'TWR desde el inicio' },
   alerts: { thresholdPriceNoCcy: 'Precio' },
   perf: { groupReturn: 'Rentabilidad', groupRisk: 'Riesgo' },
+  dashboard: { staleMarket_one: '{{count}} activo sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarket_other: '{{count}} activos sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarketNever_one: '{{count}} activo sin ninguna cotización de mercado ({{symbols}}): se valora al precio de compra.', staleMarketNever_other: '{{count}} activos sin ninguna cotización de mercado ({{symbols}}): se valoran al precio de compra.' },
 };

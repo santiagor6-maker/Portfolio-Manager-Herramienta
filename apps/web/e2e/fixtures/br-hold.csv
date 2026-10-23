@@ -1,0 +1,2 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2025-01-10,BUY,BVMF:PETR4,PETR4,BVMF,Petrobras PN,,,100,20,BRL,2000,,,,,,,XP,
