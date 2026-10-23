@@ -33,6 +33,8 @@ export interface MoneyOptions {
   compact?: boolean;
   /** Prefix positive values with '+'. */
   signed?: boolean;
+  /** Fraction digits of the compact form (default 1). */
+  compactDigits?: number;
   privacy?: boolean;
 }
 
@@ -54,7 +56,7 @@ export function formatMoney(
     currency,
     currencyDisplay: 'narrowSymbol',
     minimumFractionDigits: opts.compact ? 0 : decimals,
-    maximumFractionDigits: opts.compact ? 1 : decimals,
+    maximumFractionDigits: opts.compact ? (opts.compactDigits ?? 1) : decimals,
   };
   if (opts.compact) o.notation = 'compact';
   if (opts.signed) o.signDisplay = 'exceptZero';
@@ -187,4 +189,16 @@ export function formatRelative(ts: number | undefined, locale: string, now = Dat
   if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute');
   if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour');
   return rtf.format(Math.round(diff / 86400), 'day');
+}
+
+/**
+ * D16/W53: digits an axis needs so that neighbouring ticks never read the same ("R$ 50,1 mil" × 3):
+ * enough fraction digits of the compact unit (mil / M) to resolve a fifth of the data span.
+ */
+export function axisCompactDigits(min: number, max: number): number {
+  const top = Math.max(Math.abs(min), Math.abs(max));
+  const unit = top >= 1e9 ? 1e9 : top >= 1e6 ? 1e6 : top >= 1e3 ? 1e3 : 1;
+  const step = (max - min) / 5;
+  if (!(step > 0)) return 1;
+  return Math.max(0, Math.min(3, Math.ceil(-Math.log10(step / unit))));
 }

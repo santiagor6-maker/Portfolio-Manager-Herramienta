@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { localizeNumbers } from '../lib/taxText';
 import clsx from 'clsx';
 import { AlertTriangle, CheckCircle2, Copy, FileSpreadsheet, FileUp, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import type { TransactionType } from '@pm/core';
@@ -441,7 +442,7 @@ export default function ImportPage() {
               <Banner tone="warn">
                 <ul className="list-disc pl-4">
                   {result.warnings.slice(0, 6).map((w, i) => (
-                    <li key={i}>{w.message}</li>
+                    <li key={i}>{localizeNumbers(w.message, f.locale)}</li>
                   ))}
                 </ul>
               </Banner>
@@ -494,7 +495,7 @@ export default function ImportPage() {
                     {result.errors.slice(0, 5).map((e, i) => (
                       <li key={i}>
                         {/* W30: a reader failure is not a password problem (that one comes as needsPassword). */}
-                        {e.code === 'PDF_READ_ERROR' ? t('impr.pdfReadError', { detail: String(e.params?.detail ?? '') }) : e.message}
+                        {e.code === 'PDF_READ_ERROR' ? t('impr.pdfReadError', { detail: String(e.params?.detail ?? '') }) : localizeNumbers(e.message, f.locale)}
                       </li>
                     ))}
                   </ul>
@@ -567,7 +568,7 @@ export default function ImportPage() {
                         <td className="r num">{tx?.amount !== undefined ? formatMoney(tx.amount, tx.currency, f.locale) : ''}</td>
                         <td className="r num text-muted">{tx?.fees ? formatMoney(tx.fees, tx.currency, f.locale) : ''}</td>
                         <td className="r num text-muted">{tx?.taxes ? formatMoney(tx.taxes, tx.currency, f.locale) : ''}</td>
-                        <td className="text-xs whitespace-normal min-w-[200px]">{r.issues.map((x) => x.message).join(' · ')}</td>
+                        <td className="text-xs whitespace-normal min-w-[200px]">{r.issues.map((x) => localizeNumbers(x.message, f.locale)).join(' · ')}</td>
                       </tr>
                     );
                   })}

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { EChartsOption } from 'echarts';
 import type { AllocationSlice } from '@pm/core';
 import { baseOption, Chart, type ChartTokens } from './Chart';
-import { formatDate, formatMoney, formatMonth, formatPct, MASK } from '../lib/format';
+import { axisCompactDigits, formatDate, formatMoney, formatMonth, formatPct, MASK, monthName } from '../lib/format';
 import { useFmt } from '../store/app';
 import type { SeriesPoint } from '../services/analysis';
 import { colorSlots } from '../lib/seriesColors';
@@ -14,6 +14,14 @@ function hexA(hex: string, a: number): string {
   if (h.length !== 6) return hex;
   const n = parseInt(h, 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** W53: time-axis ticks in the UI language ("abr", "out"), years on January 1st (ECharts says "Apr"). */
+export function timeTick(v: number, locale: string): string {
+  const d = new Date(v);
+  if (d.getMonth() === 0 && d.getDate() === 1) return String(d.getFullYear());
+  const m = monthName(d.getMonth(), locale);
+  return d.getDate() === 1 ? m : `${d.getDate()} ${m}`;
 }
 
 function truncateLabel(s: string, n: number): string {
@@ -42,6 +50,8 @@ export function ValueChart({ data, height = 300, inflationLabel }: { data: Serie
   const option = useCallback(
     (tk: ChartTokens): EChartsOption => {
       const money = (v: number, compact = false) => formatMoney(v, f.currency, f.locale, { compact, privacy: f.privacy });
+      const vals = data.flatMap((p) => [p.valueBase, p.netInvestedBase]);
+      const digits = axisCompactDigits(Math.min(...vals), Math.max(...vals));
       return {
         ...baseOption(tk),
         grid: { left: 8, right: 16, top: 28, bottom: 4, containLabel: true },
@@ -74,13 +84,13 @@ export function ValueChart({ data, height = 300, inflationLabel }: { data: Serie
             return `<div style="min-width:200px"><div style="color:${tk.muted};margin-bottom:4px">${formatDate(d, f.locale)}</div>${rows}<div style="display:flex;justify-content:space-between;margin-top:4px;padding-top:4px;border-top:1px solid ${tk.border}"><span>${t('chart.gain')}</span><b style="color:${gain >= 0 ? tk.pos : tk.neg}">${f.privacy ? MASK : formatMoney(gain, f.currency, f.locale, { signed: true })}</b></div></div>`;
           },
         },
-        xAxis: { type: 'time', ...axisCommon(tk), splitLine: { show: false }, axisLabel: { color: tk.muted, fontSize: 11, hideOverlap: true } },
+        xAxis: { type: 'time', ...axisCommon(tk), splitLine: { show: false }, axisLabel: { color: tk.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => timeTick(v, f.locale) } },
         yAxis: {
           type: 'value',
           scale: true,
           ...axisCommon(tk),
           axisLine: { show: false },
-          axisLabel: { color: tk.muted, fontSize: 11, formatter: (v: number) => (f.privacy ? '' : money(v, true)) },
+          axisLabel: { color: tk.muted, fontSize: 11, formatter: (v: number) => (f.privacy ? '' : formatMoney(v, f.currency, f.locale, { compact: true, compactDigits: digits })) },
         },
         series: [
           {
@@ -339,7 +349,7 @@ export function LineChart({
         axisPointer: { type: 'line', lineStyle: { color: tk.axis } },
         valueFormatter: (v: unknown) => valueFormat(v as number),
       },
-      xAxis: { type: 'time', ...axisCommon(tk), splitLine: { show: false }, axisLabel: { color: tk.muted, fontSize: 11, hideOverlap: true } },
+      xAxis: { type: 'time', ...axisCommon(tk), splitLine: { show: false }, axisLabel: { color: tk.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => timeTick(v, f.locale) } },
       yAxis: {
         type: 'value',
         scale,
@@ -366,7 +376,7 @@ export function LineChart({
         };
       }),
     }),
-    [series, valueFormat, scale, endLabels],
+    [series, valueFormat, scale, endLabels, f.locale],
   );
   const lens = series.map((x) => x.data.length);
   const base = series[0]?.data ?? [];

@@ -86,4 +86,5 @@ export const enR5: typeof esR5 = {
   perf: { addIndex: 'Add index:', groupReturn: 'Return', groupRisk: 'Risk' },
   dashboard: { staleMarket_one: '{{count}} asset without a market price since {{date}} ({{symbols}}): its value and the following months do not reflect the market.', staleMarket_other: '{{count}} assets without a market price since {{date}} ({{symbols}}): their value and the following months do not reflect the market.', staleMarketNever_one: '{{count}} asset without any market price ({{symbols}}): valued at its purchase price.', staleMarketNever_other: '{{count}} assets without any market price ({{symbols}}): valued at their purchase price.' },
   table: { hidden: 'Columns hidden for lack of space: {{columns}}.', showAll: 'Show all', allShown: 'All columns shown (scroll the table).', fit: 'Fit to width' },
+  ca: { note: { bonus: 'Stock dividend of {{pct}}: the new shares carry the cost announced by the company.', spinoff: 'Spin-off: confirm the cost fraction with the issuer notice.', split: 'Split {{ratio}} (more shares, same total cost).', reverse: 'Reverse split {{ratio}} (fewer shares, same total cost).' } },
 };

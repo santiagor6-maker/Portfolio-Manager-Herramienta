@@ -15,6 +15,8 @@ const RULES: [RegExp, string][] = [
   [/transitResolution "mantido",?\s*/gi, ''],
   [/marque amountIsNet/gi, 'marque «valor líquido de retenção» no movimento'],
   [/\s*\(T\d+\)/g, ''],
+  // W45/W53: internal option names left in @pm/tax messages.
+  [/ver gcapPre2024/gi, 'veja a seção GCAP 4600'],
 ];
 
 export function cleanTaxMessage(message: string): string {
@@ -24,7 +26,7 @@ export function cleanTaxMessage(message: string): string {
 }
 
 /**
- * W45: @pm/tax writes some quantities with a dot decimal ("0.05 BTC-USD saíram…") even in pt/es.
+ * W45/W53: @pm/tax and @pm/importers write some numbers with a dot decimal ("0.05 BTC-USD saíram…") even in pt/es.
  * Rewrites plain decimals for the locale. Thousands-style groups ("Lei 14.754", "IN 1.888",
  * "R$ 1.500,00"), CNPJs and dates are left alone: only a leading 0 or a decimal part that is not
  * exactly three digits is treated as a decimal.
@@ -32,8 +34,8 @@ export function cleanTaxMessage(message: string): string {
 export function localizeNumbers(message: string, locale: string): string {
   return localizeDates(
     message
-      .replace(/(?<![\d.,/:-])(\d+)\.(\d+)(?![\d.,/])/g, (all, int: string, dec: string) => {
-        if (int !== '0' && dec.length === 3) return all;
+      .replace(/(?<![\d.,/:])(-?\d+)\.(\d+)(?![\d.,/])/g, (all, int: string, dec: string) => {
+        if (int.replace('-', '') !== '0' && dec.length === 3) return all;
         return new Intl.NumberFormat(locale, { minimumFractionDigits: dec.length, maximumFractionDigits: dec.length }).format(Number(`${int}.${dec}`));
       })
       // D16: plain amounts ("250976 COP") get thousands separators; ISO dates the user's format.
@@ -66,11 +68,20 @@ export interface TaxIssueLike {
  * keep one per cleaned message, localized, errors/warnings before infos.
  */
 export function tidyTaxIssues<T extends TaxIssueLike>(issues: T[], locale: string): (T & { text: string })[] {
-  const seen = new Map<string, T & { text: string }>();
+  const seen = new Map<string, T & { text: string; years?: string[] }>();
   for (const i of issues) {
     const text = localizeNumbers(cleanTaxMessage(i.message), locale);
-    if (!seen.has(text)) seen.set(text, { ...i, text });
+    // The same notice for several years ("Alguns parâmetros de 2023…", "…de 2024…") becomes one line.
+    const years = text.match(YEAR) ?? [];
+    const key = years.length === 1 ? `${i.code ?? ''}|${text.replace(YEAR, '#')}` : text;
+    const prev = seen.get(key);
+    if (!prev) seen.set(key, { ...i, text, years: years.length === 1 ? [years[0]!] : undefined });
+    else if (prev.years && !prev.years.includes(years[0]!)) prev.years.push(years[0]!);
   }
   const rank = (l: string) => (l === 'error' ? 0 : l === 'warning' ? 1 : 2);
-  return [...seen.values()].sort((a, b) => rank(a.level) - rank(b.level));
+  return [...seen.values()]
+    .map(({ years, ...i }) => (years && years.length > 1 ? { ...i, text: i.text.replace(YEAR, years.sort().join(', ')) } : i) as T & { text: string })
+    .sort((a, b) => rank(a.level) - rank(b.level));
 }
+
+const YEAR = /\b(?:19|20)\d{2}\b(?![-/.]\d)/g;

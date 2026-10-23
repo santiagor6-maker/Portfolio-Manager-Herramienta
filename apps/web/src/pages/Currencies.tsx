@@ -109,7 +109,8 @@ export default function CurrenciesPage() {
           value={<Pct value={a?.summaries.SI?.twr ?? (1 + cumLocal) * (1 + cumFx) - 1} signed colored />}
           sub={
             <span className="text-xs text-muted num" data-testid="fx-composition">
-              ≈ (1 {formatPct(cumLocal, f.locale, { signed: true })}) × (1 {formatPct(cumFx, f.locale, { signed: true })}) − 1 · {t('fx.approxNote')}
+              {/* W53: the operator is written apart, so a 0 % effect still reads "(1 + 0,00 %)". */}
+              ≈ (1 {cumLocal < 0 ? '−' : '+'} {formatPct(Math.abs(cumLocal), f.locale)}) × (1 {cumFx < 0 ? '−' : '+'} {formatPct(Math.abs(cumFx), f.locale)}) − 1 · {t('fx.approxNote')}
             </span>
           }
           hint={t('fx.cumulativeSplitSub')}

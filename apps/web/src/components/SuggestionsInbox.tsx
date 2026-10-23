@@ -8,6 +8,7 @@ import { formatDate, formatMoney, formatQuantity } from '../lib/format';
 import { bulkAddTransactions, getMeta, setMeta } from '../db/repo';
 import type { Suggestion } from '../services/analysis';
 import { TxTypeBadge } from '../pages/Transactions';
+import { corporateNote, formatRatio } from '../lib/corporateText';
 
 async function dismiss(keys: string[]) {
   const prev = (await getMeta<string[]>('dismissedSuggestions')) ?? [];
@@ -30,7 +31,8 @@ export function SuggestionsInbox() {
   const accept = async (items: Suggestion[]) => {
     setBusy(true);
     try {
-      await bulkAddTransactions(items.map((s) => ({ ...s.transaction })));
+      // W53: the saved note is the localized description, not the provider's English text.
+      await bulkAddTransactions(items.map((s) => ({ ...s.transaction, note: corporateNote(s.transaction, t, f.locale) })));
       await dismiss(items.map((s) => s.key));
     } finally {
       setBusy(false);
@@ -66,13 +68,13 @@ export function SuggestionsInbox() {
                     <TxTypeBadge type={x.type} />
                   </td>
                   <td>
-                    <span className="font-semibold">{label(x.instrumentId).symbol}</span> <span className="text-xs text-muted">{x.note ?? ''}</span>
+                    <span className="font-semibold">{label(x.instrumentId).symbol}</span> <span className="text-xs text-muted">{corporateNote(x, t, f.locale) ?? ''}</span>
                   </td>
                   <td className="r num">
                     {x.type === 'DIVIDEND'
                       ? formatMoney(x.amount, x.currency, f.locale, { privacy: f.privacy })
                       : x.ratio
-                        ? `×${x.ratio}`
+                        ? formatRatio(x.ratio, f.locale)
                         : formatQuantity(x.quantity, f.locale, f.privacy)}
                   </td>
                   <td className="r">
@@ -96,7 +98,7 @@ export function SuggestionsInbox() {
                 </td>
                 <td colSpan={3}>
                   <span className="font-semibold">{label(a.instrumentId).symbol}</span> · {a.type}
-                  {a.subtype ? ` (${a.subtype})` : ''} {a.ratio ? `×${a.ratio}` : ''} — <span className="text-xs">{t('ca.reviewHint')}</span>
+                  {a.subtype ? ` (${a.subtype})` : ''} {a.ratio ? formatRatio(a.ratio, f.locale) : ''} — <span className="text-xs">{t('ca.reviewHint')}</span>
                 </td>
               </tr>
             ))}
