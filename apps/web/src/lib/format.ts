@@ -74,6 +74,14 @@ function needsCodePrefix(currency: CurrencyCode, locale: string): boolean {
   return LOCAL_DOLLAR[locale] !== currency;
 }
 
+/** An amount with the currency's decimals but no symbol (tables that name the currency once). */
+export function formatAmount(amount: number | undefined | null, currency: CurrencyCode, locale: string, opts: { signed?: boolean; privacy?: boolean } = {}): string {
+  if (opts.privacy) return MASK;
+  if (amount === undefined || amount === null || !Number.isFinite(amount)) return '—';
+  const d = currencyDecimals(currency);
+  return clean(nf(locale, { minimumFractionDigits: d, maximumFractionDigits: d, signDisplay: opts.signed ? 'exceptZero' : 'auto' }).format(amount || 0));
+}
+
 export function formatNumber(value: number | undefined | null, locale: string, decimals = 2, privacy = false): string {
   if (privacy) return MASK;
   if (value === undefined || value === null || !Number.isFinite(value)) return '—';

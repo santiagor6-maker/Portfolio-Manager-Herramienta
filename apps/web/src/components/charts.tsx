@@ -7,6 +7,7 @@ import { formatDate, formatMoney, formatMonth, formatPct, MASK } from '../lib/fo
 import { useFmt } from '../store/app';
 import type { SeriesPoint } from '../services/analysis';
 import { colorSlots } from '../lib/seriesColors';
+import { downsample } from '../lib/chartMath';
 
 function hexA(hex: string, a: number): string {
   const h = hex.replace('#', '');
@@ -28,12 +29,6 @@ function axisCommon(t: ChartTokens) {
 // Value vs invested
 // ---------------------------------------------------------------------------
 
-/** Picks at most `n` evenly spaced points (always keeps the last one). */
-export function sample<T>(arr: T[], n: number): T[] {
-  if (arr.length <= n) return arr;
-  const step = (arr.length - 1) / (n - 1);
-  return Array.from({ length: n }, (_, i) => arr[Math.round(i * step)]!);
-}
 
 export function ValueChart({ data, height = 300, inflationLabel }: { data: SeriesPoint[]; height?: number; inflationLabel?: string }) {
   const { t } = useTranslation();
@@ -129,7 +124,7 @@ export function ValueChart({ data, height = 300, inflationLabel }: { data: Serie
       : undefined;
   const table = {
     headers: [t('tx.date'), t('chart.value'), t('chart.invested'), ...(hasReal ? [realName] : [])],
-    rows: sample(data, 24).map((p) => [formatDate(p.date, f.locale, 'short'), money(p.valueBase), money(p.netInvestedBase), ...(hasReal ? [money(p.investedRealBase)] : [])]),
+    rows: downsample(data, 24).map((p) => [formatDate(p.date, f.locale, 'short'), money(p.valueBase), money(p.netInvestedBase), ...(hasReal ? [money(p.investedRealBase)] : [])]),
   };
   return <Chart option={option} height={height} ariaLabel={t('chart.valueAria')} summary={summary} data={table} />;
 }
@@ -365,7 +360,7 @@ export function LineChart({
   // D16: dates in the user's format and a named first column in "Ver datos".
   const table = {
     headers: [t('tx.date'), ...series.map((x) => x.name)],
-    rows: sample(base.map((_, i) => i), 24).map((i) => [formatDate(base[i]![0], f.locale, 'short'), ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
+    rows: downsample(base.map((_, i) => i), 24).map((i) => [formatDate(base[i]![0], f.locale, 'short'), ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
   };
   const lastV = base[base.length - 1];
   const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${formatDate(lastV[0], f.locale)})` : undefined;

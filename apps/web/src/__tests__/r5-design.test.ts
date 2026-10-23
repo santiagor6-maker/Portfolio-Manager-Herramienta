@@ -51,3 +51,12 @@ describe('D10: heat map scale', () => {
     expect(heatStyle(NaN)).toBeUndefined();
   });
 });
+
+describe('W47/D25: report amounts without the currency symbol', () => {
+  it('uses the currency decimals, signs on demand and never prints -0', async () => {
+    const { formatAmount } = await import('../lib/format');
+    expect(formatAmount(-0, 'COP', 'es-CO')).toBe('0');
+    expect(formatAmount(1234.5, 'BRL', 'pt-BR', { signed: true })).toBe('+1.234,50');
+    expect(formatAmount(NaN, 'COP', 'es-CO')).toBe('—');
+  });
+});

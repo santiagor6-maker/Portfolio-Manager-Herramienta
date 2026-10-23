@@ -3,9 +3,10 @@
  * cannot be converted to the reporting currency (the pair was never downloaded), the engine values it
  * at 0, which used to show "R$ 0,00" everywhere and fake benchmark differences against those zeros.
  *
- * `missingFxCurrencies` finds those currencies (no route at the valuation date); `blankUnconvertible` turns every reporting-currency figure into NaN so formatters
- * print "—" and derived differences (vs. benchmark, alpha…) are "—" too. Index and benchmark returns
- * are kept: they do not depend on the missing rate.
+ * `missingFxCurrencies` finds those currencies (no route at the valuation date); `blankUnconvertible`
+ * turns every reporting-currency figure into NaN so formatters print "—" and derived differences
+ * (vs. benchmark, alpha…) are "—" too. Index and benchmark returns are kept: they do not depend on
+ * the missing rate.
  */
 import type { CurrencyCode, ISODate, Instrument, MarketData, Transaction } from '@pm/core';
 

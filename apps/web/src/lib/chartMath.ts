@@ -1,6 +1,6 @@
 /**
- * W46: at most `max` evenly spaced points (first and last kept). The report chart is 1000 units wide,
- * so more points only add bytes to the PDF and the share link.
+ * At most `max` evenly spaced points (first and last kept): chart data tables and the report chart
+ * (W46: it is 1000 units wide, so more points only add bytes to the PDF and the share link).
  */
 export function downsample<T>(data: T[], max = 160): T[] {
   if (data.length <= max) return data;

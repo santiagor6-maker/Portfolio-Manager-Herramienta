@@ -12,8 +12,7 @@ import { compactReportHtml, encodeShare, sanitizeReportHtml } from '../lib/share
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { usePortfolios } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
-import { formatDate, formatMoney, formatMonth, formatPct, monthName, MASK } from '../lib/format';
-import { currencyDecimals } from '../lib/currencies';
+import { formatAmount, formatDate, formatMoney, formatMonth, formatPct, monthName, MASK } from '../lib/format';
 import { parsePriceWarnings } from '../components/PriceWarnings';
 import { fxPairs } from '../components/FxNotice';
 import { downsample, niceTicks } from '../lib/chartMath';
@@ -280,13 +279,7 @@ function ReportBody({
   const m = (v: number | undefined, signed = false) => (f.privacy ? MASK : formatMoney(v, f.currency, f.locale, { signed }));
   const p = (v: number | undefined, signed = true, d = 2) => formatPct(v, f.locale, { signed, decimals: d });
   // W47: the monthly table states the currency once (caption) instead of in every cell.
-  const dec = currencyDecimals(f.currency);
-  const n = (v: number | undefined, signed = false) =>
-    f.privacy
-      ? MASK
-      : v === undefined || !Number.isFinite(v)
-        ? '—'
-        : new Intl.NumberFormat(f.locale, { minimumFractionDigits: dec, maximumFractionDigits: dec, signDisplay: signed ? 'exceptZero' : 'auto' }).format(v || 0).replace(/[\u00a0\u202f]/g, ' ');
+  const n = (v: number | undefined, signed = false) => formatAmount(v, f.currency, f.locale, { signed, privacy: f.privacy });
   // W48: months whose figures depend on a doubtful trade price or an implicit deposit carry a mark.
   const implicitMonths = new Set((a?.implicitFunding ?? []).map((x) => x.month));
   const priceMonths = new Set(allRows.filter((r) => parsePriceWarnings(r.warnings).length).map((r) => r.month));
