@@ -261,3 +261,35 @@ test('W50: /mensual opened directly compares a BRL portfolio with Ibovespa, and 
   await page.getByTestId('currency-switch').selectOption('USD');
   await expect(page.locator('#bench')).toHaveValue('INDEX:^GSPC');
 });
+
+/** W51 (R5 review): no table hides columns behind a horizontal scroll at 1280/1440 px; hidden ones are named. */
+for (const [locale, ccy] of [['es-CO', 'COP'], ['pt-BR', 'BRL']] as const) {
+  test.describe(`W51 in ${locale}`, () => {
+    test.use({ locale });
+    test(`tables fit their card at 1280 and 1440 px (${ccy})`, async ({ page }) => {
+      await page.goto('/');
+      await expect(page.getByTestId('kpis')).toContainText(/\d/, { timeout: 30_000 });
+      await page.getByTestId('currency-switch').selectOption(ccy);
+      for (const w of [1280, 1440]) {
+        await page.setViewportSize({ width: w, height: 900 });
+        for (const path of ['/mensual', '/movimientos', '/posiciones', '/dividendos', '/rendimiento']) {
+          await page.goto(path);
+          await expect(page.locator('table.table').first()).toBeVisible({ timeout: 30_000 });
+          await page.waitForTimeout(300);
+          const over = await page.locator('table.table').evaluateAll((ts) =>
+            ts.filter((t) => t.getClientRects().length && t.scrollWidth > t.parentElement!.clientWidth + 1).map((t) => `${t.scrollWidth}>${t.parentElement!.clientWidth}`),
+          );
+          expect(over, `${locale} ${w}px ${path}`).toEqual([]);
+        }
+      }
+      // Movimientos at 1280 px gives way with a visible note (never silently).
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.goto('/movimientos');
+      await expect(page.getByTestId('hidden-columns')).toBeVisible();
+      await page.screenshot({ path: `${SHOTS}/r6-movements-1280-${locale}.png` });
+      const before = await page.getByTestId('tx-table').locator('thead th').count();
+      await page.getByTestId('hidden-columns').getByRole('button').click(); // "Mostrar todas"
+      await expect(page.getByTestId('tx-table').locator('thead th')).toHaveCount(before + 2); // costs + account
+    });
+  });
+}

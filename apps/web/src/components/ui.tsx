@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react
 import clsx from 'clsx';
 import { ArrowDownRight, ArrowUpRight, Minus, X, AlertTriangle, Info, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatMoney, formatPct, trend, type MoneyOptions } from '../lib/format';
+import { formatAmount, formatMoney, formatPct, trend, type MoneyOptions } from '../lib/format';
 import { useFmt } from '../store/app';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +21,12 @@ export function Money({
       {formatMoney(value, currency ?? f.currency, f.locale, { privacy: f.privacy, ...opts })}
     </span>
   );
+}
+
+/** W51: an amount without the currency symbol, for tables that state the currency once. */
+export function Amount({ value, className, signed }: { value: number | undefined | null; className?: string; signed?: boolean }) {
+  const f = useFmt();
+  return <span className={clsx('num', className)}>{formatAmount(value, f.currency, f.locale, { signed, privacy: f.privacy })}</span>;
 }
 
 export function Pct({

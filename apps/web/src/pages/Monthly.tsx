@@ -4,13 +4,14 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { CalendarCheck, CalendarRange, ChevronDown, Columns3, Download, FileSpreadsheet, FileText, Rows3 } from 'lucide-react';
 import type { MonthlyRow } from '@pm/core';
-import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
+import { Amount, Card, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { monthWithoutPrices, unpricedMonths, useAnalysis } from '../hooks/useAnalysis';
 import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
 import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { PriceWarnings } from '../components/PriceWarnings';
 import { FxUnavailable } from '../components/FxNotice';
+import { HiddenColumnsNote, useFitColumns } from '../components/fitColumns';
 import { downloadText, downloadXlsx, toCsv } from '../lib/export';
 import { indexName } from '../lib/labels';
 
@@ -155,6 +156,9 @@ export default function MonthlyPage() {
     (c) => (c !== 'bench' && c !== 'alpha') || hasBench,
   ).filter((c) => (c !== 'real' && c !== 'inflation') || hasReal).filter((c) => c !== 'pctIndex' || !!pctIndexId);
   const compact = settings.density === 'compact';
+  // W51: when the card is narrower than the chosen columns, the least important give way (with a note).
+  const fit = useFitColumns<ColKey>(['cumulative', 'income', 'flows', 'start', 'inflation', 'real', 'local', 'fx', 'pctIndex'], `${cols.join()}|${rows.length}|${f.currency}`);
+  const shownCols = cols.filter((c) => !fit.hidden.has(c));
 
   const currentMonth = (a?.asOf ?? '').slice(0, 7);
   const closedRows = rows.filter((r) => r.month < currentMonth && !r.partial);
@@ -183,12 +187,12 @@ export default function MonthlyPage() {
   }, [tableRows, bench, hasBench, hasReal]);
 
   const colDef: Record<ColKey, { label: string; hint?: string; cell: (r: MonthlyRow) => ReactNode; total?: ReactNode; csv: (r: MonthlyRow) => number | string; fmt?: 'pct' | 'money' }> = {
-    start: { label: t('monthly.col.start'), cell: (r) => <Money value={r.startValueBase} className="text-ink-2" />, total: <Money value={totals.start} />, csv: (r) => r.startValueBase, fmt: 'money' },
-    flows: { label: t('monthly.col.flows'), hint: t('monthly.col.flowsHint'), cell: (r) => <Money value={r.netFlowsBase} signed className={r.netFlowsBase ? '' : 'text-muted'} />, total: <Money value={totals.flows} signed />, csv: (r) => r.netFlowsBase, fmt: 'money' },
-    income: { label: t('monthly.col.income'), cell: (r) => <Money value={r.incomeBase} className={r.incomeBase ? 'text-ink' : 'text-muted'} />, total: <Money value={totals.income} />, csv: (r) => r.incomeBase, fmt: 'money' },
-    fees: { label: t('monthly.col.fees'), cell: (r) => <Money value={r.feesBase ? -Math.abs(r.feesBase) : 0} className="text-muted" />, total: <Money value={-Math.abs(totals.fees)} />, csv: (r) => -Math.abs(r.feesBase), fmt: 'money' },
-    gain: { label: t('monthly.col.gain'), hint: t('monthly.col.gainHint'), cell: (r) => <Money value={r.gainBase} signed className={r.gainBase > 0 ? 'text-pos' : r.gainBase < 0 ? 'text-neg' : 'text-muted'} />, total: <Money value={totals.gain} signed />, csv: (r) => r.gainBase, fmt: 'money' },
-    end: { label: t('monthly.col.end'), cell: (r) => <Money value={r.endValueBase} className="font-semibold" />, total: <Money value={totals.end} />, csv: (r) => r.endValueBase, fmt: 'money' },
+    start: { label: t('monthly.col.start'), cell: (r) => <Amount value={r.startValueBase} className="text-ink-2" />, total: <Amount value={totals.start} />, csv: (r) => r.startValueBase, fmt: 'money' },
+    flows: { label: t('monthly.col.flows'), hint: t('monthly.col.flowsHint'), cell: (r) => <Amount value={r.netFlowsBase} signed className={r.netFlowsBase ? '' : 'text-muted'} />, total: <Amount value={totals.flows} signed />, csv: (r) => r.netFlowsBase, fmt: 'money' },
+    income: { label: t('monthly.col.income'), cell: (r) => <Amount value={r.incomeBase} className={r.incomeBase ? 'text-ink' : 'text-muted'} />, total: <Amount value={totals.income} />, csv: (r) => r.incomeBase, fmt: 'money' },
+    fees: { label: t('monthly.col.fees'), cell: (r) => <Amount value={r.feesBase ? -Math.abs(r.feesBase) : 0} className="text-muted" />, total: <Amount value={-Math.abs(totals.fees)} />, csv: (r) => -Math.abs(r.feesBase), fmt: 'money' },
+    gain: { label: t('monthly.col.gain'), hint: t('monthly.col.gainHint'), cell: (r) => <Amount value={r.gainBase} signed className={r.gainBase > 0 ? 'text-pos' : r.gainBase < 0 ? 'text-neg' : 'text-muted'} />, total: <Amount value={totals.gain} signed />, csv: (r) => r.gainBase, fmt: 'money' },
+    end: { label: t('monthly.col.end'), cell: (r) => <Amount value={r.endValueBase} className="font-semibold" />, total: <Amount value={totals.end} />, csv: (r) => r.endValueBase, fmt: 'money' },
     twr: {
       label: t('monthly.col.twr'),
       cell: (r) => (
@@ -357,7 +361,7 @@ export default function MonthlyPage() {
       <Card
         className="mt-3"
         title={t('monthly.table')}
-        subtitle={t('monthly.tableSub')}
+        subtitle={t('monthly.tableSubCcy', { currency: f.currency })}
         actions={
           <div className="flex items-center gap-2 flex-wrap print:hidden">
             <ColumnChooser cols={cols} available={Object.keys(colDef) as ColKey[]} labels={Object.fromEntries(Object.entries(colDef).map(([k, v]) => [k, v.label]))} />
@@ -389,12 +393,15 @@ export default function MonthlyPage() {
           <>
             {(a?.fxMissing.length ?? 0) > 0 && <FxUnavailable className="py-2 border-b border-line text-warn" />}
             {/* Desktop / tablet table */}
-            <div className="hidden md:block table-scroll print:block print:overflow-visible" data-testid="monthly-table">
+            <div className="hidden md:block">
+              <HiddenColumnsNote labels={fit.hiddenList.map((c) => colDef[c].label)} showAll={fit.showAll} onToggle={fit.setShowAll} />
+            </div>
+            <div ref={fit.ref} className="hidden md:block table-scroll print:block print:overflow-visible" data-testid="monthly-table">
               <table className={clsx('table monthly-table', compact && 'table-compact')}>
                 <thead>
                   <tr>
                     <th className="sticky left-0 z-[3]">{t('monthly.col.month')}</th>
-                    {cols.map((c) => (
+                    {shownCols.map((c) => (
                       <th key={c} className="r" title={colDef[c].hint}>
                         {colDef[c].label}
                       </th>
@@ -408,7 +415,7 @@ export default function MonthlyPage() {
                       <Fragment key={r.month}>
                         {newYear && (
                           <tr aria-hidden>
-                            <td colSpan={cols.length + 1} className="!py-1 !bg-surface-2 text-[11px] font-semibold text-muted sticky left-0">
+                            <td colSpan={shownCols.length + 1} className="!py-1 !bg-surface-2 text-[11px] font-semibold text-muted sticky left-0">
                               {r.month.slice(0, 4)}
                             </td>
                           </tr>
@@ -424,7 +431,7 @@ export default function MonthlyPage() {
                             {monthBadges(r.month)}
                             {(r.partial || r.month === currentMonth) && <span className="block text-[10.5px] font-normal text-muted leading-tight">{t('monthly.inProgress')}</span>}
                           </td>
-                          {cols.map((c) => (
+                          {shownCols.map((c) => (
                             <td key={c} className="r">
                               {colDef[c].cell(r)}
                             </td>
@@ -438,7 +445,7 @@ export default function MonthlyPage() {
                   <tfoot>
                     <tr className="[&>td]:bg-surface-2 [&>td]:font-semibold [&>td]:border-t [&>td]:border-line">
                       <td className="sticky left-0 z-[1]">{t('common.total')}</td>
-                      {cols.map((c) => (
+                      {shownCols.map((c) => (
                         <td key={c} className="r">
                           {colDef[c].total ?? ''}
                         </td>

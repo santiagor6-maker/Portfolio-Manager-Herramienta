@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { HiddenColumnsNote, useFitColumns } from '../components/fitColumns';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -109,6 +110,9 @@ export default function TransactionsPage() {
   }, [txs, q, type, from, to, account, map]);
 
   const visible = filtered.slice(0, limit);
+  // W51: account, portfolio and costs give way first when the card is narrower than the table.
+  const fit = useFitColumns(['account', 'portfolio', 'costs'], `${visible.length}|${showPortfolio}`);
+  const colLabel: Record<string, string> = { account: t('tx.account'), portfolio: t('tx.portfolio'), costs: t('tx.costs') };
   const held = (id: string) => analysis?.valuation?.holdings.find((h) => h.instrumentId === id)?.quantity ?? 0;
 
   const exportCsv = async () => {
@@ -212,7 +216,9 @@ export default function TransactionsPage() {
             }
           />
         ) : (
-          <div className="table-scroll" data-testid="tx-table">
+          <>
+          <HiddenColumnsNote labels={fit.hiddenList.map((k) => colLabel[k] ?? k)} showAll={fit.showAll} onToggle={fit.setShowAll} />
+          <div ref={fit.ref} className="table-scroll" data-testid="tx-table">
             <table className="table">
               <caption className="sr-only">{t('tx.title')}</caption>
               <thead>
@@ -231,12 +237,14 @@ export default function TransactionsPage() {
                   <th className="r">{t('tx.quantity')}</th>
                   <th className="r">{t('tx.price')}</th>
                   <th className="r">{t('tx.amount')}</th>
-                  <th className="r hidden md:table-cell" title={`${t('tx.fees')} + ${t('tx.taxesShort')}`}>
-                    {t('tx.costs')}
-                  </th>
-                  <th className="hidden lg:table-cell">{t('tx.account')}</th>
-                  {showPortfolio && <th className="hidden xl:table-cell">{t('tx.portfolio')}</th>}
-                  <th className="w-24">
+                  {!fit.hidden.has('costs') && (
+                    <th className="r hidden md:table-cell" title={`${t('tx.fees')} + ${t('tx.taxesShort')}`}>
+                      {t('tx.costs')}
+                    </th>
+                  )}
+                  {!fit.hidden.has('account') && <th className="hidden lg:table-cell">{t('tx.account')}</th>}
+                  {showPortfolio && !fit.hidden.has('portfolio') && <th className="hidden xl:table-cell">{t('tx.portfolio')}</th>}
+                  <th className="w-24 !px-1">
                     <span className="sr-only">{t('common.actions')}</span>
                   </th>
                 </tr>
@@ -269,14 +277,14 @@ export default function TransactionsPage() {
                       </td>
                       <td>
                         {inst ? (
-                          <div className="flex items-baseline gap-1.5 max-w-[240px]">
+                          <div className="flex items-baseline gap-1.5 max-w-[170px]">
                             <span className="font-semibold shrink-0">{inst.symbol}</span>
                             <span className="text-xs text-muted truncate" title={inst.name}>
                               {inst.name}
                             </span>
                           </div>
                         ) : (
-                          <div className="text-muted text-xs truncate max-w-[240px]" title={x.note}>
+                          <div className="text-muted text-xs truncate max-w-[170px]" title={x.note}>
                             {x.note ?? '—'}
                           </div>
                         )}
@@ -285,15 +293,17 @@ export default function TransactionsPage() {
                       <td className="r num">{x.price !== undefined ? formatPrice(x.price, x.currency, f.locale) : '—'}</td>
                       <td className="r num">{amount}</td>
                       {/* D9: fees and withholding in one "Costs" column (breakdown in the tooltip). */}
+                      {!fit.hidden.has('costs') && (
                       <td
                         className="r num text-muted hidden md:table-cell"
                         title={x.fees || x.taxes ? `${t('tx.fees')}: ${formatMoney(x.fees ?? 0, x.currency, f.locale, { privacy: f.privacy })} · ${t('tx.taxesShort')}: ${formatMoney(x.taxes ?? 0, x.currency, f.locale, { privacy: f.privacy })}` : undefined}
                       >
                         {x.fees || x.taxes ? formatMoney((x.fees ?? 0) + (x.taxes ?? 0), x.currency, f.locale, { privacy: f.privacy }) : '—'}
                       </td>
-                      <td className="text-ink-2 text-xs hidden lg:table-cell">{x.account ?? '—'}</td>
-                      {showPortfolio && <td className="text-ink-2 text-xs hidden xl:table-cell">{portfolioName.get(x.portfolioId)}</td>}
-                      <td>
+                      )}
+                      {!fit.hidden.has('account') && <td className="text-ink-2 text-xs hidden lg:table-cell">{x.account ?? '—'}</td>}
+                      {showPortfolio && !fit.hidden.has('portfolio') && <td className="text-ink-2 text-xs hidden xl:table-cell">{portfolioName.get(x.portfolioId)}</td>}
+                      <td className="!px-1">
                         <div className="flex gap-0.5 justify-end">
                           <button
                             className="btn btn-ghost btn-icon btn-sm !w-7"
@@ -343,6 +353,7 @@ export default function TransactionsPage() {
               </div>
             )}
           </div>
+          </>
         )}
       </Card>
 

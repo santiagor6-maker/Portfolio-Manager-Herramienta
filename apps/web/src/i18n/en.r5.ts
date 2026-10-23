@@ -70,6 +70,7 @@ export const enR5: typeof esR5 = {
   common: { selectAll: 'Select all', selectRow: 'Select {{key}}' },
   brand: { tagline: 'Local-first · multi-currency' },
   monthly: {
+    tableSubCcy: 'Amounts in {{currency}}: flows, income and gain of each month with the price / currency split.',
     noPrice: 'no price', noPriceHint: '{{month}}: there are no market prices in this month; its 0 % is not a real return.',
     inProgress: 'in progress',
     openMonthHint: '{{month}}: in progress, no new prices yet.',
@@ -84,4 +85,5 @@ export const enR5: typeof esR5 = {
   alerts: { thresholdPriceNoCcy: 'Price' },
   perf: { groupReturn: 'Return', groupRisk: 'Risk' },
   dashboard: { staleMarket_one: '{{count}} asset without a market price since {{date}} ({{symbols}}): its value and the following months do not reflect the market.', staleMarket_other: '{{count}} assets without a market price since {{date}} ({{symbols}}): their value and the following months do not reflect the market.', staleMarketNever_one: '{{count}} asset without any market price ({{symbols}}): valued at its purchase price.', staleMarketNever_other: '{{count}} assets without any market price ({{symbols}}): valued at their purchase price.' },
+  table: { hidden: 'Columns hidden for lack of space: {{columns}}.', showAll: 'Show all', allShown: 'All columns shown (scroll the table).', fit: 'Fit to width' },
 };

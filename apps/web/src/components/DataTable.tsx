@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
+import { HiddenColumnsNote, useFitColumns } from './fitColumns';
 
 export interface Column<T> {
   id: string;
@@ -31,6 +32,7 @@ export function DataTable<T>({
   rowClassName,
   empty,
   testId,
+  dropOrder = [],
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -46,6 +48,8 @@ export function DataTable<T>({
   rowClassName?: (row: T) => string | undefined;
   empty?: ReactNode;
   testId?: string;
+  /** W51: column ids hidden first (least important first) when the table is wider than its card. */
+  dropOrder?: string[];
 }) {
   const [sort, setSort] = useState(initialSort);
   const sorted = useMemo(() => {
@@ -65,9 +69,21 @@ export function DataTable<T>({
 
   const { t } = useTranslation();
   const allSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(rowKey(r)));
+  const fit = useFitColumns(dropOrder, rows.length);
+  const allColumns = columns;
+  columns = columns.filter((c) => !fit.hidden.has(c.id));
 
   return (
-    <div className="table-scroll rounded-b-xl" style={maxHeight ? { maxHeight } : undefined} data-testid={testId}>
+    <>
+    <HiddenColumnsNote
+      labels={fit.hiddenList.map((id) => {
+        const c = allColumns.find((x) => x.id === id);
+        return c?.headerTitle ?? (typeof c?.header === 'string' ? c.header : id);
+      })}
+      showAll={fit.showAll}
+      onToggle={fit.setShowAll}
+    />
+    <div ref={fit.ref} className="table-scroll rounded-b-xl" style={maxHeight ? { maxHeight } : undefined} data-testid={testId}>
       <table className="table">
         <caption className="sr-only">{caption}</caption>
         <thead>
@@ -208,5 +224,6 @@ export function DataTable<T>({
         )}
       </table>
     </div>
+    </>
   );
 }

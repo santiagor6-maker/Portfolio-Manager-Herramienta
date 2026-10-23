@@ -160,7 +160,8 @@ export default function DividendsPage() {
         {loading ? <Skeleton className="h-64" /> : <GroupedBars categories={chart.categories} series={chart.series} valueFormat={moneyFmt} ariaLabel={t('div.byMonth')} height={260} />}
       </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
+      {/* W51: the two tables sit side by side only where both fit (≥ 1536 px). */}
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-3 mt-3">
         <Card title={t('div.byCountry', { year: selYear })} bodyClassName="!p-0">
           {/* D7: the table scrolls inside its card on a phone, never the page. */}
           <div className="overflow-x-auto">

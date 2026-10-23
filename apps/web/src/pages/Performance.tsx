@@ -185,11 +185,12 @@ export default function PerformancePage() {
         {loading ? <Skeleton className="h-72" /> : cumSeries.length ? <LineChart series={cumSeries} valueFormat={pctFmt} ariaLabel={t('perf.cumulative')} height={300} scale={false} /> : <p className="text-muted text-sm text-center py-12">{t('common.noData')}</p>}
       </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-3 mt-3">
-        <Card className="xl:col-span-2" title={t('perf.drawdown')} subtitle={t('perf.drawdownSub')}>
+      {/* W51: side by side only where the periods table fits (≥ 1536 px). */}
+      <div className="grid grid-cols-1 2xl:grid-cols-5 gap-3 mt-3">
+        <Card className="2xl:col-span-2" title={t('perf.drawdown')} subtitle={t('perf.drawdownSub')}>
           {loading ? <Skeleton className="h-56" /> : <LineChart series={ddSeries} valueFormat={pctFmt} ariaLabel={t('perf.drawdown')} height={230} scale={false} />}
         </Card>
-        <Card className="xl:col-span-3" title={t('perf.periods')} bodyClassName="!p-0">
+        <Card className="2xl:col-span-3" title={t('perf.periods')} bodyClassName="!p-0">
           <div className="overflow-x-auto">
             <table className="table" data-testid="periods-table">
               <thead>

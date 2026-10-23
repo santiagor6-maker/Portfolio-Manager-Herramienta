@@ -70,6 +70,7 @@ export const ptR5: typeof esR5 = {
   common: { selectAll: 'Selecionar tudo', selectRow: 'Selecionar {{key}}' },
   brand: { tagline: 'Local-first · multimoeda' },
   monthly: {
+    tableSubCcy: 'Valores em {{currency}}: fluxos, rendimentos e ganho de cada mês com a decomposição preço / câmbio.',
     noPrice: 'sem cotação', noPriceHint: '{{month}}: não há cotações de mercado neste mês; o 0 % não é uma rentabilidade real.',
     inProgress: 'em curso',
     openMonthHint: '{{month}}: em curso, ainda sem cotações novas.',
@@ -84,4 +85,5 @@ export const ptR5: typeof esR5 = {
   alerts: { thresholdPriceNoCcy: 'Preço' },
   perf: { groupReturn: 'Rentabilidade', groupRisk: 'Risco' },
   dashboard: { staleMarket_one: '{{count}} ativo sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarket_other: '{{count}} ativos sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarketNever_one: '{{count}} ativo sem nenhuma cotação de mercado ({{symbols}}): avaliado pelo preço de compra.', staleMarketNever_other: '{{count}} ativos sem nenhuma cotação de mercado ({{symbols}}): avaliados pelo preço de compra.' },
+  table: { hidden: 'Colunas ocultas por falta de espaço: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Todas as colunas visíveis (role a tabela).', fit: 'Ajustar à largura' },
 };

@@ -68,6 +68,7 @@ export const esR5 = {
   common: { selectAll: 'Seleccionar todo', selectRow: 'Seleccionar {{key}}' },
   brand: { tagline: 'Local-first · multidivisa' },
   monthly: {
+    tableSubCcy: 'Cifras en {{currency}}: flujos, ingresos y ganancia de cada mes con la descomposición precio / divisa.',
     noPrice: 'sin precio', noPriceHint: '{{month}}: no hay cotizaciones de mercado en este mes; su 0 % no es una rentabilidad real.',
     inProgress: 'en curso',
     openMonthHint: '{{month}}: en curso, todavía sin precios nuevos.',
@@ -82,4 +83,5 @@ export const esR5 = {
   alerts: { thresholdPriceNoCcy: 'Precio' },
   perf: { groupReturn: 'Rentabilidad', groupRisk: 'Riesgo' },
   dashboard: { staleMarket_one: '{{count}} activo sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarket_other: '{{count}} activos sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarketNever_one: '{{count}} activo sin ninguna cotización de mercado ({{symbols}}): se valora al precio de compra.', staleMarketNever_other: '{{count}} activos sin ninguna cotización de mercado ({{symbols}}): se valoran al precio de compra.' },
+  table: { hidden: 'Columnas ocultas por falta de espacio: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Se muestran todas las columnas (desplaza la tabla).', fit: 'Ajustar al ancho' },
 };
