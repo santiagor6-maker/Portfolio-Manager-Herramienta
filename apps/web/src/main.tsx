@@ -41,6 +41,7 @@ async function start() {
     void evaluateAlerts();
     void checkIbkrInboxes(); // IBKR daily-sync inbox badge
     void checkEmailDrafts(); // forwarded e-mails waiting for review
+    void import('./lib/noteNames').then((m) => m.repairNoteNames()); // W43: names from brokerage notes
     if (settings.autoRefresh) void refreshMarketData();
     registerServiceWorker();
   } catch (e) {

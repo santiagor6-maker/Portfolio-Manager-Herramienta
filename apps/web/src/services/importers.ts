@@ -28,6 +28,7 @@ import type { Instrument, Transaction } from '@pm/core';
 import { db } from '../db/schema';
 import { bulkAddTransactions, upsertInstruments } from '../db/repo';
 import { newId } from '../lib/ids';
+import { isNoteName } from '../lib/noteNames';
 import { searchInstruments } from './marketData';
 
 export type { ColumnMapping, CorporateActionSuggestion, DateFormat, FileInspection, ImportResult, MappingField, NumberFormat, PresetInfo };
@@ -161,7 +162,7 @@ export async function enrichInstruments(list: Instrument[]): Promise<Instrument[
   const byId = new Map(CATALOG.map((c) => [c.id, c]));
   const out: Instrument[] = [];
   for (const i of list) {
-    const bare = !i.name || i.name.trim().toUpperCase() === i.symbol.toUpperCase();
+    const bare = isNoteName(i.name, i.symbol);
     let match: Instrument | undefined = byId.get(i.id) ?? CATALOG.find((c) => c.symbol === i.symbol && (c.exchange === i.exchange || !i.exchange));
     if (!match && bare) {
       try {

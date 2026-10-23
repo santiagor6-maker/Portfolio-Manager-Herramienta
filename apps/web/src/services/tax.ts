@@ -69,7 +69,9 @@ export async function runTaxReports(country: 'CO' | 'BR', year: number, portfoli
     const { getMeta } = await import('../db/repo');
     const transitResolution = (await getMeta<TransitResolution>('taxTransitResolution')) ?? {};
     // Tax R8: asOf drives DARF status (pendente / vencida) and late charges (multa + Selic).
-    out.brPack = attempt('brPack', () => brazilTaxPack(input, { year, asOf, transitResolution }));
+    // W43: CNPJ of common issuers (the package's own table covers nine).
+    const { B3_CNPJ_EXTRA } = await import('../lib/b3Cnpj');
+    out.brPack = attempt('brPack', () => brazilTaxPack(input, { year, asOf, transitResolution, cnpjByIssuer: B3_CNPJ_EXTRA }));
     out.brazil = out.brPack?.apuracao ?? attempt('brazil', () => brazilMonthlyApuracao(input, { year, asOf }));
     out.proventos = out.brPack?.proventos ?? attempt('proventos', () => brazilProventosReport(input, { year }));
   }

@@ -214,3 +214,45 @@ describe('W46: shorter share links', () => {
     expect(downsample([1, 2, 3], 160)).toEqual([1, 2, 3]);
   });
 });
+
+describe('W43: brokerage-note names and CNPJ', () => {
+  it('detects note-style names', async () => {
+    const { isNoteName } = await import('../lib/noteNames');
+    expect(isNoteName('SID NACIONAL ON', 'CSNA3')).toBe(true);
+    expect(isNoteName('TRAN PAULIST PN N1', 'TRPL4')).toBe(true);
+    expect(isNoteName('ITAUUNIBANCO PN EJ N1', 'ITUB4')).toBe(true);
+    expect(isNoteName('CSNA3', 'CSNA3')).toBe(true);
+    expect(isNoteName('Companhia Siderúrgica Nacional', 'CSNA3')).toBe(false);
+    expect(isNoteName('ECOPETROL', 'EC')).toBe(false);
+  });
+
+  it('renames stored note names from the catalog at startup, never the user’s own names', async () => {
+    const schema = await import('../db/schema');
+    const db = schema.resetDbInstance('r5-names');
+    const { repairNoteNames } = await import('../lib/noteNames');
+    const b3 = { exchange: 'BVMF', currency: 'BRL', country: 'BR', assetClass: 'equity' as const };
+    await db.instruments.bulkPut([
+      { ...b3, id: 'BVMF:CSNA3', symbol: 'CSNA3', name: 'SID NACIONAL ON' },
+      { ...b3, id: 'BVMF:ITUB4', symbol: 'ITUB4', name: 'ITAUUNIBANCO PN EJ N1' },
+      { ...b3, id: 'BVMF:PETR4', symbol: 'PETR4', name: 'Minha Petrobras' },
+    ]);
+    expect(await repairNoteNames()).toBe(2);
+    expect((await db.instruments.get('BVMF:CSNA3'))!.name).toBe('Companhia Siderúrgica Nacional ON');
+    expect((await db.instruments.get('BVMF:ITUB4'))!.name).toBe('Itaú Unibanco PN');
+    expect((await db.instruments.get('BVMF:PETR4'))!.name).toBe('Minha Petrobras');
+    await db.delete();
+  });
+
+  it('fills the CNPJ of common issuers in Bens e Direitos', async () => {
+    const { brazilTaxPack } = await import('@pm/tax');
+    const { B3_CNPJ_EXTRA } = await import('../lib/b3Cnpj');
+    const csna: Instrument = { id: 'BVMF:CSNA3', symbol: 'CSNA3', name: 'CSN ON', exchange: 'BVMF', currency: 'BRL', country: 'BR', assetClass: 'equity' };
+    const input = {
+      transactions: [tx({ portfolioId: 'p', date: '2025-03-03', type: 'BUY', instrumentId: csna.id, quantity: 100, price: 10, amount: 1000, currency: 'BRL' })],
+      instruments: [csna],
+      market: core.createMarketData({ prices: [], fx: [] }),
+    };
+    const pack = brazilTaxPack(input, { year: 2025, asOf: '2026-01-10', cnpjByIssuer: B3_CNPJ_EXTRA });
+    expect(pack.bensDireitos.items.find((i) => i.ticker === 'CSNA3')?.cnpj).toBe('33.042.730/0001-04');
+  });
+});
