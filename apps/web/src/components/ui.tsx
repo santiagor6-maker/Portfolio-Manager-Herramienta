@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { ArrowDownRight, ArrowUpRight, Minus, X, AlertTriangle, Info, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -168,11 +168,42 @@ export function Kpi({
         </>
       ) : (
         <>
-          {/* D1: the figure is never cut ("COP 396.779.1…"): it scales with the viewport and may wrap. */}
-          <div className="kpi-value font-semibold tracking-tight mt-1 text-ink break-words">{value}</div>
+          <FitValue>{value}</FitValue>
           {sub && <div className="mt-1 text-[13px] line-clamp-2">{sub}</div>}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * D1: a headline figure is never cut nor broken inside the number ("+COP 21.081.⏎632"). It stays on
+ * one line (nowrap) and its font shrinks to the card width (down to 12 px, enough for any amount at
+ * 390 px); the full text is also in `title`.
+ */
+function FitValue({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => {
+      el.style.fontSize = '';
+      const base = parseFloat(getComputedStyle(el).fontSize) || 22;
+      let size = base;
+      for (let i = 0; i < 4 && el.scrollWidth > el.clientWidth + 0.5 && size > 12; i++) {
+        size = Math.max(12, Math.floor(size * (el.clientWidth / el.scrollWidth) * 10) / 10 - 0.2);
+        el.style.fontSize = `${size}px`;
+      }
+      el.title = el.textContent ?? '';
+    };
+    fit();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : undefined;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [children]);
+  return (
+    <div ref={ref} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden">
+      {children}
     </div>
   );
 }

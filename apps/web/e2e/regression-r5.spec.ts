@@ -133,7 +133,7 @@ test('W46 + W47 + W48: compact links that follow the hash, report table fits, da
   await ctx.close();
 });
 
-test('D3: long tables keep their header while scrolling; D1: KPI figures are never cut', async ({ page }) => {
+test('D3: long tables keep their header while scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/mensual');
   const box = page.getByTestId('monthly-table');
@@ -142,9 +142,52 @@ test('D3: long tables keep their header while scrolling; D1: KPI figures are nev
   const [th, top] = await box.evaluate((el) => [el.querySelector('th')!.getBoundingClientRect().top, el.getBoundingClientRect().top]);
   expect(Math.abs(th - top)).toBeLessThan(2);
   await page.screenshot({ path: `${SHOTS}/r5-sticky-monthly.png` });
-
-  await page.goto('/');
-  await expect(page.getByTestId('kpis')).toBeVisible();
-  const cut = await page.locator('.kpi-value').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis').length);
-  expect(cut).toBe(0);
 });
+
+/**
+ * D1 (R5 review): every KPI figure is rendered on ONE line (no break inside "+COP 21.081.632") and is
+ * not clipped. Lines are counted from the text's client rects, not from the absence of an ellipsis.
+ */
+async function kpiProblems(page: Page): Promise<string[]> {
+  return page.locator('.kpi-value').evaluateAll((els) =>
+    els.flatMap((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const tops: number[] = [];
+      for (const r of Array.from(range.getClientRects())) if (r.width > 0 && !tops.some((t) => Math.abs(t - r.top) < 6)) tops.push(r.top);
+      const text = (el.textContent ?? '').trim();
+      const out: string[] = [];
+      if (tops.length > 1) out.push(`${text}: ${tops.length} lines`);
+      if (el.scrollWidth > el.clientWidth + 1) out.push(`${text}: clipped ${el.scrollWidth}>${el.clientWidth}`);
+      return out;
+    }),
+  );
+}
+
+for (const locale of ['es-CO', 'pt-BR']) {
+  test.describe(`D1 in ${locale}`, () => {
+    test.use({ locale });
+    test(`KPI figures stay on one line (COP/BRL/USD; 1280, 1366, 1440, 390 px)`, async ({ page }) => {
+      await page.goto('/');
+      await expect(page.getByTestId('kpis')).toContainText(/\d/, { timeout: 30_000 });
+      for (const ccy of ['COP', 'BRL', 'USD']) {
+        await page.getByTestId('currency-switch').selectOption(ccy);
+        await expect(page.locator('.kpi-value').first()).toContainText(ccy === 'COP' ? /\d{3}\.\d{3}/ : /\d/, { timeout: 30_000 });
+        for (const [w, h] of [[1280, 800], [1366, 768], [1440, 900], [390, 844]] as const) {
+          await page.setViewportSize({ width: w, height: h });
+          await page.waitForTimeout(150); // ResizeObserver fit
+          expect(await kpiProblems(page), `${locale} ${ccy} ${w}px`).toEqual([]);
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
+      }
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.screenshot({ path: `${SHOTS}/r6-kpis-${locale}-1280.png` });
+      for (const path of ['/rendimiento', '/divisas', '/dividendos', '/mensual']) {
+        await page.goto(path);
+        await expect(page.locator('.kpi-value').first()).toBeVisible({ timeout: 30_000 });
+        await page.waitForTimeout(150);
+        expect(await kpiProblems(page), `${locale} ${path} 1280px`).toEqual([]);
+      }
+    });
+  });
+}

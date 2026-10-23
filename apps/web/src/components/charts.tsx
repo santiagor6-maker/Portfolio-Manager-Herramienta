@@ -185,7 +185,7 @@ export function AllocationDonut({ slices, labelFor, dim }: { slices: AllocationS
   );
   if (!folded.length) return <p className="text-sm text-muted py-8 text-center">{t('common.noData')}</p>;
   return (
-    <div className="flex items-center gap-4 flex-wrap sm:flex-nowrap">
+    <div className="flex items-center gap-4 flex-wrap">
       <Chart option={option} height={170} ariaLabel={t('chart.allocationAria')} className="w-[170px] shrink-0 mx-auto" />
       <ul className="flex-1 min-w-[160px] flex flex-col gap-1.5 text-[13px]">
         {folded.map((s) => (
