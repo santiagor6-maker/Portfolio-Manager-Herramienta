@@ -14,6 +14,7 @@ export const ptR5: typeof esR5 = {
     report: 'Faltam taxas de câmbio ({{pairs}}): os valores em {{currency}} não puderam ser calculados e aparecem como «—».',
   },
   diag: {
+    text: { STOCK_DIVIDEND_RATIO_SUSPECT: 'A bonificação de {{symbol}} de {{date}} tem proporção {{ratio}} ({{pct}} de ações novas por ação), algo muito incomum. Verifique se não é o fator total: uma bonificação de 10 % é 0,1.' },
     vtext: {
       OVERSELL: '{{type}} de {{quantity}} {{symbol}} em {{date}} maior que a posição ({{held}}). Falta registrar uma compra ou transferência?',
       INCOME_WITHOUT_POSITION: '{{type}} de {{symbol}} em {{date}} sem unidades em carteira.',
@@ -32,6 +33,7 @@ export const ptR5: typeof esR5 = {
       NEGATIVE_QUANTITY: '{{type}} de {{symbol}} de {{date}} com quantidade negativa.',
     },
     code: {
+      STOCK_DIVIDEND_RATIO_SUSPECT: 'Bonificação com proporção incomum',
       DUPLICATE_ID: 'Movimento repetido',
       DUPLICATE_IMPORT: 'Possível duplicado',
       FUTURE_DATE: 'Data futura',
@@ -87,5 +89,6 @@ export const ptR5: typeof esR5 = {
   dashboard: { staleMarket_one: '{{count}} ativo sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarket_other: '{{count}} ativos sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarketNever_one: '{{count}} ativo sem nenhuma cotação de mercado ({{symbols}}): avaliado pelo preço de compra.', staleMarketNever_other: '{{count}} ativos sem nenhuma cotação de mercado ({{symbols}}): avaliados pelo preço de compra.' },
   table: { hidden: 'Colunas ocultas por falta de espaço: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Todas as colunas visíveis (role a tabela).', fit: 'Ajustar à largura' },
   ca: { note: { bonus: 'Bonificação de {{pct}} em ações: as novas ações têm o custo atribuído informado pela companhia.', spinoff: 'Cisão: confirme a fração do custo no aviso da companhia.', split: 'Desdobramento {{ratio}} (mais ações, mesmo custo total).', reverse: 'Grupamento {{ratio}} (menos ações, mesmo custo total).' } },
+  repair: { bonus_one: 'Corrigimos {{count}} bonificação que tinha sido aplicada com uma proporção errada.', bonus_other: 'Corrigimos {{count}} bonificações que tinham sido aplicadas com uma proporção errada.' },
   onboarding: { all: 'Ver tudo', less: 'Ocultar' },
 };

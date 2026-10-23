@@ -14,6 +14,7 @@ export const enR5: typeof esR5 = {
     report: 'Exchange rates are missing ({{pairs}}): figures in {{currency}} could not be computed and show as “—”.',
   },
   diag: {
+    text: { STOCK_DIVIDEND_RATIO_SUSPECT: 'The {{symbol}} stock dividend of {{date}} has ratio {{ratio}} ({{pct}} new shares per share held), which is very unusual. Check it is not the total-shares factor: a 10 % bonus is 0.1.' },
     vtext: {
       OVERSELL: '{{type}} of {{quantity}} {{symbol}} on {{date}} exceeds the position ({{held}}). Is a buy or transfer missing?',
       INCOME_WITHOUT_POSITION: '{{type}} of {{symbol}} on {{date}} with no units held.',
@@ -32,6 +33,7 @@ export const enR5: typeof esR5 = {
       NEGATIVE_QUANTITY: '{{type}} of {{symbol}} on {{date}} with a negative quantity.',
     },
     code: {
+      STOCK_DIVIDEND_RATIO_SUSPECT: 'Unusual stock dividend ratio',
       DUPLICATE_ID: 'Repeated transaction',
       DUPLICATE_IMPORT: 'Possible duplicate',
       FUTURE_DATE: 'Future date',
@@ -87,5 +89,6 @@ export const enR5: typeof esR5 = {
   dashboard: { staleMarket_one: '{{count}} asset without a market price since {{date}} ({{symbols}}): its value and the following months do not reflect the market.', staleMarket_other: '{{count}} assets without a market price since {{date}} ({{symbols}}): their value and the following months do not reflect the market.', staleMarketNever_one: '{{count}} asset without any market price ({{symbols}}): valued at its purchase price.', staleMarketNever_other: '{{count}} assets without any market price ({{symbols}}): valued at their purchase price.' },
   table: { hidden: 'Columns hidden for lack of space: {{columns}}.', showAll: 'Show all', allShown: 'All columns shown (scroll the table).', fit: 'Fit to width' },
   ca: { note: { bonus: 'Stock dividend of {{pct}}: the new shares carry the cost announced by the company.', spinoff: 'Spin-off: confirm the cost fraction with the issuer notice.', split: 'Split {{ratio}} (more shares, same total cost).', reverse: 'Reverse split {{ratio}} (fewer shares, same total cost).' } },
+  repair: { bonus_one: 'We fixed {{count}} stock dividend (bonificação) that had been applied with a wrong ratio.', bonus_other: 'We fixed {{count}} stock dividends (bonificações) that had been applied with a wrong ratio.' },
   onboarding: { all: 'See all', less: 'Hide' },
 };

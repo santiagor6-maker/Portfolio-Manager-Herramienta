@@ -37,7 +37,8 @@ function eml(csv: string): string {
 
 describe('importers round 4 wiring', () => {
   it('imports the attachments of a dropped .eml file into one preview', async () => {
-    const csv = readFileSync('e2e/fixtures/extracto-trii.csv', 'utf8');
+    // resolved from this file, not the cwd (the root `vitest run` starts in the repo root)
+    const csv = readFileSync(new URL('../../e2e/fixtures/extracto-trii.csv', import.meta.url), 'utf8');
     const file = new File([eml(csv)], 'extracto.eml', { type: 'message/rfc822' });
     const r = await runImport({ file, portfolioId: 'p1', locale: 'es' });
     expect(r.transactions.length).toBeGreaterThan(0);

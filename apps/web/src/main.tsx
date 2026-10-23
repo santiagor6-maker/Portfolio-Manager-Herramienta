@@ -42,6 +42,7 @@ async function start() {
     void checkIbkrInboxes(); // IBKR daily-sync inbox badge
     void checkEmailDrafts(); // forwarded e-mails waiting for review
     void import('./lib/noteNames').then((m) => m.repairNoteNames()); // W43: names from brokerage notes
+    void import('./db/repairs').then((m) => m.repairBonusRatios()).catch((e) => console.error('Bonus ratio repair failed', e)); // bonificações saved as 1.10 instead of 0.10
     if (settings.autoRefresh) void refreshMarketData();
     // W49: keep prices current while the tab stays open (throttled to one refresh per 5 min inside).
     setInterval(() => {

@@ -35,6 +35,7 @@ import { addDays, addMonths, previousBusinessDay } from '../lib/ids';
 
 export { previousBusinessDay };
 import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
+import { bonusRatioWarnings } from '../lib/bonusRepair';
 import { blankUnconvertible, missingFxCurrencies, scopeBases } from './fxCoverage';
 
 export interface Dataset {
@@ -424,6 +425,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     out.reviewActions = sug.review;
   }
   out.diagnostics = attempt('ledgerDiagnostics', () => E.diagnostics()) ?? [];
+  out.diagnostics.push(...(attempt('bonusRatioWarnings', () => bonusRatioWarnings(txs)) ?? []));
   out.implicitFunding =
     attempt('implicitFunding', () =>
       E.ledger.flows

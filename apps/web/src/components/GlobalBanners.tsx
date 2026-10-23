@@ -1,10 +1,13 @@
 import { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApp } from '../store/app';
 import { usePortfolios } from '../hooks/useData';
 import { Banner } from './ui';
 import { FxBanner } from './FxNotice';
+import { db } from '../db/schema';
+import { BONUS_REPAIR_NOTICE } from '../db/repairs';
 
 export function GlobalBanners() {
   const { t } = useTranslation();
@@ -19,6 +22,7 @@ export function GlobalBanners() {
   const showDemo = !!demo && (selected === 'all' || selected === demo.id);
 
   const engineDown = analysis && analysis.engineErrors.createMarketData;
+  const bonusFixed = useLiveQuery(async () => Number((await db.meta.get(BONUS_REPAIR_NOTICE))?.value ?? 0), []);
 
   return (
     <div className="flex flex-col gap-2 mb-4 empty:hidden print:hidden">
@@ -70,6 +74,11 @@ export function GlobalBanners() {
               </>
             );
           })()}
+        </Banner>
+      )}
+      {!!bonusFixed && (
+        <Banner tone="info" onClose={() => void db.meta.delete(BONUS_REPAIR_NOTICE)}>
+          <span data-testid="bonus-repair-notice">{t('repair.bonus', { count: bonusFixed })}</span>
         </Banner>
       )}
       <FxBanner />

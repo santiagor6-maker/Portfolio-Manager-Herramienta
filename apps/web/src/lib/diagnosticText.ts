@@ -4,7 +4,7 @@
  * ids, money and quantities formatted for the locale.
  */
 import type { Diagnostic, Instrument, Transaction } from '@pm/core';
-import { formatDate, formatMoney } from './format';
+import { formatDate, formatMoney, formatPct } from './format';
 
 type T = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -94,6 +94,10 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
             target: sym(String(d.data.targetInstrumentId ?? '')),
             pct: `${new Intl.NumberFormat(c.locale, { maximumFractionDigits: 1 }).format(Number(d.data.costFraction) * 100)} %`,
           }
+        : undefined;
+    case 'STOCK_DIVIDEND_RATIO_SUSPECT':
+      return c.tx?.ratio !== undefined
+        ? { ...base, date: formatDate(c.tx.date, c.locale, 'short'), ratio: qty(c.tx.ratio, c.locale), pct: formatPct(c.tx.ratio, c.locale, { decimals: 0 }) }
         : undefined;
     case 'CORPORATE_ACTION_WITHOUT_POSITION':
       return d.data?.instrumentId ? { ...base, symbol: sym(String(d.data.instrumentId)), target: sym(String(d.data.targetInstrumentId ?? '')) } : undefined;
