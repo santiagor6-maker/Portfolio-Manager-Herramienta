@@ -4,6 +4,7 @@ import { CheckCircle2, Database, Download, Plus, RotateCcw, Server, Trash2, Uplo
 import type { CostMethod } from '@pm/core';
 import { Banner, Card, DemoBadge, Field, Modal, PageHeader, Segmented } from '../components/ui';
 import { useApp } from '../store/app';
+import { FreshnessCard } from '../components/Freshness';
 import { usePortfolios } from '../hooks/useData';
 import { CURRENCY_CODES } from '../lib/currencies';
 import { BENCHMARKS } from '../lib/benchmarks';
@@ -39,6 +40,7 @@ export default function SettingsPage() {
         <Preferences />
         <div className="flex flex-col gap-3">
           <DataSource />
+          <FreshnessCard />
           <Backup />
         </div>
         <Portfolios />

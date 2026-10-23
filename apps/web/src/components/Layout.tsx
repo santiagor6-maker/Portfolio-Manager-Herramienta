@@ -206,7 +206,8 @@ function RefreshButton() {
   const { locale } = useFmt();
   const loading = market.status === 'loading';
   const dot =
-    market.status === 'ok' ? 'bg-pos' : market.status === 'partial' ? 'bg-warn' : market.status === 'offline' ? 'bg-neg' : 'bg-muted';
+    // D22: green only once prices were actually downloaded ("Conectado" + "Sin actualizar" was contradictory).
+    market.status === 'ok' && market.lastRefresh ? 'bg-pos' : market.status === 'partial' ? 'bg-warn' : market.status === 'offline' ? 'bg-neg' : 'bg-muted';
   const label =
     market.status === 'loading'
       ? t('market.updating')

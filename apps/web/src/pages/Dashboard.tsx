@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ArrowRight, CalendarClock, Database, Plus, Upload, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarClock, Plus, Upload, Wallet } from 'lucide-react';
 import type { AllocationDimension } from '@pm/core';
 import { Banner, Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { AllocationDonut, ReturnBars, ValueChart } from '../components/charts';
 import { monthWithoutPrices, seriesForPeriod, unpricedMonths, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
-import { formatDate, formatMonth, formatRelative } from '../lib/format';
+import { formatDate, formatMonth } from '../lib/format';
 import { indexName } from '../lib/labels';
 import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd, previousBusinessDay } from '../lib/ids';
@@ -263,8 +263,8 @@ export default function DashboardPage() {
         <DividendsCard />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
-        <FreshnessCard />
+      {/* D22: data freshness lives in Ajustes (and the header status); the Resumen keeps the warnings. */}
+      <div className="mt-3">
         <WarningsCard />
       </div>
     </div>
@@ -338,47 +338,6 @@ function DividendsCard() {
           </div>
         </div>
       )}
-    </Card>
-  );
-}
-
-function FreshnessCard() {
-  const { t } = useTranslation();
-  const market = useApp((s) => s.market);
-  const f = useFmt();
-  const sources = Object.entries(market.sources);
-  const instruments = useInstrumentMap();
-  // Market-data R5: series where the server's snapshot covers only part of the range.
-  const partial = useLiveQuery(() => db.priceSeries.filter((s) => !!s.partial).primaryKeys(), [], [] as string[]).map(
-    (id) => instruments.get(String(id))?.symbol ?? String(id),
-  );
-  return (
-    <Card title={t('dashboard.freshness')} subtitle={t('dashboard.freshnessSub')}>
-      <ul className="text-[13px] flex flex-col gap-2">
-        <li className="flex items-center gap-2">
-          <Database size={14} className="text-muted" aria-hidden />
-          <span className="flex-1">{t('dashboard.serverStatus')}</span>
-          <span className="chip">{t(`market.status.${market.status}`)}</span>
-        </li>
-        {sources.map(([name, s]) => (
-          <li key={name} className="flex flex-wrap items-center gap-2">
-            <span className={`size-2 rounded-full ${s.ok ? 'bg-pos' : 'bg-warn'}`} aria-hidden />
-            <span className="flex-1">
-              {name.startsWith('idx_') ? `${t('source.index')} ${indexName(name.slice(4))}` : t(`source.${name}`, { defaultValue: name })}
-              {s.count ? <span className="text-muted text-xs"> · {s.count}</span> : null}
-            </span>
-            <span className="text-xs text-muted" title={s.message}>{s.updatedAt ? formatRelative(s.updatedAt, f.locale) : s.ok ? '—' : t('market.failed')}</span>
-            {!s.ok && name.startsWith('idx_') && <span className="basis-full text-[11px] text-muted pl-4">{t('dashboard.indexFailedImpact')}</span>}
-          </li>
-        ))}
-        {!sources.length && <li className="text-xs text-muted">{t('dashboard.noSources')}</li>}
-        {partial.length > 0 && (
-          <li className="text-xs text-warn" data-testid="partial-series">
-            {t('md.partialList', { symbols: partial.join(', ') })}
-          </li>
-        )}
-
-      </ul>
     </Card>
   );
 }
