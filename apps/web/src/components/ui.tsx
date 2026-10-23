@@ -175,7 +175,7 @@ export function Kpi({
       ) : (
         <>
           <FitValue>{value}</FitValue>
-          {sub && <div className="mt-1 text-[13px] line-clamp-2">{sub}</div>}
+          {sub && <div className="mt-1 text-[13px]">{sub}</div>}
         </>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MonthlyRow, PerformanceSummary, RiskMetrics } from '@pm/core';
 import { Card, Kpi, Money, PageHeader, Pct, Skeleton } from '../components/ui';
@@ -6,7 +6,8 @@ import { LineChart, type LineSeries } from '../components/charts';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatMonth, formatPct } from '../lib/format';
-import { benchmarkName } from '../lib/benchmarks';
+import { benchmarkName, HOME_BENCHMARK, HOME_RATE } from '../lib/benchmarks';
+import { BENCH_SLOT } from '../lib/seriesColors';
 import { indexName } from '../lib/labels';
 import { addMonths, monthEnd } from '../lib/ids';
 import type { SummaryKey } from '../services/analysis';
@@ -85,6 +86,16 @@ export default function PerformancePage() {
   const rateIdx = a?.rateIndices ?? [];
   const inflation = a?.inflationIndex;
 
+  // W52: by default the portfolio, the currency's index and rate, and inflation (≤ 4 lines); the other
+  // indices are added from the chips. Each index keeps its own colour (BENCH_SLOT).
+  const home = HOME_BENCHMARK[f.currency];
+  const homeRate = HOME_RATE[f.currency];
+  const [extra, setExtra] = useState<string[]>([]);
+  const available = useMemo(
+    () => [...benches, ...rateIdx.filter((id) => rows.some((r) => r.indexReturns?.[id] !== undefined))],
+    [benches.join(), rateIdx.join(), rows], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const shown = available.filter((id) => id === home || id === homeRate || extra.includes(id));
   const cumSeries: LineSeries[] = useMemo(() => {
     if (!rows.length) return [];
     const first = rows[0]!.month;
@@ -96,14 +107,14 @@ export default function PerformancePage() {
         return [monthEnd(r.month), c - 1] as [string, number];
       })];
     };
-    const out: LineSeries[] = [{ name: t('chart.portfolio'), data: [start, ...rows.map((r) => [monthEnd(r.month), r.cumulativeTwr] as [string, number])], area: true }];
-    benches.forEach((b, i) => out.push({ name: benchmarkName(b), colorIndex: i + 1, data: chain((r) => r.benchmarkReturns?.[b]) }));
-    rateIdx.forEach((id, i) => {
-      if (rows.some((r) => r.indexReturns?.[id] !== undefined)) out.push({ name: indexName(id), colorIndex: benches.length + 1 + i, data: chain((r) => r.indexReturns?.[id]) }); // D11: dotted only for inflation
-    });
+    const out: LineSeries[] = [{ name: t('chart.portfolio'), width: 2.5, data: [start, ...rows.map((r) => [monthEnd(r.month), r.cumulativeTwr] as [string, number])], area: true }];
+    for (const id of shown) {
+      const isBench = benches.includes(id);
+      out.push({ name: isBench ? benchmarkName(id) : indexName(id), colorIndex: BENCH_SLOT[id] ?? 6, data: chain((r) => (isBench ? r.benchmarkReturns?.[id] : r.indexReturns?.[id])) });
+    }
     if (inflation && rows.some((r) => r.inflation !== undefined)) out.push({ name: t('perf.inflationLine', { index: indexName(inflation) }), colorIndex: 7, dashed: true, data: chain((r) => r.inflation) });
-    return out.slice(0, 8);
-  }, [rows, benches.join(), rateIdx.join(), inflation, t]); // eslint-disable-line react-hooks/exhaustive-deps
+    return out;
+  }, [rows, shown.join(), inflation, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ddSeries: LineSeries[] = useMemo(() => [{ name: t('perf.drawdown'), data: drawdowns(rows), area: true, tone: 'neg' }], [rows, t]);
   const pctFmt = useCallback((v: number, axis?: boolean) => formatPct(v, f.locale, { decimals: axis ? (v !== 0 && Math.abs(v) < 0.1 ? 1 : 0) : 2, signed: !axis }), [f.locale]);
@@ -182,7 +193,26 @@ export default function PerformancePage() {
       </div>
 
       <Card className="mt-3" title={t('perf.cumulative')} subtitle={t('perf.cumulativeSub')}>
-        {loading ? <Skeleton className="h-72" /> : cumSeries.length ? <LineChart series={cumSeries} valueFormat={pctFmt} ariaLabel={t('perf.cumulative')} height={300} scale={false} /> : <p className="text-muted text-sm text-center py-12">{t('common.noData')}</p>}
+        {available.some((id) => id !== home && id !== homeRate) && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs" data-testid="bench-chips">
+            <span className="text-muted">{t('perf.addIndex')}</span>
+            {available
+              .filter((id) => id !== home && id !== homeRate)
+              .map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="chip"
+                  aria-pressed={extra.includes(id)}
+                  onClick={() => setExtra((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))}
+                >
+                  <span className="size-2 rounded-full" style={{ background: `var(--series-${(BENCH_SLOT[id] ?? 6) + 1})` }} aria-hidden />
+                  {benches.includes(id) ? benchmarkName(id) : indexName(id)}
+                </button>
+              ))}
+          </div>
+        )}
+        {loading ? <Skeleton className="h-72" /> : cumSeries.length ? <LineChart series={cumSeries} valueFormat={pctFmt} ariaLabel={t('perf.cumulative')} height={300} scale={false} endLabels /> : <p className="text-muted text-sm text-center py-12">{t('common.noData')}</p>}
       </Card>
 
       {/* W51: side by side only where the periods table fits (≥ 1536 px). */}

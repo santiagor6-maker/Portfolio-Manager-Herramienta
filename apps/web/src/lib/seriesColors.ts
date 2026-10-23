@@ -23,21 +23,47 @@ export function preferredSlot(dim: string | undefined, key: string): number {
   return i >= 0 ? i : hash(`${dim ?? ''}:${key}`) % SLOTS;
 }
 
+/**
+ * W52: slot pairs that fail validate_palette.js --pairs all (light or dark: CVD ΔE < 8 or normal-vision
+ * ΔE < 15). No three-plus-one palette avoids them all, so a chart never puts two of them together while
+ * a conflict-free slot is free; the legend (label + %) is the secondary encoding for the rest.
+ */
+const CONFLICTS = new Set(['0-6', '1-3', '1-4', '1-5', '2-4', '2-5', '3-5']);
+const clash = (a: number, b: number) => CONFLICTS.has(a < b ? `${a}-${b}` : `${b}-${a}`);
+
 /** Palette index (0-based) per key for one chart: stable per entity, no two slices sharing a colour. */
 export function colorSlots(dim: string | undefined, keys: string[]): Map<string, number> {
   const out = new Map<string, number>();
-  const used = new Set<number>();
+  const used: number[] = [];
   // Keys with a fixed slot first, so a hashed key never takes COP's colour.
   const ordered = [...keys].sort((a, b) => Number(ORDER[dim ?? '']?.includes(b) ?? false) - Number(ORDER[dim ?? '']?.includes(a) ?? false));
+  const conflicts = (slot: number) => used.filter((u) => clash(u, slot)).length;
   for (const k of ordered) {
     if (k === '__other') {
       out.set(k, OTHER_SLOT);
       continue;
     }
-    let slot = preferredSlot(dim, k);
-    for (let n = 0; used.has(slot) && n < SLOTS; n++) slot = (slot + 1) % SLOTS;
-    used.add(slot);
+    const free = Array.from({ length: SLOTS }, (_, i) => (preferredSlot(dim, k) + i) % SLOTS).filter((s) => !used.includes(s));
+    // The preferred slot unless it clashes with one already drawn; then the free slot with fewest clashes.
+    const slot = free.reduce((best, s) => (conflicts(s) < conflicts(best) ? s : best), free[0]!);
+    used.push(slot);
     out.set(k, slot);
   }
   return out;
 }
+
+/**
+ * W52: comparison lines keep one colour per index, whatever else is drawn (slot 0 is the portfolio).
+ * The default combinations (portfolio + home index + home rate) have no CONFLICTS pair, i.e. they pass
+ * validate_palette.js --pairs all in light and dark: COP blue/orange/teal, BRL blue/magenta/amber,
+ * USD/EUR blue/green.
+ */
+export const BENCH_SLOT: Record<string, number> = {
+  'XBOG:ICOLCAP': 1,
+  IBR: 2,
+  CDI: 3,
+  SELIC: 3,
+  'INDEX:^BVSP': 4,
+  'INDEX:^GSPC': 5,
+  'ARCX:URTH': 5,
+};

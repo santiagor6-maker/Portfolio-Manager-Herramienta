@@ -60,3 +60,15 @@ describe('W47/D25: report amounts without the currency symbol', () => {
     expect(formatAmount(NaN, 'COP', 'es-CO')).toBe('—');
   });
 });
+
+describe('W52: colour slots avoid pairs that fail the palette validator', () => {
+  it('Brazil (teal) is not drawn next to green or magenta when a clean slot is free', async () => {
+    const { colorSlots, BENCH_SLOT } = await import('../lib/seriesColors');
+    const m = colorSlots('country', ['CO', 'US', 'BR', 'NL']);
+    expect([m.get('CO'), m.get('US'), m.get('BR')]).toEqual([0, 1, 2]);
+    expect([4, 5]).not.toContain(m.get('NL')); // 2-4 and 2-5 fail --pairs all
+    // Default comparison sets per currency are conflict-free.
+    expect([BENCH_SLOT['XBOG:ICOLCAP'], BENCH_SLOT.IBR]).toEqual([1, 2]);
+    expect([BENCH_SLOT['INDEX:^BVSP'], BENCH_SLOT.CDI]).toEqual([4, 3]);
+  });
+});

@@ -8,13 +8,14 @@ import * as echarts from 'echarts/core';
 import { BarChart, LineChart, PieChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { LabelLayout } from 'echarts/features';
 import type { EChartsOption } from 'echarts';
 
 // The package ships CJS (`lib`) with `exports.default`; unwrap it for every bundler/interop mode.
 const ReactEChartsCore = ((ReactEChartsCoreModule as unknown as { default?: typeof ReactEChartsCoreModule }).default ??
   ReactEChartsCoreModule) as typeof ReactEChartsCoreModule;
 
-echarts.use([LineChart, BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+echarts.use([LineChart, BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, LabelLayout]);
 
 export default function EChartsView({
   option,

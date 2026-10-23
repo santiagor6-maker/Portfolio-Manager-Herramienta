@@ -59,6 +59,8 @@ export function benchmarkName(id: string): string {
 
 /** W32: the benchmark that matches the reporting currency comes first (BRL → Ibovespa, COP → COLCAP). */
 export const HOME_BENCHMARK: Record<string, string> = { COP: 'XBOG:ICOLCAP', BRL: 'INDEX:^BVSP', USD: 'INDEX:^GSPC', EUR: 'ARCX:URTH' };
+/** The reference rate shown with each reporting currency (same first entry as RATE_INDICES_BY_CURRENCY). */
+export const HOME_RATE: Record<string, string> = { COP: 'IBR', BRL: 'CDI' };
 
 export function orderBenchmarks(list: string[], currency: string): string[] {
   const home = HOME_BENCHMARK[currency];

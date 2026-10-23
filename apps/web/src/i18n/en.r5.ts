@@ -83,7 +83,7 @@ export const enR5: typeof esR5 = {
   div: { byMonthSub: 'Selected year against the previous one (net; previous in grey)' },
   fx: { fromPrice: 'Price (open positions)', fromFx: 'Currency (open positions)', approxNote: 'monthly, without the daily cross term', cumulativeSplit: 'TWR since inception' },
   alerts: { thresholdPriceNoCcy: 'Price' },
-  perf: { groupReturn: 'Return', groupRisk: 'Risk' },
+  perf: { addIndex: 'Add index:', groupReturn: 'Return', groupRisk: 'Risk' },
   dashboard: { staleMarket_one: '{{count}} asset without a market price since {{date}} ({{symbols}}): its value and the following months do not reflect the market.', staleMarket_other: '{{count}} assets without a market price since {{date}} ({{symbols}}): their value and the following months do not reflect the market.', staleMarketNever_one: '{{count}} asset without any market price ({{symbols}}): valued at its purchase price.', staleMarketNever_other: '{{count}} assets without any market price ({{symbols}}): valued at their purchase price.' },
   table: { hidden: 'Columns hidden for lack of space: {{columns}}.', showAll: 'Show all', allShown: 'All columns shown (scroll the table).', fit: 'Fit to width' },
 };

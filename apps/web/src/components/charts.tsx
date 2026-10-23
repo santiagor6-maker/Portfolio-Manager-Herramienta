@@ -16,6 +16,10 @@ function hexA(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+function truncateLabel(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
 function axisCommon(t: ChartTokens) {
   return {
     axisLine: { lineStyle: { color: t.axis } },
@@ -291,6 +295,8 @@ export interface LineSeries {
   dashed?: boolean;
   /** Use the negative token (drawdown). */
   tone?: 'neg';
+  /** Line width (default 2); W52: the portfolio is drawn heavier than the indices. */
+  width?: number;
 }
 
 export function LineChart({
@@ -299,19 +305,22 @@ export function LineChart({
   valueFormat,
   ariaLabel,
   scale = true,
+  endLabels,
 }: {
   series: LineSeries[];
   height?: number;
   valueFormat: (v: number, axis?: boolean) => string;
   ariaLabel: string;
   scale?: boolean;
+  /** D19/W52: the series name at the end of each line (direct labels, legend kept for the swatches). */
+  endLabels?: boolean;
 }) {
   const f = useFmt();
   const { t } = useTranslation();
   const option = useCallback(
     (tk: ChartTokens): EChartsOption => ({
       ...baseOption(tk),
-      grid: { left: 8, right: 16, top: series.length > 1 ? 30 : 14, bottom: 4, containLabel: true },
+      grid: { left: 8, right: endLabels ? 104 : 16, top: series.length > 1 ? 30 : 14, bottom: 4, containLabel: true },
       legend:
         series.length > 1
           ? {
@@ -346,14 +355,18 @@ export function LineChart({
           showSymbol: false,
           symbolSize: 8,
           data: s.data,
-          lineStyle: { width: 2, color, type: s.dashed ? ('dotted' as const) : ('solid' as const) },
+          lineStyle: { width: s.width ?? 2, color, type: s.dashed ? ('dotted' as const) : ('solid' as const) },
           itemStyle: { color },
+          endLabel: endLabels
+            ? { show: true, formatter: (p: { seriesName?: string }) => truncateLabel((p.seriesName ?? '').replace(/\s*\(.*\)$/, ''), 14), color: tk.text2, fontSize: 11, distance: 6 }
+            : undefined,
+          labelLayout: endLabels ? { moveOverlap: 'shiftY' as const } : undefined,
           // D5: an area only over a zero baseline (drawdown); scaled axes keep plain lines.
           areaStyle: s.area && !scale ? { color: hexA(color, 0.14) } : undefined,
         };
       }),
     }),
-    [series, valueFormat, scale],
+    [series, valueFormat, scale, endLabels],
   );
   const lens = series.map((x) => x.data.length);
   const base = series[0]?.data ?? [];

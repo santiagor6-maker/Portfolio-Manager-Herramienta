@@ -83,7 +83,7 @@ export const ptR5: typeof esR5 = {
   div: { byMonthSub: 'Ano escolhido contra o anterior (líquido; o anterior em cinza)' },
   fx: { fromPrice: 'Preço (posições abertas)', fromFx: 'Câmbio (posições abertas)', approxNote: 'mensal, sem o termo cruzado diário', cumulativeSplit: 'TWR desde o início' },
   alerts: { thresholdPriceNoCcy: 'Preço' },
-  perf: { groupReturn: 'Rentabilidade', groupRisk: 'Risco' },
+  perf: { addIndex: 'Adicionar índice:', groupReturn: 'Rentabilidade', groupRisk: 'Risco' },
   dashboard: { staleMarket_one: '{{count}} ativo sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarket_other: '{{count}} ativos sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarketNever_one: '{{count}} ativo sem nenhuma cotação de mercado ({{symbols}}): avaliado pelo preço de compra.', staleMarketNever_other: '{{count}} ativos sem nenhuma cotação de mercado ({{symbols}}): avaliados pelo preço de compra.' },
   table: { hidden: 'Colunas ocultas por falta de espaço: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Todas as colunas visíveis (role a tabela).', fit: 'Ajustar à largura' },
 };
