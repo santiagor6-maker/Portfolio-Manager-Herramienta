@@ -9,7 +9,7 @@ import { useFmt } from '../store/app';
 import { db } from '../db/schema';
 import { FX_PAIRS } from '../lib/currencies';
 import { addDays } from '../lib/ids';
-import { formatFxRate, formatPct, formatRelative } from '../lib/format';
+import { formatFxRate, formatNumber, formatPct, formatRelative } from '../lib/format';
 import { useSliceLabel } from '../lib/labels';
 import { compound } from './Monthly';
 
@@ -76,8 +76,9 @@ export default function CurrenciesPage() {
   }, [market, earliest, period, asOf, base, quote]);
   const first = rateSeries[0]?.[1];
   const last = rateSeries[rateSeries.length - 1]?.[1];
-  const fxFmt = useCallback((v: number) => formatFxRate(v, f.locale), [f.locale]);
-  const chartSeries = useMemo(() => [{ name: `${base}/${quote}`, data: rateSeries, area: true }], [rateSeries, base, quote]);
+  // D16: whole numbers on the axis of large rates (3.870, not 3.870,00).
+  const fxFmt = useCallback((v: number, axis?: boolean) => (axis && v >= 100 ? formatNumber(v, f.locale, 0) : formatFxRate(v, f.locale)), [f.locale]);
+  const chartSeries = useMemo(() => [{ name: `${base}/${quote}`, data: rateSeries }], [rateSeries, base, quote]);
   const pctFmt = useCallback((v: number, axis?: boolean) => formatPct(v, f.locale, { decimals: axis ? 0 : 2, signed: !axis }), [f.locale]);
 
   const exposure = a?.allocations.currency ?? [];

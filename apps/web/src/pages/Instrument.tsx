@@ -48,7 +48,7 @@ export default function InstrumentPage() {
   const visible = points.filter(([d]) => d >= from);
   const ccy = inst?.currency ?? holding?.currency ?? 'USD';
   const priceFmt = useCallback((v: number) => formatPrice(v, ccy, f.locale), [ccy, f.locale]);
-  const chartSeries = useMemo(() => [{ name: inst?.symbol ?? instrumentId, data: visible, area: true }], [visible, inst, instrumentId]);
+  const chartSeries = useMemo(() => [{ name: inst?.symbol ?? instrumentId, data: visible }], [visible, inst, instrumentId]);
   const periodChange = visible.length > 1 ? visible[visible.length - 1]![1] / visible[0]![1] - 1 : undefined;
 
   if (!inst && !holding && !txs.length) {

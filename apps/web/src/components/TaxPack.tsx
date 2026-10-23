@@ -14,7 +14,8 @@ import { downloadBlob, downloadText } from '../lib/export';
 import { db } from '../db/schema';
 import { getMeta, setMeta } from '../db/repo';
 import type { TransitResolution } from '../services/tax';
-import { cleanTaxMessage, localizeNumbers } from '../lib/taxText';
+import { cleanTaxMessage, localizeDates, localizeNumbers } from '../lib/taxText';
+import { currencyDecimals } from '../lib/currencies';
 
 type MoneyFn = (v: number | undefined, ccy: string) => string;
 
@@ -48,7 +49,7 @@ function cell(v: unknown, locale: string): string {
   if (v === null || v === undefined || v === '') return '';
   if (typeof v === 'number') return new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(v) < 10 && !Number.isInteger(v) ? 6 : 2 }).format(v);
   if (typeof v === 'boolean') return v ? '✓' : '—';
-  return cleanTaxMessage(String(v));
+  return localizeDates(cleanTaxMessage(String(v)), locale);
 }
 
 /** Every section of the package's TaxDocument: key figures and tables (collapsible). */
@@ -79,7 +80,7 @@ export function TaxDocumentView({ doc, skip = [] }: { doc: TaxDocument; skip?: s
                       {typeof fg.value === 'number'
                         ? f.privacy
                           ? '•••'
-                          : new Intl.NumberFormat(f.locale, fg.currency ? { style: 'currency', currency: fg.currency, maximumFractionDigits: 2 } : { maximumFractionDigits: 2 }).format(fg.value)
+                          : new Intl.NumberFormat(f.locale, fg.currency ? { style: 'currency', currency: fg.currency, maximumFractionDigits: currencyDecimals(fg.currency) } : { maximumFractionDigits: 2 }).format(fg.value)
                         : fg.value}
                     </dd>
                   </div>

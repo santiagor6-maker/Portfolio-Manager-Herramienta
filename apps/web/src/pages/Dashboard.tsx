@@ -241,7 +241,7 @@ export default function DashboardPage() {
                       to={`/posiciones/${encodeURIComponent(m.instrumentId)}`}
                       className="flex items-center gap-3 py-2 px-1 rounded-md hover:bg-surface-2"
                     >
-                      <span className="w-[86px] font-semibold text-[13px] truncate">{l.symbol}</span>
+                      <span className="min-w-[86px] max-w-[120px] font-semibold text-[13px] truncate" title={l.symbol}>{l.symbol}</span>
                       <span className="flex-1 text-xs text-muted truncate">{l.name}</span>
                       {moversMixed && <span className="text-[11px] text-muted num whitespace-nowrap" data-testid="mover-date">{formatDate(m.date, f.locale, 'short')}</span>}
                       <Delta pct={m.changePct} size="sm" className="w-[74px] justify-end" />
@@ -341,7 +341,6 @@ function FreshnessCard() {
   const { t } = useTranslation();
   const market = useApp((s) => s.market);
   const f = useFmt();
-  const { analysis: a } = useAnalysis();
   const sources = Object.entries(market.sources);
   const instruments = useInstrumentMap();
   // Market-data R5: series where the server's snapshot covers only part of the range.
@@ -373,11 +372,7 @@ function FreshnessCard() {
             {t('md.partialList', { symbols: partial.join(', ') })}
           </li>
         )}
-        {a && (
-          <li className="text-xs text-muted pt-1 border-t border-line">
-            {t('dashboard.computeTime', { ms: a.computeMs })}
-          </li>
-        )}
+
       </ul>
     </Card>
   );

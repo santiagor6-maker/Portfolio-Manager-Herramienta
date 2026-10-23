@@ -168,7 +168,8 @@ describe('W44: DARF amount follows the payment date', () => {
 
 describe('W45: tax alerts', () => {
   it('formats plain decimals for the locale and leaves thousands groups, CNPJs and dates alone', () => {
-    expect(localizeNumbers('0.05 BTC-USD saíram de exchange em 2025-03-01', 'pt-BR')).toBe('0,05 BTC-USD saíram de exchange em 2025-03-01');
+    expect(localizeNumbers('0.05 BTC-USD saíram de exchange em 2025-03-01', 'pt-BR')).toBe('0,05 BTC-USD saíram de exchange em 01/03/2025');
+    expect(localizeNumbers('retención registrada 250976 COP al 2025-12-31', 'es-CO')).toBe('retención registrada 250.976 COP al 31/12/2025');
     expect(localizeNumbers('Lei 14.754/2023, IN 1.888 e R$ 1.500,00; CNPJ 33.000.167/0001-01', 'pt-BR')).toBe('Lei 14.754/2023, IN 1.888 e R$ 1.500,00; CNPJ 33.000.167/0001-01');
     expect(localizeNumbers('1.25 units', 'en-US')).toBe('1.25 units');
   });

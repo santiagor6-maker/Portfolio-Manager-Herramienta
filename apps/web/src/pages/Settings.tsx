@@ -135,6 +135,7 @@ function Preferences() {
 }
 
 function DataSource() {
+  const computeMs = useApp((st) => st.analysis?.computeMs);
   const { t } = useTranslation();
   const s = useApp((st) => st.settings);
   const set = useApp((st) => st.setSetting);
@@ -154,6 +155,8 @@ function DataSource() {
   return (
     <Card title={t('settings.dataSource')} subtitle={t('settings.dataSourceSub')}>
       <div className="flex flex-col gap-3">
+        {/* D22: engine timing lives here (diagnostics), not on the Resumen. */}
+        {computeMs !== undefined && <p className="text-xs text-muted">{t('dashboard.computeTime', { ms: computeMs })}</p>}
         <Field label={t('settings.serverUrl')} htmlFor="s-url" hint={t('settings.serverUrlHint')}>
           <div className="flex gap-2">
             <input id="s-url" className="input" placeholder="http://localhost:8787" value={url} onChange={(e) => setUrl(e.target.value)} />

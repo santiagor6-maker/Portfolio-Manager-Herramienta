@@ -30,10 +30,26 @@ export function cleanTaxMessage(message: string): string {
  * exactly three digits is treated as a decimal.
  */
 export function localizeNumbers(message: string, locale: string): string {
-  return message.replace(/(?<![\d.,/:-])(\d+)\.(\d+)(?![\d.,/])/g, (all, int: string, dec: string) => {
-    if (int !== '0' && dec.length === 3) return all;
-    return new Intl.NumberFormat(locale, { minimumFractionDigits: dec.length, maximumFractionDigits: dec.length }).format(Number(`${int}.${dec}`));
-  });
+  return localizeDates(
+    message
+      .replace(/(?<![\d.,/:-])(\d+)\.(\d+)(?![\d.,/])/g, (all, int: string, dec: string) => {
+        if (int !== '0' && dec.length === 3) return all;
+        return new Intl.NumberFormat(locale, { minimumFractionDigits: dec.length, maximumFractionDigits: dec.length }).format(Number(`${int}.${dec}`));
+      })
+      // D16: plain amounts ("250976 COP") get thousands separators; ISO dates the user's format.
+      .replace(/(?<![\d.,/:-])(\d{5,})(?= [A-Z]{3}\b)/g, (n) => new Intl.NumberFormat(locale).format(Number(n))),
+    locale,
+  );
+}
+
+const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+function localDate(y: string, m: string, d: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(+y, +m - 1, +d)));
+}
+
+/** D16: ISO dates inside tax tables in the user's format (other text untouched). */
+export function localizeDates(text: string, locale: string): string {
+  return text.replace(ISO_DATE, (_all, y: string, m: string, d: string) => localDate(y, m, d, locale));
 }
 
 /** Notices that say the same thing every year (shown once until acknowledged). */

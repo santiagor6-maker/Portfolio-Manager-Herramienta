@@ -49,11 +49,12 @@ export function ValueChart({ data, height = 300, inflationLabel }: { data: Serie
         legend: {
           top: 0,
           right: 0,
-          itemWidth: 14,
+          itemWidth: 16,
           itemHeight: 3,
           icon: 'rect',
           textStyle: { color: tk.text2, fontSize: 12 },
-          data: [t('chart.value'), t('chart.invested'), ...(hasReal ? [realName] : [])],
+          // D19: dotted swatch for the dotted inflation line.
+          data: [t('chart.value'), t('chart.invested'), ...(hasReal ? [{ name: realName, icon: 'path://M0,0h3v2H0zM5,0h3v2H5zM10,0h3v2h-3z' }] : [])],
         },
         tooltip: {
           ...(baseOption(tk).tooltip as object),
@@ -311,13 +312,22 @@ export function LineChart({
   scale?: boolean;
 }) {
   const f = useFmt();
+  const { t } = useTranslation();
   const option = useCallback(
     (tk: ChartTokens): EChartsOption => ({
       ...baseOption(tk),
       grid: { left: 8, right: 16, top: series.length > 1 ? 30 : 14, bottom: 4, containLabel: true },
       legend:
         series.length > 1
-          ? { top: 0, right: 0, itemWidth: 14, itemHeight: 3, icon: 'rect', textStyle: { color: tk.text2, fontSize: 12 } }
+          ? {
+              top: 0,
+              right: 0,
+              itemWidth: 16,
+              itemHeight: 3,
+              textStyle: { color: tk.text2, fontSize: 12 },
+              // D19: the legend swatch draws the line as plotted (dotted references look dotted).
+              data: series.map((s) => ({ name: s.name, icon: s.dashed ? 'path://M0,0h3v2H0zM5,0h3v2H5zM10,0h3v2h-3z' : 'rect' })),
+            }
           : undefined,
       tooltip: {
         ...(baseOption(tk).tooltip as object),
@@ -350,15 +360,15 @@ export function LineChart({
     }),
     [series, valueFormat, scale],
   );
-  void f;
   const lens = series.map((x) => x.data.length);
   const base = series[0]?.data ?? [];
+  // D16: dates in the user's format and a named first column in "Ver datos".
   const table = {
-    headers: ['', ...series.map((x) => x.name)],
-    rows: sample(base.map((_, i) => i), 24).map((i) => [base[i]![0], ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
+    headers: [t('tx.date'), ...series.map((x) => x.name)],
+    rows: sample(base.map((_, i) => i), 24).map((i) => [formatDate(base[i]![0], f.locale, 'short'), ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
   };
   const lastV = base[base.length - 1];
-  const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${lastV[0]})` : undefined;
+  const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${formatDate(lastV[0], f.locale)})` : undefined;
   return <Chart option={option} height={height} ariaLabel={ariaLabel} summary={summary} data={table} />;
 }
 

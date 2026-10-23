@@ -101,7 +101,7 @@ export default function AlertsPage() {
                 <Field label={t('tx.instrument')} htmlFor="al-inst">
                   <InstrumentPicker inputId="al-inst" value={inst} onChange={setInst} onCreateManual={() => setError(t('watch.noManual'))} />
                 </Field>
-                <Field label={kind === 'dayMove' ? t('alerts.thresholdPct') : t('alerts.thresholdPrice', { currency: inst?.currency ?? '' })} htmlFor="al-th">
+                <Field label={kind === 'dayMove' ? t('alerts.thresholdPct') : (inst?.currency ? t('alerts.thresholdPrice', { currency: inst.currency }) : t('alerts.thresholdPriceNoCcy'))} htmlFor="al-th">
                   <input id="al-th" className="input num" inputMode="decimal" value={threshold} onChange={(e) => setThreshold(e.target.value)} data-testid="alert-threshold" />
                 </Field>
               </>
