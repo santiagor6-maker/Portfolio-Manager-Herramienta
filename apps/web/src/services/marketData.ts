@@ -163,6 +163,17 @@ export function refreshMarketData(opts: { force?: boolean; fx?: CurrencyCode[] }
 }
 
 const fxInflight = new Map<string, Promise<boolean>>();
+/** Downloads in flight per currency: overlapping fetches never clear each other's pending state. */
+const fxRunning = new Map<string, number>();
+
+function trackFx(currencies: string[], delta: 1 | -1): void {
+  for (const c of currencies) {
+    const n = (fxRunning.get(c) ?? 0) + delta;
+    if (n > 0) fxRunning.set(c, n);
+    else fxRunning.delete(c);
+  }
+  useApp.getState().setMarket({ fxPending: [...fxRunning.keys()].sort() });
+}
 
 /** First transaction date of the real portfolios (all portfolios when only the sample exists). */
 async function earliestTxDate(): Promise<string | undefined> {
@@ -177,7 +188,7 @@ async function earliestTxDate(): Promise<string | undefined> {
 /**
  * W40: downloads USD/<c> for each currency (USD itself needs none) from the first transaction, or
  * from the last cached point when the cached real series already covers the history. The store's
- * `fxPending` drives the "Convirtiendo a BRL…" state; `fxFailed` the "no rate" warning.
+ * `fxPending`/`fxFetchedAt` drive the "Convirtiendo a BRL…" state; `fxFailed` the "no rate" warning.
  */
 export function fetchFx(currencies: CurrencyCode[]): Promise<boolean> {
   const wanted = [...new Set(currencies)].filter((c) => c && c !== 'USD').sort();
@@ -186,8 +197,8 @@ export function fetchFx(currencies: CurrencyCode[]): Promise<boolean> {
   const running = fxInflight.get(key);
   if (running) return running;
   const { setMarket } = useApp.getState();
-  const pending = () => useApp.getState().market.fxPending;
-  setMarket({ fxPending: [...new Set([...pending(), ...wanted])], fxFailed: useApp.getState().market.fxFailed.filter((c) => !wanted.includes(c)) });
+  setMarket({ fxFailed: useApp.getState().market.fxFailed.filter((c) => !wanted.includes(c)) });
+  trackFx(wanted, 1);
   const job = (async () => {
     const today = todayIso();
     const first = (await earliestTxDate()) ?? addDays(today, -400);
@@ -209,12 +220,14 @@ export function fetchFx(currencies: CurrencyCode[]): Promise<boolean> {
       failed.push(...wanted);
     }
     const now = useApp.getState().market;
-    setMarket({
-      fxPending: now.fxPending.filter((c) => !wanted.includes(c)),
-      fxFailed: [...new Set([...now.fxFailed, ...failed])],
-    });
+    const fetchedAt = { ...now.fxFetchedAt };
+    for (const c of wanted) if (!failed.includes(c)) fetchedAt[c] = Date.now();
+    setMarket({ fxFailed: [...new Set([...now.fxFailed, ...failed])], fxFetchedAt: fetchedAt });
     return failed.length === 0;
-  })().finally(() => fxInflight.delete(key));
+  })().finally(() => {
+    fxInflight.delete(key);
+    trackFx(wanted, -1);
+  });
   fxInflight.set(key, job);
   return job;
 }

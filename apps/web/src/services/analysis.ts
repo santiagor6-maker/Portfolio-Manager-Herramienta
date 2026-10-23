@@ -35,7 +35,7 @@ import { addDays, previousBusinessDay } from '../lib/ids';
 
 export { previousBusinessDay };
 import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
-import { blankUnconvertible, missingFxCurrencies } from './fxCoverage';
+import { blankUnconvertible, missingFxCurrencies, scopeBases } from './fxCoverage';
 
 export interface Dataset {
   portfolios: (Portfolio & { isDemo?: boolean })[];
@@ -291,8 +291,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
   if (!txs.length) return finish(out, t0);
   const firstDate = txs.reduce((min, t) => (t.date < min ? t.date : min), txs[0]!.date);
   out.firstDate = firstDate;
-  const scopeBases = ds.portfolios.filter((p) => ds.selectedPortfolioId === 'all' || p.id === ds.selectedPortfolioId).map((p) => p.baseCurrency);
-  out.fxMissing = attempt('fxCoverage', () => missingFxCurrencies(ds.reportingCurrency, txs, ds.instruments, market, ds.asOf, scopeBases)) ?? [];
+  out.fxMissing = attempt('fxCoverage', () => missingFxCurrencies(ds.reportingCurrency, txs, ds.instruments, market, ds.asOf, scopeBases(ds))) ?? [];
 
   // One explicit engine per input change: every call below shares the ledger pass and its caches
   // (≈0.5 ms per call vs ≈10 ms for the stateless API on 30k transactions).

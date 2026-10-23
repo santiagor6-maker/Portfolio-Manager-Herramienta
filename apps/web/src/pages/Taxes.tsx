@@ -149,6 +149,8 @@ function MaturedCdts({ portfolioId, year, version }: { portfolioId: string; year
     setBusy(`${r.instrumentId}|${r.date}`);
     try {
       for (const x of redemptionTransactions(r, t('tax.co.redemptionNote'))) await saveTransaction(x);
+      // Gone at once: a second click must not record it twice while the reports recompute.
+      setList((l) => l.filter((x) => x !== r));
     } finally {
       setBusy(undefined);
     }

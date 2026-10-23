@@ -5,7 +5,8 @@
  */
 import { db } from '../db/schema';
 
-const CLASS_TOKENS = /\b(ON|PN|PNA|PNB|PNC|UNT|UNIT|CI|DRN|DR[123]|N[12]|NM|MA|MB|EJ|ED|EDJ|ES|ER|EB|EX|ATZ|INT)\b/;
+// B3 share-class / listing-segment codes as printed on notes (no English words such as INT or CI).
+const CLASS_TOKENS = /\b(ON|PN|PNA|PNB|PNC|UNT|DRN|DR[123]|N[12]|NM|EJ|ED|EDJ|ATZ)\b/;
 
 export function isNoteName(name: string | undefined, symbol: string): boolean {
   const n = (name ?? '').trim();
@@ -16,9 +17,12 @@ export function isNoteName(name: string | undefined, symbol: string): boolean {
 
 /**
  * W43: instruments saved before names were resolved keep the note's text ("SID NACIONAL ON"). Renames
- * them from the offline catalog once at startup (no network); the user's own names are never touched.
+ * them from the offline catalog once (first startup after the upgrade, no network).
  */
 export async function repairNoteNames(): Promise<number> {
+  // Once per database: a name the user types later (even "PETROBRAS PN") is never reverted.
+  if ((await db.meta.get('noteNamesRepaired'))?.value) return 0;
+  await db.meta.put({ key: 'noteNamesRepaired', value: true });
   const { CATALOG } = await import('../lib/catalog');
   const byId = new Map(CATALOG.map((c) => [c.id, c]));
   const fixed = (await db.instruments.toArray()).flatMap((i) => {

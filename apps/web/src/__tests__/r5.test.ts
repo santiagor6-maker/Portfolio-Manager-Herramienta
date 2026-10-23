@@ -46,9 +46,9 @@ describe('W40: reporting currency without its FX series', () => {
     expect(missingFxCurrencies('BRL', dataset('BRL', []).transactions, [ISA], m, '2024-07-01', ['COP'])).toEqual(['COP']);
     expect(missingFxCurrencies('USD', dataset('USD', []).transactions, [ISA], m, '2024-07-01', ['COP'])).toEqual([]);
     expect(missingFxCurrencies('COP', dataset('COP', []).transactions, [ISA], m, '2024-07-01', ['COP'])).toEqual([]);
-    // A series that starts after the first use is not enough (early months would be valued at 0).
+    // A series that starts after the first trade still converts (the engine uses the nearest rate).
     const late = core.createMarketData({ prices: [], fx: [USDCOP, { ...USDBRL, points: [{ date: '2024-05-01', rate: 5 }] }] });
-    expect(missingFxCurrencies('BRL', dataset('BRL', []).transactions, [ISA], late, '2024-07-01', ['COP'])).toEqual(['COP']);
+    expect(missingFxCurrencies('BRL', dataset('BRL', []).transactions, [ISA], late, '2024-07-01', ['COP'])).toEqual([]);
   });
 
   it('never shows zeros: KPIs, series and benchmark differences are "—", not R$ 0,00', () => {
@@ -66,6 +66,12 @@ describe('W40: reporting currency without its FX series', () => {
     expect(a.valuation!.holdings.every((h) => Number.isNaN(h.marketValueBase!))).toBe(true);
   });
 
+  it('a series that starts after the first trade still converts the early months (nearest rate)', () => {
+    const a = computeAnalysis(dataset('BRL', [USDCOP, { ...USDBRL, points: [{ date: '2024-05-01', rate: 5 }] }]));
+    expect(a.fxMissing).toEqual([]);
+    expect(a.monthly[0]!.endValueBase).toBeGreaterThan(0);
+  });
+
   it('converts normally once the pair is cached', () => {
     const a = computeAnalysis(dataset('BRL', [USDCOP, USDBRL]));
     expect(a.fxMissing).toEqual([]);
@@ -79,6 +85,9 @@ describe('W40: reporting currency without its FX series', () => {
     expect(conversionState({ baseCurrency: 'BRL', fxMissing: ['COP'] }, 'BRL', ['BRL'])).toEqual({ target: 'BRL', pending: true, missing: ['COP'] });
     expect(conversionState({ baseCurrency: 'BRL', fxMissing: ['COP'] }, 'BRL', [])).toEqual({ target: 'BRL', pending: false, missing: ['COP'] });
     expect(conversionState({ baseCurrency: 'BRL', fxMissing: [] }, 'BRL', []).pending).toBe(false);
+    // Downloaded after this analysis was computed: still converting, no "no rate" flash.
+    expect(conversionState({ baseCurrency: 'BRL', fxMissing: ['COP'] }, 'BRL', [], { COP: 2000 }, 1000).pending).toBe(true);
+    expect(conversionState({ baseCurrency: 'BRL', fxMissing: ['COP'] }, 'BRL', [], { COP: 2000 }, 3000).pending).toBe(false);
   });
 });
 
@@ -187,9 +196,9 @@ describe('W45: tax alerts', () => {
 });
 
 describe('W46: shorter share links', () => {
-  const html = `<div class="rp" data-testid="report">\n  <section>\n    <h2>Resumen</h2>\n  </section>\n  <!-- x -->\n  <td style="">1</td>\n</div>`;
-  it('compacts the report HTML', () => {
-    expect(compactReportHtml(html)).toBe('<div class="rp"><section><h2>Resumen</h2></section><td>1</td></div>');
+  const html = `<div class="rp" data-testid="report">\n  <section>\n    <h2>Resumen</h2>\n  </section>\n  <!-- x -->\n  <td style=""><b>PETR4</b> <span>Petrobras</span></td>\n</div>`;
+  it('compacts the report HTML without gluing words together', () => {
+    expect(compactReportHtml(html)).toBe('<div class="rp"> <section> <h2>Resumen</h2> </section> <td><b>PETR4</b> <span>Petrobras</span></td> </div>');
   });
   it('encrypts the compressed bytes directly (e2) and still opens old e1 links', async () => {
     const p = { v: 1 as const, t: 'Informe', h: '<table><tr><td>$ 1.234</td></tr></table>'.repeat(200), g: '2026-10-13T12:00:00Z', lang: 'es' };

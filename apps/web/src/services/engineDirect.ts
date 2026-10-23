@@ -7,7 +7,7 @@ import type { Holding, ISODate, PerformanceSummary } from '@pm/core';
 import { useApp } from '../store/app';
 import { readRawData, toDataset } from '../hooks/useData';
 import { buildEngineInput, createMarket, type Dataset } from './analysis';
-import { missingFxCurrencies } from './fxCoverage';
+import { missingFxCurrencies, scopeBases } from './fxCoverage';
 
 export async function loadDataset(): Promise<Dataset> {
   return toDataset(await readRawData(), useApp.getState().settings);
@@ -30,8 +30,7 @@ export async function customSummary(from: ISODate, to: ISODate): Promise<Perform
   const input = buildEngineInput(ds, market);
   if (!input || !input.transactions.length) return undefined;
   // W40: no summary converted with a missing rate (the engine would report zeros).
-  const bases = ds.portfolios.filter((p) => ds.selectedPortfolioId === 'all' || p.id === ds.selectedPortfolioId).map((p) => p.baseCurrency);
-  if (missingFxCurrencies(ds.reportingCurrency, input.transactions, ds.instruments, market, ds.asOf, bases).length) return undefined;
+  if (missingFxCurrencies(ds.reportingCurrency, input.transactions, ds.instruments, market, ds.asOf, scopeBases(ds)).length) return undefined;
   try {
     return core.performanceSummary(input, 'CUSTOM', to, { from, to });
   } catch {

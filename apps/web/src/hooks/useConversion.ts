@@ -18,18 +18,23 @@ export function conversionState(
   analysis: { baseCurrency: string; fxMissing: string[] } | undefined,
   target: string,
   fxPending: string[],
+  fxFetchedAt: Record<string, number> = {},
+  analysisAt = 0,
 ): Conversion {
   const switching = !!analysis && analysis.baseCurrency !== target;
   const missing = analysis && !switching ? analysis.fxMissing : [];
-  const fetching = missing.some((c) => fxPending.includes(c)) || fxPending.includes(target);
+  // A rate that arrived after this analysis was computed is still being applied (no "no rate" flash).
+  const fetching = missing.some((c) => fxPending.includes(c) || (fxFetchedAt[c] ?? 0) > analysisAt) || fxPending.includes(target);
   return { target, pending: switching || (missing.length > 0 && fetching), missing: switching ? [] : missing };
 }
 
 export function useConversion(): Conversion {
   const analysis = useApp((s) => s.analysis);
+  const analysisAt = useApp((s) => s.analysisAt);
   const target = useApp((s) => s.settings.reportingCurrency);
   const fxPending = useApp((s) => s.market.fxPending);
-  return conversionState(analysis, target, fxPending);
+  const fxFetchedAt = useApp((s) => s.market.fxFetchedAt);
+  return conversionState(analysis, target, fxPending, fxFetchedAt, analysisAt);
 }
 
 const attempted = new Set<string>();

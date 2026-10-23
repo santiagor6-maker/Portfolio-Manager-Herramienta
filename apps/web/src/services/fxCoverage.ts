@@ -3,8 +3,7 @@
  * cannot be converted to the reporting currency (the pair was never downloaded), the engine values it
  * at 0, which used to show "R$ 0,00" everywhere and fake benchmark differences against those zeros.
  *
- * `missingFxCurrencies` finds those currencies (checked on the first day each one is used and on the
- * valuation date); `blankUnconvertible` turns every reporting-currency figure into NaN so formatters
+ * `missingFxCurrencies` finds those currencies (no route at the valuation date); `blankUnconvertible` turns every reporting-currency figure into NaN so formatters
  * print "—" and derived differences (vs. benchmark, alpha…) are "—" too. Index and benchmark returns
  * are kept: they do not depend on the missing rate.
  */
@@ -19,26 +18,24 @@ export function missingFxCurrencies(
   portfolioBases: CurrencyCode[] = [],
 ): CurrencyCode[] {
   const byId = new Map(instruments.map((i) => [i.id, i]));
-  const firstUse = new Map<CurrencyCode, ISODate>();
-  const use = (c: CurrencyCode | undefined, d: ISODate) => {
-    if (!c || c === base) return;
-    const prev = firstUse.get(c);
-    if (!prev || d < prev) firstUse.set(c, d);
-  };
-  let first: ISODate | undefined;
+  const used = new Set<CurrencyCode>(portfolioBases);
   for (const t of txs) {
-    if (!first || t.date < first) first = t.date;
-    use(t.currency, t.date);
-    use(t.toCurrency, t.date);
-    if (t.instrumentId) use(byId.get(t.instrumentId)?.currency, t.date);
+    used.add(t.currency);
+    if (t.toCurrency) used.add(t.toCurrency);
+    if (t.instrumentId) {
+      const c = byId.get(t.instrumentId)?.currency;
+      if (c) used.add(c);
+    }
   }
-  if (first) for (const c of portfolioBases) use(c, first);
-  const missing: CurrencyCode[] = [];
-  for (const [c, d] of firstUse) {
-    const at = d > asOf ? asOf : d;
-    if (!ok(market.fx(c, base, asOf)) || !ok(market.fx(c, base, at))) missing.push(c);
-  }
-  return missing.sort();
+  used.delete(base);
+  // Checked on the valuation date only: for older dates the engine falls back to the nearest rate,
+  // so a series that starts after the first trade still converts (W40 review).
+  return [...used].filter((c) => c && !ok(market.fx(c, base, asOf))).sort();
+}
+
+/** Base currencies of the portfolios in the selected scope ('all' = every portfolio). */
+export function scopeBases(ds: { portfolios: { id: string; baseCurrency: CurrencyCode }[]; selectedPortfolioId: string }): CurrencyCode[] {
+  return ds.portfolios.filter((p) => ds.selectedPortfolioId === 'all' || p.id === ds.selectedPortfolioId).map((p) => p.baseCurrency);
 }
 
 function ok(rate: number | undefined): boolean {
@@ -53,7 +50,7 @@ function nanBase<T extends object>(o: T): T {
 }
 
 /** Return fields that are computed from reporting-currency values. */
-const RETURN_KEYS = ['twr', 'cumulativeTwr', 'localReturn', 'fxReturn', 'realTwr', 'cumulativeRealTwr', 'weight', 'changeBase'] as const;
+const RETURN_KEYS = ['twr', 'cumulativeTwr', 'localReturn', 'fxReturn', 'realTwr', 'cumulativeRealTwr', 'weight'] as const;
 
 function nanReturns<T extends object>(o: T): T {
   const out = nanBase(o) as Record<string, unknown>;

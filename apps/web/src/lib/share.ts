@@ -4,7 +4,7 @@
  * server, so the data only lives in the link. With a passphrase the payload is AES-GCM encrypted
  * (PBKDF2, see lib/crypto) and the link alone reveals nothing (`#e2.…`).
  *
- * W46: the HTML is compacted before compressing (no test ids, no whitespace between tags) and the
+ * W46: the HTML is compacted before compressing (no test ids, collapsed whitespace) and the
  * encrypted form encrypts the compressed bytes directly (`e2`: salt|iv|ciphertext in one base64url
  * string) instead of base64 inside JSON inside base64 (`e1`, still readable).
  */
@@ -37,13 +37,14 @@ async function pipe(data: Uint8Array, stream: CompressionStream | DecompressionS
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
-/** Drops what the viewer does not need from the report HTML (test ids, inter-tag whitespace). */
+/** Drops what the viewer does not need from the report HTML (test ids, comments, repeated whitespace). */
 export function compactReportHtml(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/\sdata-testid="[^"]*"/g, '')
     .replace(/\sstyle=""/g, '')
-    .replace(/>\s+</g, '><')
+    // Collapse (never drop) whitespace between tags: "<b>PETR4</b> <span>Petrobras</span>" keeps its space.
+    .replace(/\s+/g, ' ')
     .trim();
 }
 

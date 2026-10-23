@@ -11,7 +11,9 @@ export const B3_CNPJ_EXTRA: Record<string, string> = {
   BBSE: '17.344.597/0001-94', // BB Seguridade
   BPAC: '30.306.294/0001-45', // BTG Pactual
   BRAP: '03.847.461/0001-92', // Bradespar
-  BRFS: '01.838.723/0001-27', // BRF
+  BRFS: '01.838.723/0001-27', // BRF (incorporada pela MBRF em 2025)
+  MRFG: '03.853.896/0001-40', // Marfrig
+  MBRF: '03.853.896/0001-40', // MBRF (antes Marfrig)
   CCRO: '02.846.056/0001-97', // CCR (Motiva)
   MOTV: '02.846.056/0001-97', // Motiva (antes CCR)
   CMIG: '17.155.730/0001-64', // Cemig
@@ -25,6 +27,7 @@ export const B3_CNPJ_EXTRA: Record<string, string> = {
   CYRE: '73.178.600/0001-18', // Cyrela
   EGIE: '02.474.103/0001-19', // Engie Brasil
   ELET: '00.001.180/0001-26', // Eletrobras
+  AXIA: '00.001.180/0001-26', // AXIA Energia (antes Eletrobras)
   EMBR: '07.689.002/0001-89', // Embraer
   EMBJ: '07.689.002/0001-89', // Embraer (código novo)
   ENEV: '04.423.567/0001-21', // Eneva

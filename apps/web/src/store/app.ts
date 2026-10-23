@@ -23,12 +23,16 @@ export interface MarketState {
   fxPending: string[];
   /** W40: currencies whose rate the server could not provide (last attempt). */
   fxFailed: string[];
+  /** W40: when each currency's rate was last downloaded (until the analysis catches up it is still "converting"). */
+  fxFetchedAt: Record<string, number>;
 }
 
 interface AppState {
   ready: boolean;
   settings: AppSettings;
   analysis?: Analysis;
+  /** When the current analysis arrived (ms). */
+  analysisAt: number;
   computing: boolean;
   market: MarketState;
   onboardingOpen: boolean;
@@ -52,8 +56,9 @@ const changedBeforeReady = new Set<keyof AppSettings>();
 export const useApp = create<AppState>((set) => ({
   ready: false,
   settings: DEFAULT_SETTINGS,
+  analysisAt: 0,
   computing: false,
-  market: { status: 'idle', sources: {}, failedSymbols: [], fxPending: [], fxFailed: [] },
+  market: { status: 'idle', sources: {}, failedSymbols: [], fxPending: [], fxFailed: [], fxFetchedAt: {} },
   onboardingOpen: false,
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   ibkrInbox: {},
@@ -81,7 +86,7 @@ export const useApp = create<AppState>((set) => ({
       }
     }
   },
-  setAnalysis: (analysis) => set({ analysis, computing: false }),
+  setAnalysis: (analysis) => set({ analysis, analysisAt: Date.now(), computing: false }),
   setComputing: (computing) => set({ computing }),
   setMarket: (patch) => set((s) => ({ market: { ...s.market, ...patch } })),
 }));

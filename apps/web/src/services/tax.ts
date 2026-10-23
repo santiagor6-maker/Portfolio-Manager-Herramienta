@@ -111,6 +111,9 @@ export interface PendingRedemption {
 /** Engine estimates of maturities in `portfolioId` ('all' → every real portfolio) up to `until`. */
 export async function pendingRedemptions(portfolioId: string, until: string): Promise<PendingRedemption[]> {
   const ds = await loadDataset();
+  // Cheap exit (no engine pass) unless a transaction references an accrual asset that matured by then.
+  const matured = new Set(ds.instruments.filter((i) => i.accrual?.maturity && i.accrual.maturity <= until).map((i) => i.id));
+  if (!ds.transactions.some((t) => t.instrumentId && matured.has(t.instrumentId))) return [];
   const pids = ds.portfolios.filter((p) => !p.isDemo && (portfolioId === 'all' || p.id === portfolioId)).map((p) => p.id);
   const out: PendingRedemption[] = [];
   for (const pid of pids) {
