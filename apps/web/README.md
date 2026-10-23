@@ -168,7 +168,14 @@ src/
   W46 (enlace `e2` y cambio de `#` sin recargar), W47 (tabla del informe sin desbordar), W48 (marcas en
   el informe y en el enlace), D1 (KPI sin cortar a 1280 px) y D3 (encabezado fijo en Mensual).
 
-Totales: 105 pruebas unitarias (16 archivos) y 47 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/r6.test.ts` — ronda 6: cobertura de precios (W49), textos fiscales y de importación
+  (W45/W53), notas de eventos corporativos, ejes de tiempo y de importes, decimales de precio (D16).
+- `e2e/regression-r5.spec.ts` (ronda 6) — D1 contando las líneas reales de cada KPI a 1280/1366/1440/390 px
+  en es y pt con COP/BRL/USD, W49 (actualización interrumpida → aviso y reintento al abrir), W50 (`/mensual`
+  en frío con BRL → Ibovespa), W51 (tablas que caben a 1280/1440 px en es-COP y pt-BRL, columnas ocultas
+  con aviso) y W54 (teléfono).
+
+Totales: 115 pruebas unitarias (17 archivos) y 55 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
@@ -378,10 +385,36 @@ Revisión: `reviews/web-r3.md`.
   que se parten y contenedor con desplazamiento propio.
 - **W48:** † precio atípico y ‡ aporte implícito en el informe y en el enlace, con leyenda.
 - **W20:** el motor ya no está en el primer pintado (semilla del ejemplo y cálculo de respaldo
-  diferidos, tabla de renombres sin el índice de `@pm/core`): 520 kB de JS/CSS iniciales frente a 746 kB.
+  diferidos, tabla de renombres sin el índice de `@pm/core`). Medición del revisor R5: 559 kB antes de los
+  KPIs en visitas siguientes; la primera visita (que siembra el ejemplo y arranca el worker) llega a 800 kB.
 - **Diseño:** D1 cifras sin «…», D2 `--muted` AA, D3 encabezados y totales fijos, D4 último mes
   cerrado, D5 sin áreas sobre ejes que no empiezan en 0, D6 colores por entidad, D7–D9 tablas que
   caben, D10 mapa de calor (tokens, 45 % en oscuro, opción azul/naranja en Ajustes, escala anual
   ±24 %), D11 series 3–5 más oscuras (validador de paleta: todo PASS), D12 TWR única en Divisas, D13
   KPI principal, D14 colores de estado solo para resultados, D15–D24 detalles de formato, leyendas,
   etiquetas, banderas como código de país, totales y textos.
+
+## Respuesta a la revisión ronda 5 (`reviews/web-r5.md`)
+
+- **D1 (alta):** la cifra de cada KPI va en una sola línea (`white-space: nowrap`) y su fuente se ajusta
+  al ancho de la tarjeta (`FitValue`, mínimo 12 px); si aun así no cabe, se muestra en notación compacta
+  con la cifra completa en el *tooltip*. En el teléfono cada KPI ocupa su fila. La e2e cuenta las líneas
+  reales del texto (`getClientRects`).
+- **W49:** la actualización de precios deja una marca (`refreshPending`) que solo sobrevive si la recarga
+  la interrumpe; al abrir se reintenta sin esperar el límite, y cada 10 min con la pestaña visible. Avisos
+  muestra «N activos sin cotización de mercado desde …· Actualizar». Los meses sin ningún cierre se marcan
+  «sin precio» en Mensual y no cuentan en el KPI ni en las barras de 12 meses.
+- **W50:** Mensual solo guarda como estado la elección explícita del índice; si no, sigue a la moneda.
+- **W51:** columnas por prioridad (`components/fitColumns.tsx`): cuando la tabla no cabe, se ocultan las
+  menos importantes con una nota «Columnas ocultas por falta de espacio · Mostrar todas»; al imprimir
+  se ven todas. Importes de Mensual sin símbolo (la moneda va en el subtítulo).
+- **W52:** «Rentabilidad acumulada» muestra por defecto portafolio + índice de la moneda + tasa + inflación,
+  con etiquetas al final de cada línea y *chips* para añadir los demás; cada índice conserva su color y
+  los colores se asignan evitando los pares que fallan `validate_palette.js --pairs all`.
+- **W53:** meses de los ejes en el idioma, notas de eventos corporativos y razones (×1,03) traducidas,
+  números y fechas de los avisos de importación en el formato local, «(1 + 0,00 %)».
+- **W54:** en el teléfono, «Primeros pasos» en una línea con el siguiente paso y el primer gráfico dentro
+  de la primera pantalla.
+- **Parciales:** D16 (decimales de precio por moneda, ejes sin etiquetas repetidas), D19 (etiquetas
+  directas en «Rentabilidad acumulada»), D21 (leyenda del donut y símbolos), D22 (frescura en Ajustes y
+  punto verde solo tras descargar), W45 (un aviso por año agrupado y sin nombres internos).

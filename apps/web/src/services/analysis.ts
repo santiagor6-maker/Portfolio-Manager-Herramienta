@@ -163,8 +163,8 @@ export interface Analysis {
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
   /**
-   * W49: months (after the first purchase of a market-priced asset) in which none of the portfolio's
-   * market-priced assets has a close: their 0 % is "no price", not a flat month.
+   * W49: months in which the portfolio held market-priced assets but none of them has a close: their
+   * 0 % is "no price", not a flat month.
    */
   unpricedMonths: string[];
   /** W49: market-priced holdings whose last close is older than the previous business day. */
@@ -435,11 +435,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
         .sort((a, b) => (a.date < b.date ? -1 : 1)),
     ) ?? [];
   out.pendingCloses = attempt('pendingCloses', () => pendingCloses(txs, ds.instruments, ds.manualPrices, ds.asOf)) ?? [];
-  const pricing = attempt('priceCoverage', () => priceCoverage(ds, txs, out.valuation));
-  if (pricing) {
-    out.unpricedMonths = pricing.unpricedMonths;
-    out.staleMarket = pricing.staleMarket;
-  }
+  Object.assign(out, attempt('priceCoverage', () => priceCoverage(ds, txs, out.valuation)));
 
   return finish(out, t0);
 }
@@ -457,7 +453,12 @@ export function priceCoverage(
   // Months each market-priced asset was held (from the buy to the month it was sold out).
   const held = new Map<string, Set<string>>();
   const byInst = new Map<string, Transaction[]>();
-  for (const t of txs) if (t.instrumentId && market.has(t.instrumentId)) byInst.set(t.instrumentId, [...(byInst.get(t.instrumentId) ?? []), t]);
+  for (const t of txs) {
+    if (!t.instrumentId || !market.has(t.instrumentId)) continue;
+    const list = byInst.get(t.instrumentId);
+    if (list) list.push(t);
+    else byInst.set(t.instrumentId, [t]);
+  }
   const endMonth = ds.asOf.slice(0, 7);
   for (const [id, list] of byInst) {
     list.sort((a, b) => (a.date < b.date ? -1 : 1));
