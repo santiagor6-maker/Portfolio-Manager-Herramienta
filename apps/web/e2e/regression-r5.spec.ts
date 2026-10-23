@@ -242,3 +242,22 @@ test('W49: holdings without market prices are flagged and the refresh is retried
   await expect(page.getByTestId('kpis')).toContainText('10.500', { timeout: 30_000 }); // R$ 8.000 cash + 100 × R$ 25
   await expect(page.getByTestId('stale-market')).toHaveCount(0);
 });
+
+test('W50: /mensual opened directly compares a BRL portfolio with Ibovespa, and follows the currency', async ({ page }) => {
+  await mockMarket(page, { brl: 'late' });
+  await page.goto('/');
+  await page.getByTestId('start-portfolio').click();
+  const wizard = page.getByRole('dialog', { name: 'Empieza tu portafolio' });
+  await wizard.getByLabel('Nombre').fill('Carteira');
+  await wizard.getByLabel('Moneda base').selectOption('BRL');
+  await wizard.getByTestId('onboarding-create').click();
+  await wizard.getByLabel(/Aporte inicial/).fill('10.000');
+  await wizard.getByLabel('¿Desde cuándo inviertes?').fill('2025-01-02');
+  await wizard.getByRole('button', { name: 'Siguiente' }).click();
+  await wizard.getByRole('button', { name: /Ir al resumen/ }).click();
+  await expect(page.getByTestId('currency-switch')).toHaveValue('BRL');
+  await page.goto('/mensual'); // cold load: settings arrive after the first render
+  await expect(page.locator('#bench')).toHaveValue('INDEX:^BVSP');
+  await page.getByTestId('currency-switch').selectOption('USD');
+  await expect(page.locator('#bench')).toHaveValue('INDEX:^GSPC');
+});

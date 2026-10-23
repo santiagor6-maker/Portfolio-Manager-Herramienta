@@ -135,7 +135,10 @@ export default function MonthlyPage() {
   const settings = useApp((s) => s.settings);
   const setSetting = useApp((s) => s.setSetting);
   const rateIndices = a?.rateIndices ?? [];
-  const [bench, setBench] = useState<string>(primaryBenchmark(settings.benchmarks, settings.reportingCurrency) ?? 'XBOG:ICOLCAP');
+  // W50: only the user's explicit choice is state; otherwise the index follows the settings and the
+  // currency of the figures (a cold /mensual load initialised it from the defaults: COLCAP for BRL).
+  const [chosenBench, setBench] = useState<string>();
+  const bench = chosenBench ?? primaryBenchmark(settings.benchmarks, f.currency) ?? 'XBOG:ICOLCAP';
   const [year, setYear] = useState<string>('all');
   const [focus, setFocus] = useState<string>();
 
