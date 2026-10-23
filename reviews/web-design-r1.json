@@ -1,0 +1,185 @@
+{
+  "id": "web-design-r1",
+  "score": 7.1,
+  "competitorScore": 8.0,
+  "competitor": "Sharesight",
+  "approved": false,
+  "fixed": [],
+  "gaps": [
+    {
+      "id": "D1",
+      "severity": "alta",
+      "text": "KPIs principales truncados con «…» (Kpi aplica truncate a valor y sub): a 1280px en pt el Resumen muestra «COP 396.779.1…», «+COP 85.032.…»; en Rendimiento a 1440 los subtítulos se cortan. P0 integridad / prueba de 5 s. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/crop-pt-1280-dashboard-240-140.png, /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-rendimiento.png",
+      "file": "apps/web/src/components/ui.tsx:168-169",
+      "fix": "Quitar truncate del valor; usar text-[clamp(18px,1.7vw,24px)] leading-tight break-words (o compact vía ResizeObserver); sub con line-clamp-2."
+    },
+    {
+      "id": "D2",
+      "severity": "alta",
+      "text": "--muted #7a8396 no cumple AA en texto normal: 3,81:1 sobre blanco, 3,55 sobre --bg, 3,46 sobre --surface-2 (fondo de todos los th de tabla, 11,5px), 3,22 sobre surface-3. 221 usos de text-muted + etiquetas de eje ECharts (charts.tsx:21). P0 #4.",
+      "file": "apps/web/src/index.css:19",
+      "fix": "--muted: #5f687b (5,60/5,22/5,08/4,73:1); token aparte --muted-mark para trazos no textuales."
+    },
+    {
+      "id": "D3",
+      "severity": "alta",
+      "text": "Encabezados de tabla no son sticky: el contenedor overflow-x-auto anula th{position:sticky;top:0}. Mensual (46 filas × 11 cols) y Movimientos (100 filas) quedan sin rótulos al desplazar (th.top −984/−1049). table-design. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/sticky-mensual.png",
+      "file": "apps/web/src/pages/Monthly.tsx:368; apps/web/src/pages/Transactions.tsx:213; apps/web/src/components/DataTable.tsx:68",
+      "fix": "Contenedor con max-h-[calc(100dvh-7rem)] overflow-auto (sticky interno), o overflow-x:clip + th{top:56px} en escritorio; tfoot sticky abajo."
+    },
+    {
+      "id": "D4",
+      "severity": "alta",
+      "text": "«Este mes $ 0 · 0,00%» cuando los precios son del mes anterior; el mes en curso aparece como celda 0,0% en el heatmap y barra 0 en últimos 12 meses, idéntico a un mes plano. P0/P1 encuadre engañoso. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-dashboard.png, /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/crop-es-dark-1440-mensual-270-340.png",
+      "file": "apps/web/src/pages/Dashboard.tsx:52,90-95; apps/web/src/pages/Monthly.tsx:529-548",
+      "fix": "Si stalePrices o mes sin precios: KPI «Último mes cerrado (sept. 2026)» como Monthly.tsx:136-138; celda parcial con borde punteado + «en curso» sin color; excluir/rayar mes parcial en ReturnBars."
+    },
+    {
+      "id": "D5",
+      "severity": "alta",
+      "text": "Áreas rellenas sobre ejes truncados: ValueChart scale:true + areaStyle (eje desde $50M), LineChart area con scale por defecto true (FX 3.690–3.870, precio de activo) y SVG del Informe rellena a min*0.97. P0 #2 integridad. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-dashboard.png, /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-divisas.png",
+      "file": "apps/web/src/components/charts.tsx:79,93-105,358; apps/web/src/pages/Currencies.tsx:80; apps/web/src/pages/Instrument.tsx:51; apps/web/src/pages/Report.tsx:591,614",
+      "fix": "areaStyle solo si scale===false; ValueChart sin área o yAxis.min 0; Report sin path de relleno o anclado a 0."
+    },
+    {
+      "id": "D6",
+      "severity": "media",
+      "text": "Color asignado por rango (series[i] tras ordenar por valor): Colombia/COP/Acciones siempre azul; si USD supera a COP los colores se intercambian. Viola «color follows the entity» (dataviz). También barras de Distribución del Informe.",
+      "file": "apps/web/src/components/charts.tsx:193,209; apps/web/src/pages/Report.tsx",
+      "fix": "Mapa estable clave→slot (COP→1, USD→2, BRL→3, EUR→4…; países/clases con orden fijo), «Otros» siempre slot 8."
+    },
+    {
+      "id": "D7",
+      "severity": "media",
+      "text": "Scroll horizontal de página a 390px: Dividendos (536px es / 608px pt; tabla «Por país» sin wrapper overflow) e Importar (534px; chips nowrap largas). Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/m-div-country.png",
+      "file": "apps/web/src/pages/Dividends.tsx:164-165; apps/web/src/pages/Import.tsx:328",
+      "fix": "Envolver tabla en overflow-x-auto o lista en móvil; chip con max-w-full truncate + title."
+    },
+    {
+      "id": "D8",
+      "severity": "media",
+      "text": "Dividendos «Por activo» a 1440: nombres largos nowrap empujan las columnas 12 meses / S/costo / S/valor fuera de la tarjeta («12 MESE», «$ 2.805.75»). Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-dividendos.png",
+      "file": "apps/web/src/pages/Dividends.tsx:217-220",
+      "fix": "Nombre en segunda línea block max-w-[260px] truncate text-xs con title."
+    },
+    {
+      "id": "D9",
+      "severity": "media",
+      "text": "Movimientos no cabe en 1440: Retención, Cuenta, Portafolio y acciones quedan tras scroll horizontal al pie de 100 filas; columna Portafolio visible con un solo portafolio. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/crop-es-light-1440-movimientos-270-200.png",
+      "file": "apps/web/src/pages/Transactions.tsx:213-236",
+      "fix": "Portafolio solo si >1; fusionar Comisiones+Retención en «Costos»; acciones en menú ⋯; contenedor con altura máxima (D3)."
+    },
+    {
+      "id": "D10",
+      "severity": "media",
+      "text": "Heatmap: en oscuro las celdas fuertes (#289170 con texto #edf0f5) dan 3,42:1 y la etiqueta de mes móvil 2,05:1; la columna Año usa heatStyle(annual/3), otra escala que la leyenda; divergente verde↔rojo (protan ΔE 14,1) en vez de cálido/frío. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/crop-es-dark-1440-mensual-270-340.png",
+      "file": "apps/web/src/pages/Monthly.tsx:61-69,547,578,593",
+      "fix": "Limitar mezcla a 45% en oscuro o texto #0b0b0b si strength>0,6 (5,04:1); escala anual propia con leyenda o misma escala; opción divergente azul/naranja."
+    },
+    {
+      "id": "D11",
+      "severity": "media",
+      "text": "Series bajo 3:1 en claro como líneas finas punteadas o barras sin etiqueta: IBR aqua #1baf7a (2,74:1) punteado 1,5px en Rentabilidad acumulada; «estimado» aqua y año 2026 amarillo #eda100 (2,11:1) en Dividendos. P0 #5; WARN del validador exige etiquetas visibles. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-rendimiento.png, /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-dividendos.png",
+      "file": "apps/web/src/pages/Performance.tsx:102; apps/web/src/components/charts.tsx:356",
+      "fix": "Para líneas usar paso oscuro (aqua #0d8a5f 4,36:1, amarillo #9a6b00 4,69:1), 2px, endLabel; punteado solo para referencias."
+    },
+    {
+      "id": "D12",
+      "severity": "media",
+      "text": "Cifras que no cuadran con la misma etiqueta: Divisas KPIs precio +79,7M / divisa −21,9M vs cascada +82,6M / −26,0M; «TWR = precio × divisa» +42,32% vs TWR +42,49% en el resto; Informe «Total combinado» +5,69% vs TWR +5,65%. P1 #12/#13. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-divisas.png, /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-informe.png",
+      "file": "apps/web/src/pages/Currencies.tsx:101-114",
+      "fix": "Renombrar «(posiciones abiertas)»; mostrar término de interacción/residuo o nota «≈ sin término cruzado»."
+    },
+    {
+      "id": "D13",
+      "severity": "media",
+      "text": "Jerarquía de KPIs plana: 4 tarjetas iguales (Resumen), 10 (Rendimiento), 5 (Mensual); sin cifra principal «valor + cambio desde el último cierre»; en móvil 4 tarjetas apiladas (~470px) antes del primer gráfico. dashboard-design. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-390-dashboard.png",
+      "file": "apps/web/src/pages/Dashboard.tsx:68-127; apps/web/src/pages/Performance.tsx",
+      "fix": "Tarjeta principal xl:col-span-2 con «vs. cierre de sept.» + sparkline; secundarias más pequeñas; grid-cols-2 en móvil; Rendimiento en filas «Rentabilidad» y «Riesgo»."
+    },
+    {
+      "id": "D14",
+      "severity": "media",
+      "text": "Verde de estado usado para datos que no son ganancias: columnas Dividendos y Acumulada siempre verdes, «Aportes netos» verde en la cascada, últimos pagos verdes; ganancia cero en verde (>=0). Anti-patrón dataviz y regla del 10%.",
+      "file": "apps/web/src/pages/Monthly.tsx:165,167,180; apps/web/src/pages/Currencies.tsx:245; apps/web/src/pages/Dashboard.tsx:304",
+      "fix": "Ingresos y acumulada en ink/ink-2; aportes con series-1 o gris; tono de 3 estados (cero apagado)."
+    },
+    {
+      "id": "D15",
+      "severity": "baja",
+      "text": "Posiciones: abreviaturas «P / D» explicadas solo en title; ordenar la columna ordena solo por divisa.",
+      "file": "apps/web/src/pages/Positions.tsx:170-196",
+      "fix": "Dos columnas ordenables «Ef. precio» y «Ef. divisa» (como Mensual)."
+    },
+    {
+      "id": "D16",
+      "severity": "baja",
+      "text": "Formatos inconsistentes: observaciones de impuestos con números crudos («250976 COP») y fechas ISO, en español aun en pt; resumen fiscal con 2 decimales en COP; «Ver datos» de LineChart con fechas ISO y encabezado vacío; eje FX con 2 decimales; columna Precio de Movimientos mezcla 0/4 decimales; marcas no redondas en el Informe ($404,7 M).",
+      "file": "packages/tax/src/colombia/report.ts:888,921; apps/web/src/components/charts.tsx:368-372; apps/web/src/pages/Currencies.tsx:79; apps/web/src/pages/Report.tsx:596",
+      "fix": "Códigos + parámetros formateados en lib/taxText.ts; formatDate en tablas; formatFxRate con 0 decimales en eje; marcas 1-2-5."
+    },
+    {
+      "id": "D17",
+      "severity": "baja",
+      "text": "Banderas emoji (indicadores regionales) no se dibujan en Windows: aparecen «CO», «US» en Posiciones, Dividendos, Lista e InstrumentPicker.",
+      "file": "apps/web/src/lib/labels.ts:23-27",
+      "fix": "SVG en línea para los ~12 países del catálogo o chip con código ISO."
+    },
+    {
+      "id": "D18",
+      "severity": "baja",
+      "text": "Faltan filas de total: Dividendos «Por país» y «Pagos», Impuestos «Detalle del patrimonio»; Total de Posiciones deja Peso vacío. table-design.",
+      "file": "apps/web/src/pages/Dividends.tsx:175-201,251-273; apps/web/src/pages/Taxes.tsx",
+      "fix": "tfoot en negrita con línea fina; Peso 100%."
+    },
+    {
+      "id": "D19",
+      "severity": "baja",
+      "text": "Leyendas separadas con icono rect sólido para series punteadas (≤5 series deberían etiquetarse directo). P1 #11.",
+      "file": "apps/web/src/components/charts.tsx:48-53,332",
+      "fix": "endLabel {show:true, formatter:'{a}'} y leyenda con el icono del estilo real de línea."
+    },
+    {
+      "id": "D20",
+      "severity": "baja",
+      "text": "«Dividendos por mes»: 4 años × 12 = 48 barras agrupadas, ilegible a 390px. P1 #9. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/m-div-country.png",
+      "file": "apps/web/src/pages/Dividends.tsx:160",
+      "fix": "Por defecto año actual vs anterior con selector, o heatmap año × mes."
+    },
+    {
+      "id": "D21",
+      "severity": "baja",
+      "text": "Etiquetas truncadas a 1440: «Estados Uni…» (leyenda donut), «ECOPETR…» (movers, w-[86px]), «Dividendos e intere…» (cascada 140px).",
+      "file": "apps/web/src/components/charts.tsx:212; apps/web/src/pages/Dashboard.tsx:222; apps/web/src/pages/Currencies.tsx:247",
+      "fix": "Columnas más anchas (96px/170px) o permitir 2 líneas."
+    },
+    {
+      "id": "D22",
+      "severity": "baja",
+      "text": "Ruido técnico en Resumen: «Cálculo del motor: 94 ms», tarjeta Frescura de media fila, estados que se contradicen («Conectado» + «Aún no se han descargado precios» + «Sin actualizar»).",
+      "file": "apps/web/src/pages/Dashboard.tsx:240,318-362",
+      "fix": "Frescura en popover del botón de estado del header; tiempo de cálculo en Ajustes → Diagnóstico."
+    },
+    {
+      "id": "D23",
+      "severity": "baja",
+      "text": "Inter declarada pero nunca cargada (sin @font-face): cae a la fuente del SO (DejaVu más ancha agrava D1) y cv11/ss01 no aplican; cifras principales con tabular-nums (anti-patrón dataviz).",
+      "file": "apps/web/src/index.css:82,119; apps/web/src/components/Chart.tsx:71",
+      "fix": "Incluir Inter variable woff2 (cache PWA) o quitarla; proportional-nums en Kpi."
+    },
+    {
+      "id": "D24",
+      "severity": "baja",
+      "text": "i18n y textos: aria-label «Seleccionar todo/…» fijos en español; marca «Local-first · multi-divisa» fija; «Precio ()» sin moneda en Alertas; chips de formatos duplicados en Importar (IB ×2, B3 ×3, DEGIRO ×2, Corretoras BR ×2).",
+      "file": "apps/web/src/components/DataTable.tsx:77,160; apps/web/src/components/Layout.tsx:91; apps/web/src/pages/Alerts.tsx:104; apps/web/src/pages/Import.tsx:327",
+      "fix": "Claves t(); ocultar «()» sin moneda; deduplicar por broker+country."
+    },
+    {
+      "id": "D25",
+      "severity": "baja",
+      "text": "Vista previa del Informe: «Detalle mensual» más ancho que la hoja, columna COLCAP cortada con desplazamiento oculto. Evidencia: /tmp/claude-0/-home-user-Portfolio-Manager-Herramienta/8b757dea-bb3a-58bd-aa07-26758394d338/scratchpad/design-audit/shots/es-light-1440-informe.png",
+      "file": "apps/web/src/pages/Report.tsx:226",
+      "fix": "Tamaño compacto de impresión también en pantalla o columnas «Esencial» + anexo."
+    }
+  ]
+}
