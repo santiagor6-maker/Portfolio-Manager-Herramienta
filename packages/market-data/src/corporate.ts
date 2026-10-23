@@ -63,10 +63,12 @@ export function classifySplit(yahooSymbol: string, s: RawSplit, instrumentId: st
     };
   }
   if (isB3 && factor > 1 && !Number.isInteger(factor)) {
+    // core's STOCK_DIVIDEND `ratio` is NEW shares received per share held (110:100 -> 0.10) and
+    // every consumer applies 1 + ratio; the total-shares factor (1.10) stays in `priceFactor`.
     return {
       ...base,
       type: 'STOCK_DIVIDEND',
-      ratio: factor,
+      ratio: round6(factor - 1),
       note: `Bonificação ${num}:${den} (${round4((factor - 1) * 100)} % em ações). For IR the new shares carry the "custo atribuído" announced by the company.`,
     };
   }
@@ -86,6 +88,10 @@ export function classifySplit(yahooSymbol: string, s: RawSplit, instrumentId: st
 
 function round4(x: number): number {
   return Math.round(x * 10_000) / 10_000;
+}
+
+function round6(x: number): number {
+  return Math.round(x * 1_000_000) / 1_000_000;
 }
 
 /**

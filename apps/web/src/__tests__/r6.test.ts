@@ -49,10 +49,21 @@ describe('W45/W53: tax and import texts', () => {
     expect(localizeNumbers('o líquido calculado (-2000.6) não confere (de 2023-01-02): 0.07', 'pt-BR')).toBe('o líquido calculado (-2.000,6) não confere (de 02/01/2023): 0,07');
   });
   it('words provider corporate actions in the UI language', async () => {
-    const { corporateNote, formatRatio } = await import('../lib/corporateText');
+    const { corporateNote, formatRatio, formatTxRatio, normalizeProviderAction } = await import('../lib/corporateText');
     const t = (k: string, o?: Record<string, unknown>) => `${k}:${String(o?.pct ?? o?.ratio ?? '')}`;
-    expect(corporateNote({ type: 'STOCK_DIVIDEND', ratio: 4 / 3, note: 'For IR the new shares…' }, t, 'pt-BR')).toBe('ca.note.bonus:33,33%');
+    // STOCK_DIVIDEND ratio = new shares per share held (core contract): 1/3 is a 4:3 bonificação.
+    expect(corporateNote({ type: 'STOCK_DIVIDEND', ratio: 1 / 3, note: 'For IR the new shares…' }, t, 'pt-BR')).toBe('ca.note.bonus:33,33%');
+    expect(corporateNote({ type: 'STOCK_DIVIDEND', ratio: 0.1 }, t, 'pt-BR')).toBe('ca.note.bonus:10,00%');
     expect(formatRatio(1.03, 'pt-BR')).toBe('×1,03');
+    expect(formatTxRatio({ type: 'STOCK_DIVIDEND', ratio: 0.03 }, 'pt-BR')).toBe('+3,00%');
+    expect(formatTxRatio({ type: 'SPLIT', ratio: 2 }, 'pt-BR')).toBe('×2');
+    // provider actions cached before the fix carried the price factor as ratio
+    const legacy = { instrumentId: 'BVMF:ITUB4', date: '2025-03-18', type: 'STOCK_DIVIDEND' as const, ratio: 1.1, priceFactor: 1.1, source: 'yahoo' as const };
+    expect(normalizeProviderAction(legacy).ratio).toBe(0.1);
+    const fixed = { ...legacy, ratio: 0.1 };
+    expect(normalizeProviderAction(fixed)).toBe(fixed);
+    const manual = { instrumentId: 'X', date: '2025-01-01', type: 'STOCK_DIVIDEND' as const, ratio: 1.5 };
+    expect(normalizeProviderAction(manual)).toBe(manual);
   });
   it('time-axis ticks follow the language', async () => {
     const { timeTick } = await import('../components/charts');

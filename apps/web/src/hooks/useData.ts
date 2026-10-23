@@ -9,6 +9,7 @@ import type { Dataset } from '../services/analysis';
 import type { AppSettings } from '../db/repo';
 import { orderBenchmarks, BENCHMARKS } from '../lib/benchmarks';
 import { todayIso } from '../lib/ids';
+import { normalizeProviderAction } from '../lib/corporateText';
 
 const EMPTY: never[] = [];
 
@@ -101,7 +102,7 @@ export function toDataset(raw: RawData, settings: AppSettings, asOf = todayIso()
     manualPrices: groupManualPrices(raw.manual),
     indexSeries: raw.indexSeries.filter(notDemo).map(({ id, kind, period, unit, dayCount, currency, points, source }) => ({ id, kind, period, unit, dayCount, currency, points, source })),
     demoPricedInstruments,
-    corporateActions: raw.corporateActions.map(({ id: _id, updatedAt: _u, ...a }: CorporateAction & { id?: string; updatedAt?: number }) => a),
+    corporateActions: raw.corporateActions.map(({ id: _id, updatedAt: _u, ...a }: CorporateAction & { id?: string; updatedAt?: number }) => normalizeProviderAction(a)),
     dismissedSuggestions: raw.dismissed,
     selectedPortfolioId:
       settings.selectedPortfolioId === 'all' || raw.portfolios.some((p) => p.id === settings.selectedPortfolioId) ? settings.selectedPortfolioId : 'all',

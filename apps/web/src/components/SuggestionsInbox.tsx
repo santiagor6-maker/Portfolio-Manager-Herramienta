@@ -8,7 +8,7 @@ import { formatDate, formatMoney, formatQuantity } from '../lib/format';
 import { bulkAddTransactions, getMeta, setMeta } from '../db/repo';
 import type { Suggestion } from '../services/analysis';
 import { TxTypeBadge } from '../pages/Transactions';
-import { corporateNote, formatRatio } from '../lib/corporateText';
+import { corporateNote, formatRatio, formatTxRatio } from '../lib/corporateText';
 
 async function dismiss(keys: string[]) {
   const prev = (await getMeta<string[]>('dismissedSuggestions')) ?? [];
@@ -74,7 +74,7 @@ export function SuggestionsInbox() {
                     {x.type === 'DIVIDEND'
                       ? formatMoney(x.amount, x.currency, f.locale, { privacy: f.privacy })
                       : x.ratio
-                        ? formatRatio(x.ratio, f.locale)
+                        ? formatTxRatio(x, f.locale)
                         : formatQuantity(x.quantity, f.locale, f.privacy)}
                   </td>
                   <td className="r">

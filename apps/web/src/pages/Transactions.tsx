@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HiddenColumnsNote, useFitColumns } from '../components/fitColumns';
-import { formatRatio } from '../lib/corporateText';
+import { formatTxRatio } from '../lib/corporateText';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -290,7 +290,7 @@ export default function TransactionsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="r num">{x.quantity !== undefined ? formatQuantity(x.quantity, f.locale, f.privacy) : x.ratio ? formatRatio(x.ratio, f.locale) : '—'}</td>
+                      <td className="r num">{x.quantity !== undefined ? formatQuantity(x.quantity, f.locale, f.privacy) : x.ratio ? formatTxRatio(x, f.locale) : '—'}</td>
                       <td className="r num">{x.price !== undefined ? formatPrice(x.price, x.currency, f.locale) : '—'}</td>
                       <td className="r num">{amount}</td>
                       {/* D9: fees and withholding in one "Costs" column (breakdown in the tooltip). */}

@@ -357,8 +357,9 @@ describe('M7 bonificações and spin-offs are not splits (reviewer splits.mts)',
   const c = (sym: string, date: string, n: number, d: number) => classifySplit(sym, { date, numerator: n, denominator: d }, 'X:Y');
 
   it('classifies Yahoo split events', () => {
-    expect(c('ITUB4.SA', '2025-03-18', 110, 100)).toMatchObject({ type: 'STOCK_DIVIDEND', ratio: 1.1 });
-    expect(c('ITUB4.SA', '2018-11-21', 3, 2)).toMatchObject({ type: 'STOCK_DIVIDEND', ratio: 1.5 });
+    // STOCK_DIVIDEND ratio = new shares per share held (core contract); the 1.1 factor is priceFactor.
+    expect(c('ITUB4.SA', '2025-03-18', 110, 100)).toMatchObject({ type: 'STOCK_DIVIDEND', ratio: 0.1, priceFactor: 1.1 });
+    expect(c('ITUB4.SA', '2018-11-21', 3, 2)).toMatchObject({ type: 'STOCK_DIVIDEND', ratio: 0.5, priceFactor: 1.5 });
     expect(c('WEGE3.SA', '2015-04-01', 2, 1)).toMatchObject({ type: 'SPLIT', ratio: 2 });
     expect(c('NVDA', '2024-06-10', 10, 1)).toMatchObject({ type: 'SPLIT', ratio: 10 });
     expect(c('GE', '2021-08-02', 1, 8)).toMatchObject({ type: 'SPLIT', ratio: 0.125 });
@@ -382,7 +383,7 @@ describe('M7 bonificações and spin-offs are not splits (reviewer splits.mts)',
   it('ITUB4 2025-03-18 bonificação 10 %: STOCK_DIVIDEND; prices undo both later events', async () => {
     const { service } = createTestService();
     const h = await service.history({ symbol: 'ITUB4.SA', from: '2025-03-12', to: '2025-03-21' });
-    expect(h.actions).toEqual([expect.objectContaining({ date: '2025-03-18', type: 'STOCK_DIVIDEND', ratio: 1.1 })]);
+    expect(h.actions).toEqual([expect.objectContaining({ date: '2025-03-18', type: 'STOCK_DIVIDEND', ratio: 0.1, priceFactor: 1.1 })]);
     const raw = chart('chart-ITUB4.SA-1d.json').indicators!.quote![0]!.close!;
     expect(h.series.points[0]!.close).toBeCloseTo(raw[0]! * 1.1 * 1.03, 2); // later 103:100 too
     expect(h.series.points.at(-1)!.close).toBeCloseTo(raw.at(-1)! * 1.03, 2);
@@ -411,8 +412,8 @@ describe('M8 dividends: currency, pay date, JCP (reviewer gbp.mts / divs.mts)', 
   });
 
   it('toCoreCorporateActions is a lossless pass-through to core CorporateAction', () => {
-    const out = toCoreCorporateActions([{ instrumentId: 'A', date: '2025-01-01', type: 'STOCK_DIVIDEND', ratio: 1.1, priceFactor: 1.1 }]);
-    expect(out).toEqual([{ instrumentId: 'A', date: '2025-01-01', type: 'STOCK_DIVIDEND', ratio: 1.1 }]);
+    const out = toCoreCorporateActions([{ instrumentId: 'A', date: '2025-01-01', type: 'STOCK_DIVIDEND', ratio: 0.1, priceFactor: 1.1 }]);
+    expect(out).toEqual([{ instrumentId: 'A', date: '2025-01-01', type: 'STOCK_DIVIDEND', ratio: 0.1 }]);
   });
 });
 
