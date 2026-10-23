@@ -58,6 +58,6 @@ describe('D16: price decimals', () => {
     const { formatPrice } = await import('../lib/format');
     expect(formatPrice(2.5, 'USD', 'en-US')).toBe('$2.50');
     expect(formatPrice(0.5432, 'USD', 'en-US')).toBe('$0.5432');
-    expect(formatPrice(38_500, 'COP', 'es-CO')).toBe('$ 38.500');
+    expect(formatPrice(38_500, 'COP', 'es-CO')).toMatch(/^\$\s38\.500$/);
   });
 });
