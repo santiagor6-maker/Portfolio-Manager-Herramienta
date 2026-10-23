@@ -87,4 +87,5 @@ export const ptR5: typeof esR5 = {
   dashboard: { staleMarket_one: '{{count}} ativo sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarket_other: '{{count}} ativos sem cotação de mercado desde {{date}} ({{symbols}}): o valor e os meses seguintes não refletem o mercado.', staleMarketNever_one: '{{count}} ativo sem nenhuma cotação de mercado ({{symbols}}): avaliado pelo preço de compra.', staleMarketNever_other: '{{count}} ativos sem nenhuma cotação de mercado ({{symbols}}): avaliados pelo preço de compra.' },
   table: { hidden: 'Colunas ocultas por falta de espaço: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Todas as colunas visíveis (role a tabela).', fit: 'Ajustar à largura' },
   ca: { note: { bonus: 'Bonificação de {{pct}} em ações: as novas ações têm o custo atribuído informado pela companhia.', spinoff: 'Cisão: confirme a fração do custo no aviso da companhia.', split: 'Desdobramento {{ratio}} (mais ações, mesmo custo total).', reverse: 'Grupamento {{ratio}} (menos ações, mesmo custo total).' } },
+  onboarding: { all: 'Ver tudo', less: 'Ocultar' },
 };

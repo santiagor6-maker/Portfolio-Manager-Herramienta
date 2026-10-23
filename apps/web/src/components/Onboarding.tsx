@@ -220,6 +220,7 @@ interface ChecklistItem {
 /** Getting-started checklist on the dashboard (hidden when complete or dismissed). */
 export function GettingStarted() {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const pid = useApp((s) => s.settings.selectedPortfolioId);
   const data = useLiveQuery(async () => {
@@ -244,6 +245,7 @@ export function GettingStarted() {
   ];
   const done = items.filter((i) => i.done).length;
   if (done === items.length) return null;
+  const next = items.find((i) => !i.done);
   return (
     <section className="card p-4 mb-3" aria-labelledby="gs-title" data-testid="getting-started">
       <div className="flex items-center justify-between gap-2">
@@ -257,7 +259,18 @@ export function GettingStarted() {
       <div className="h-1.5 rounded-full bg-surface-3 mt-2 overflow-hidden" aria-hidden>
         <div className="h-full bg-accent" style={{ width: `${(done / items.length) * 100}%` }} />
       </div>
-      <ul className="grid grid-cols-1 sm:grid-cols-5 gap-2 mt-3">
+      {/* W54: on the phone, one line with the next step (the list opens on demand). */}
+      {next && (
+        <div className="sm:hidden flex items-center gap-2 mt-2.5">
+          <button className="btn btn-sm flex-1 justify-start" onClick={() => navigate(next.href)} data-testid="gs-next">
+            {next.icon} {t(`onboarding.task.${next.key}`)}
+          </button>
+          <button className="btn btn-sm btn-ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            {t(open ? 'onboarding.less' : 'onboarding.all')}
+          </button>
+        </div>
+      )}
+      <ul className={clsx('grid-cols-1 sm:grid-cols-5 gap-2 mt-3', open ? 'grid' : 'hidden sm:grid')}>
         {items.map((i) => (
           <li key={i.key}>
             <button

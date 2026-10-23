@@ -76,9 +76,11 @@ export default function DashboardPage() {
       />
 
       <GettingStarted />
-      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3" data-testid="kpis">
+      {/* W54: on the phone the headline spans the row and the three others share one row below it. */}
+      <div className="grid grid-cols-3 xl:grid-cols-5 gap-2 sm:gap-3" data-testid="kpis">
         <Kpi
           primary
+          className="col-span-3 xl:col-span-2"
           loading={loading}
           label={t('dashboard.totalValue')}
           value={<Money value={v?.totalMarketValueBase} />}

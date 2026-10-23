@@ -155,6 +155,7 @@ export function Kpi({
   loading,
   hint,
   primary,
+  className,
 }: {
   label: ReactNode;
   value: ReactNode;
@@ -163,9 +164,11 @@ export function Kpi({
   hint?: string;
   /** D13: the page's headline figure (two columns wide, larger number). */
   primary?: boolean;
+  /** Grid placement override (e.g. the primary card's span). */
+  className?: string;
 }) {
   return (
-    <div className={clsx('card px-4 py-3.5 min-w-0', primary && 'col-span-2 kpi-primary')} title={hint}>
+    <div className={clsx('card px-3 sm:px-4 py-3 sm:py-3.5 min-w-0', primary && 'kpi-primary', primary && !className && 'col-span-2', className)} title={hint}>
       <div className="text-xs font-medium text-muted line-clamp-2">{label}</div>
       {loading ? (
         <>

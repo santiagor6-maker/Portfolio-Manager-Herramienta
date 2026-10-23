@@ -85,4 +85,5 @@ export const esR5 = {
   dashboard: { staleMarket_one: '{{count}} activo sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarket_other: '{{count}} activos sin cotización de mercado desde el {{date}} ({{symbols}}): su valor y los meses siguientes no reflejan el mercado.', staleMarketNever_one: '{{count}} activo sin ninguna cotización de mercado ({{symbols}}): se valora al precio de compra.', staleMarketNever_other: '{{count}} activos sin ninguna cotización de mercado ({{symbols}}): se valoran al precio de compra.' },
   table: { hidden: 'Columnas ocultas por falta de espacio: {{columns}}.', showAll: 'Mostrar todas', allShown: 'Se muestran todas las columnas (desplaza la tabla).', fit: 'Ajustar al ancho' },
   ca: { note: { bonus: 'Dividendo en acciones del {{pct}}: las nuevas acciones llevan el costo que informe la empresa.', spinoff: 'Escisión: confirma la fracción de costo con el aviso del emisor.', split: 'Split {{ratio}} (más acciones, mismo costo total).', reverse: 'Contrasplit {{ratio}} (menos acciones, mismo costo total).' } },
+  onboarding: { all: 'Ver todo', less: 'Ocultar' },
 };

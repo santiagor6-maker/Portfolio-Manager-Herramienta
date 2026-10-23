@@ -293,3 +293,18 @@ for (const [locale, ccy] of [['es-CO', 'COP'], ['pt-BR', 'BRL']] as const) {
     });
   });
 }
+
+test('W54: on the phone the first chart starts within the first screen; secondary KPIs share one row', async ({ page }) => {
+  await mockMarket(page, { brl: 'late' });
+  await onboardCO(page, '30.000.000', '2024-01-02');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.getByTestId('gs-next')).toBeVisible();
+  const kpis = page.getByTestId('kpis').locator('.card');
+  await expect(kpis).toHaveCount(4);
+  const tops = await kpis.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  expect(new Set(tops.slice(1)).size).toBe(1); // the three secondary cards on one row, no empty cell
+  const chartTop = await page.getByRole('heading', { name: 'Valor vs. aportado' }).evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
+  expect(chartTop).toBeLessThan(844);
+  await page.screenshot({ path: `${SHOTS}/r6-phone-dashboard.png` });
+});
