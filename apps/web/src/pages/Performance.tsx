@@ -117,8 +117,12 @@ export default function PerformancePage() {
         subtitle={t('perf.subtitle', { currency: f.currency })}
         actions={si?.warnings?.length ? <PriceWarnings warnings={si.warnings} from={si.from} to={si.to} /> : undefined}
       />
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3" data-testid="perf-kpis">
+      {/* D13: two labelled groups (return, risk) with the TWR as the headline figure. */}
+      <div data-testid="perf-kpis">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">{t('perf.groupReturn')}</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi
+          primary
           loading={loading}
           label={t('perf.twr')}
           value={<Pct value={si?.twr} signed colored />}
@@ -156,6 +160,9 @@ export default function PerformancePage() {
           }
           hint={t('perf.pctOfIndexHint')}
         />
+      </div>
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2 mt-4">{t('perf.groupRisk')}</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <Kpi loading={loading} label={t('perf.volatility')} value={<Pct value={risk?.volatility} />} sub={<span className="text-xs text-muted">{t('perf.volatilitySub')}</span>} />
         <Kpi
           loading={loading}
@@ -171,6 +178,7 @@ export default function PerformancePage() {
         <Kpi loading={loading} label="Sortino" value={<span className="num">{ratio(risk?.sortino, f.locale)}</span>} sub={<span className="text-xs text-muted">{t('perf.sortinoSub')}</span>} />
         <Kpi loading={loading} label={t('perf.beta')} value={<span className="num">{ratio(risk?.beta, f.locale)}</span>} sub={<span className="text-xs text-muted">{t('perf.correlation')}: {ratio(risk?.correlation, f.locale)}</span>} />
         <Kpi loading={loading} label={t('monthly.positiveMonths')} value={<Pct value={risk?.positiveMonthsRatio} decimals={0} />} sub={<span className="text-xs text-muted">{t('monthly.monthsCount', { count: months })}</span>} />
+      </div>
       </div>
 
       <Card className="mt-3" title={t('perf.cumulative')} subtitle={t('perf.cumulativeSub')}>

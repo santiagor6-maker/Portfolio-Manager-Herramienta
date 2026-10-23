@@ -608,7 +608,7 @@ function ReportBody({
                 <td>{m(s?.fxGainBase, true)}</td>
               </tr>
               <tr>
-                <td>{t('report.combined')}</td>
+                <td>≈ {t('report.combined')}</td>
                 <td className={cls((1 + local) * (1 + fxr) - 1)}>{p((1 + local) * (1 + fxr) - 1)}</td>
                 <td className="note">(1+p)(1+d)−1</td>
               </tr>

@@ -162,7 +162,13 @@ src/
 - `src/__tests__/emailInbox.test.ts` y `e2e/email-inbox.spec.ts` — buzón de correo: borradores, vista
   previa con deduplicación, confirmación por `ids` y mensajes para 401/403/503.
 
-Totales: 81 pruebas unitarias (14 archivos) y 43 pruebas e2e (+1 en vivo que se omite sin servidor).
+- `src/__tests__/r5.test.ts` y `src/__tests__/r5-design.test.ts` — ronda 5 (W40–W48, W43) y diseño
+  (colores por entidad, marcas redondas, mes en curso, escala del mapa de calor, importes sin símbolo).
+- `e2e/regression-r5.spec.ts` — W40 con el servidor simulado (par USD/BRL que llega tarde o nunca),
+  W46 (enlace `e2` y cambio de `#` sin recargar), W47 (tabla del informe sin desbordar), W48 (marcas en
+  el informe y en el enlace), D1 (KPI sin cortar a 1280 px) y D3 (encabezado fijo en Mensual).
+
+Totales: 105 pruebas unitarias (16 archivos) y 47 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
@@ -175,8 +181,13 @@ Capturas en `e2e/screenshots/`.
   o por PDF (notas SINACOR, extractos colombianos, CDT).
 - La serie IBR de los datos de ejemplo termina en septiembre; «% del IBR» se calcula con los meses
   cubiertos y la interfaz muestra «datos hasta …».
-- La TWR del mes en curso queda en 0 % hasta que haya precios del mes (los datos de ejemplo terminan
-  el 30-sep-2026).
+- Mientras el mes en curso no tiene precios, el Resumen muestra el último mes cerrado y Mensual marca
+  el mes «en curso» (D4); el motor sigue devolviendo 0 % para ese mes.
+- W42: el paquete de impuestos (congelado) solo lee movimientos; un CDT vencido sin redención
+  registrada se avisa en Impuestos con un botón para registrarla. Los intereses causados por cobrar al
+  31-dic de un CDT vigente no entran al patrimonio fiscal.
+- W40: la protección contra tasas faltantes está en la web (`services/fxCoverage.ts`); el motor sigue
+  convirtiendo a 0 cuando falta una tasa (gap C8 de core).
 - Metas usa `goalProjection` con el valor del análisis; `goalProjectionForPortfolio` (que necesita el
   `EngineInput` del worker) queda para la próxima ronda.
 
@@ -344,3 +355,33 @@ Revisión: `reviews/web-r3.md`.
     oficial) y `CORPORATE_ACTION_WITHOUT_POSITION`, con textos en es/pt/en armados desde
     `Diagnostic.data`. Los códigos que traen `data` ya no se leen del mensaje.
 
+
+## Respuesta a la revisión ronda 4 (`reviews/web-r4.md`) y a la revisión de diseño R1 (`reviews/web-design-r1.md`)
+
+- **W40 (alta) — moneda de reporte sin tasa:**
+  - al cambiar de moneda se pide en el acto `USD/<moneda>` (`refreshMarketData({ force: true, fx })`,
+    sin el límite de 2–5 min) y, si el análisis aún reporta monedas sin ruta, también esas;
+  - mientras tanto, «Convirtiendo a BRL…» y *skeletons* en todas las páginas (`useConversion`);
+  - sin tasa: «—» en KPIs, tabla mensual, gráficos, informe y resumen personalizado, aviso con
+    «Reintentar», sin diferencias contra índices (`fxMissing` + `blankUnconvertible`).
+- **W41:** los Avisos del Resumen usan `describeIssue` (OVERSELL y demás códigos de validación en es/pt/en).
+- **W42:** CDT vencido sin redención → aviso en Impuestos con «Registrar redención estimada» (interés
+  bruto con su retención + venta del capital al vencimiento, desde la estimación del motor).
+- **W43:** nombres de notas («SID NACIONAL ON») reemplazados por el catálogo (al importar y una vez al
+  abrir), más emisoras B3 en el catálogo y tabla de CNPJ (`lib/b3Cnpj.ts`) pasada como `cnpjByIssuer`.
+- **W44:** el diálogo de DARF recalcula multa + Selic al cambiar la fecha (salvo monto editado) y muestra el desglose.
+- **W45:** alertas fiscales sin duplicados, números y fechas en el formato del idioma, aviso de PTAX
+  una sola vez («Entendido»).
+- **W46:** HTML compactado, formato cifrado `e2` (sal|iv|cifrado en un solo base64url, ≈ +60
+  caracteres sobre el enlace sin contraseña; `e1` sigue abriendo) y la vista compartida reacciona a `hashchange`.
+- **W47/D25:** la tabla mensual del informe dice la moneda una vez (sin símbolo por celda), encabezados
+  que se parten y contenedor con desplazamiento propio.
+- **W48:** † precio atípico y ‡ aporte implícito en el informe y en el enlace, con leyenda.
+- **W20:** el motor ya no está en el primer pintado (semilla del ejemplo y cálculo de respaldo
+  diferidos, tabla de renombres sin el índice de `@pm/core`): 520 kB de JS/CSS iniciales frente a 746 kB.
+- **Diseño:** D1 cifras sin «…», D2 `--muted` AA, D3 encabezados y totales fijos, D4 último mes
+  cerrado, D5 sin áreas sobre ejes que no empiezan en 0, D6 colores por entidad, D7–D9 tablas que
+  caben, D10 mapa de calor (tokens, 45 % en oscuro, opción azul/naranja en Ajustes, escala anual
+  ±24 %), D11 series 3–5 más oscuras (validador de paleta: todo PASS), D12 TWR única en Divisas, D13
+  KPI principal, D14 colores de estado solo para resultados, D15–D24 detalles de formato, leyendas,
+  etiquetas, banderas como código de país, totales y textos.

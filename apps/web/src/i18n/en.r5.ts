@@ -81,4 +81,5 @@ export const enR5: typeof esR5 = {
   div: { byMonthSub: 'Selected year against the previous one (net; previous in grey)' },
   fx: { fromPrice: 'Price (open positions)', fromFx: 'Currency (open positions)', approxNote: 'monthly, without the daily cross term', cumulativeSplit: 'TWR since inception' },
   alerts: { thresholdPriceNoCcy: 'Price' },
+  perf: { groupReturn: 'Return', groupRisk: 'Risk' },
 };
