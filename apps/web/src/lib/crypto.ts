@@ -49,3 +49,29 @@ export async function decryptText(f: EncryptedFile, pass: string): Promise<strin
     throw new Error('wrong_passphrase');
   }
 }
+
+/** W46: raw-bytes AES-GCM for share links: salt (16) | iv (12) | ciphertext, no JSON/base64 nesting. */
+export const SHARE_KDF_ITER = 250_000;
+
+export async function encryptBytes(data: Uint8Array, pass: string, iter = SHARE_KDF_ITER): Promise<Uint8Array> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pass, salt, iter);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, data as BufferSource));
+  const out = new Uint8Array(28 + ct.length);
+  out.set(salt, 0);
+  out.set(iv, 16);
+  out.set(ct, 28);
+  return out;
+}
+
+/** Throws 'wrong_passphrase' when the passphrase does not match (or the bytes were altered). */
+export async function decryptBytes(packed: Uint8Array, pass: string, iter = SHARE_KDF_ITER): Promise<Uint8Array> {
+  if (packed.length < 29) throw new Error('invalid_link');
+  const key = await deriveKey(pass, packed.subarray(0, 16), iter);
+  try {
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: packed.subarray(16, 28) as BufferSource }, key, packed.subarray(28) as BufferSource));
+  } catch {
+    throw new Error('wrong_passphrase');
+  }
+}

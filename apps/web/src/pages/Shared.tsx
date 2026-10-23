@@ -20,20 +20,37 @@ export default function SharedPage() {
   const [pass, setPass] = useState('');
   const frame = useRef<HTMLIFrameElement>(null);
 
+  // The fragment being shown: a decode that finishes after the hash changed again is dropped.
+  const current = useRef(location.hash);
+
   const open = async (passphrase?: string) => {
+    const hash = location.hash;
     setError(undefined);
     try {
-      const p = await decodeShare(location.hash, passphrase);
+      const p = await decodeShare(hash, passphrase);
+      if (hash !== current.current) return;
       setPayload(p);
       setNeedsPass(false);
       if (p.lang && p.lang !== i18n.language) void setLanguage(p.lang);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'invalid_link');
+      if (hash === current.current) setError(e instanceof Error ? e.message : 'invalid_link');
     }
   };
 
+  // W46: pasting another link in the same tab only changes the fragment (no reload): show that report.
   useEffect(() => {
-    if (!isEncryptedShare(location.hash)) void open();
+    const load = () => {
+      current.current = location.hash;
+      setPayload(undefined);
+      setError(undefined);
+      setPass('');
+      const encrypted = isEncryptedShare(location.hash);
+      setNeedsPass(encrypted);
+      if (!encrypted) void open();
+    };
+    load();
+    window.addEventListener('hashchange', load);
+    return () => window.removeEventListener('hashchange', load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

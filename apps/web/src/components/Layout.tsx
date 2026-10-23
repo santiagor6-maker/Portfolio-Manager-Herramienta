@@ -35,6 +35,7 @@ import { refreshMarketData } from '../services/marketData';
 import { formatRelative } from '../lib/format';
 import { db } from '../db/schema';
 import { GlobalBanners } from './GlobalBanners';
+import { useFxAutoFetch } from '../hooks/useConversion';
 import { DemoBadge } from './ui';
 import { OnboardingWizard } from './Onboarding';
 
@@ -351,6 +352,7 @@ export function Layout() {
       (s.analysis.baseCurrency !== s.settings.reportingCurrency || s.analysis.portfolioId !== s.settings.selectedPortfolioId),
   );
   useTheme();
+  useFxAutoFetch();
   const first = useRef(true);
   useEffect(() => {
     setOpen(false);

@@ -8,11 +8,15 @@ import { useTranslation } from 'react-i18next';
 import { Copy, FileDown, Link2, Printer } from 'lucide-react';
 import type { MonthlyRow, PerformanceSummary } from '@pm/core';
 import { PageHeader, Segmented, Skeleton, Banner, Modal, Field } from '../components/ui';
-import { encodeShare, sanitizeReportHtml } from '../lib/share';
+import { compactReportHtml, encodeShare, sanitizeReportHtml } from '../lib/share';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { usePortfolios } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMoney, formatMonth, formatPct, monthName, MASK } from '../lib/format';
+import { currencyDecimals } from '../lib/currencies';
+import { parsePriceWarnings } from '../components/PriceWarnings';
+import { fxPairs } from '../components/FxNotice';
+import { downsample } from '../lib/downsample';
 import { addMonths, monthEnd, todayIso } from '../lib/ids';
 import { indexName, useSliceLabel } from '../lib/labels';
 import { benchmarkName, primaryBenchmark } from '../lib/benchmarks';
@@ -58,8 +62,13 @@ export const REPORT_CSS = `
 .rp .bar .t{display:block;height:9px;background:#eef1f5;border-radius:3px;overflow:hidden}
 .rp .bar .f{display:block;height:100%;border-radius:3px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .rp .note{font-size:10px;color:#5f687b}
+.rp .tw{overflow-x:auto}
+.rp .tw th{white-space:normal;vertical-align:bottom;min-width:48px}
+.rp caption{caption-side:top;text-align:left;font-size:10px;color:#5f687b;padding:0 0 4px}
+.rp .q{color:#b45309;font-weight:700;margin-left:3px;cursor:help}
+.rp .warnbox{margin:0 0 14px;padding:8px 10px;border-radius:8px;background:#fff6e6;color:#7a3e06;border:1px solid #f3d9a8;font-size:11.5px}
 .rp .pb{break-before:page}
-@media print{.rp{padding:0;max-width:none}.rp tfoot{display:table-row-group}.rp thead{display:table-header-group}}
+@media print{.rp{padding:0;max-width:none}.rp .tw{overflow:visible}.rp tfoot{display:table-row-group}.rp thead{display:table-header-group}}
 `;
 
 const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#8a8f99'];
@@ -127,7 +136,7 @@ export default function ReportPage() {
   const makeLink = async () => {
     if (!ref.current) return;
     const frag = await encodeShare(
-      { v: 1, t: `${t('report.title')} · ${portfolioName} · ${periodLabel}`, h: sanitizeReportHtml(ref.current.outerHTML), g: new Date().toISOString(), lang: f.language },
+      { v: 1, t: `${t('report.title')} · ${portfolioName} · ${periodLabel}`, h: compactReportHtml(sanitizeReportHtml(ref.current.outerHTML)), g: new Date().toISOString(), lang: f.language },
       sharePass || undefined,
     );
     setShareUrl(`${location.origin}/compartido#${frag}`);
@@ -269,6 +278,19 @@ function ReportBody({
   const bench = useApp((st) => primaryBenchmark(st.settings.benchmarks, st.settings.reportingCurrency));
   const m = (v: number | undefined, signed = false) => (f.privacy ? MASK : formatMoney(v, f.currency, f.locale, { signed }));
   const p = (v: number | undefined, signed = true, d = 2) => formatPct(v, f.locale, { signed, decimals: d });
+  // W47: the monthly table states the currency once (caption) instead of in every cell.
+  const dec = currencyDecimals(f.currency);
+  const n = (v: number | undefined, signed = false) =>
+    f.privacy
+      ? MASK
+      : v === undefined || !Number.isFinite(v)
+        ? '—'
+        : new Intl.NumberFormat(f.locale, { minimumFractionDigits: dec, maximumFractionDigits: dec, signDisplay: signed ? 'exceptZero' : 'auto' }).format(v).replace(/[\u00a0\u202f]/g, ' ');
+  // W48: months whose figures depend on a doubtful trade price or an implicit deposit carry a mark.
+  const implicitMonths = new Set((a?.implicitFunding ?? []).map((x) => x.month));
+  const priceMonths = new Set(allRows.filter((r) => parsePriceWarnings(r.warnings).length).map((r) => r.month));
+  const markPrice = rows.some((r) => priceMonths.has(r.month));
+  const markImplicit = rows.some((r) => implicitMonths.has(r.month));
   const cls = (v: number | undefined) => (v === undefined ? '' : v > 0 ? 'pos' : v < 0 ? 'neg' : '');
   const twr = s?.twr ?? compound(rows.map((r) => r.twr));
   const years = yearsOf(s);
@@ -351,6 +373,12 @@ function ReportBody({
         </div>
       </div>
 
+      {(a?.fxMissing.length ?? 0) > 0 && (
+        <div className="warnbox" data-testid="report-fx-missing">
+          {t('fxGuard.report', { pairs: fxPairs(a!.fxMissing, f.currency), currency: f.currency })}
+        </div>
+      )}
+
       <section>
         <h2>{t('report.summary')}</h2>
         <div className="kpis">
@@ -413,7 +441,9 @@ function ReportBody({
 
       <section>
         <h2>{t('monthly.table')}</h2>
+        <div className="tw">
         <table>
+          <caption>{t('report.amountsIn', { currency: f.currency })}</caption>
           <thead>
             <tr>
               <th>{t('monthly.col.month')}</th>
@@ -434,13 +464,25 @@ function ReportBody({
           <tbody>
             {rows.map((r) => (
               <tr key={r.month}>
-                <td>{formatMonth(r.month, f.locale)}</td>
-                <td>{m(r.startValueBase)}</td>
-                <td>{m(r.netFlowsBase, true)}</td>
-                <td>{m(r.incomeBase)}</td>
-                <td>{m(-Math.abs(r.feesBase))}</td>
-                <td className={cls(r.gainBase)}>{m(r.gainBase, true)}</td>
-                <td style={{ fontWeight: 600 }}>{m(r.endValueBase)}</td>
+                <td>
+                  {formatMonth(r.month, f.locale)}
+                  {priceMonths.has(r.month) && (
+                    <span className="q" title={t('pw.outlier')} data-testid="report-mark-price">
+                      †
+                    </span>
+                  )}
+                  {implicitMonths.has(r.month) && (
+                    <span className="q" title={t('diag.implicitMonth')} data-testid="report-mark-implicit">
+                      ‡
+                    </span>
+                  )}
+                </td>
+                <td>{n(r.startValueBase)}</td>
+                <td>{n(r.netFlowsBase, true)}</td>
+                <td>{n(r.incomeBase)}</td>
+                <td>{n(-Math.abs(r.feesBase))}</td>
+                <td className={cls(r.gainBase)}>{n(r.gainBase, true)}</td>
+                <td style={{ fontWeight: 600 }}>{n(r.endValueBase)}</td>
                 <td style={{ background: heatColor(r.twr), fontWeight: 600 }}>{p(r.twr)}</td>
                 <td className={cls(r.cumulativeTwr)}>{p(r.cumulativeTwr)}</td>
                 <td>{p(r.localReturn)}</td>
@@ -453,12 +495,12 @@ function ReportBody({
           <tfoot>
             <tr>
               <td>{t('common.total')}</td>
-              <td>{m(rows[0]?.startValueBase)}</td>
-              <td>{m(tot((r) => r.netFlowsBase), true)}</td>
-              <td>{m(tot((r) => r.incomeBase))}</td>
-              <td>{m(-Math.abs(tot((r) => r.feesBase)))}</td>
-              <td>{m(tot((r) => r.gainBase), true)}</td>
-              <td>{m(rows[rows.length - 1]?.endValueBase)}</td>
+              <td>{n(rows[0]?.startValueBase)}</td>
+              <td>{n(tot((r) => r.netFlowsBase), true)}</td>
+              <td>{n(tot((r) => r.incomeBase))}</td>
+              <td>{n(-Math.abs(tot((r) => r.feesBase)))}</td>
+              <td>{n(tot((r) => r.gainBase), true)}</td>
+              <td>{n(rows[rows.length - 1]?.endValueBase)}</td>
               <td>{p(compound(rows.map((r) => r.twr)))}</td>
               <td />
               <td>{p(local)}</td>
@@ -468,6 +510,13 @@ function ReportBody({
             </tr>
           </tfoot>
         </table>
+        </div>
+        {(markPrice || markImplicit) && (
+          <p className="note" data-testid="report-quality-legend">
+            {markPrice && <span>† {t('report.qualityPrice')} </span>}
+            {markImplicit && <span>‡ {t('report.qualityImplicit')}</span>}
+          </p>
+        )}
       </section>
 
       <section className="pb">
@@ -581,8 +630,9 @@ function ReportBody({
 }
 
 /** Static SVG line chart (value vs. invested) for print and snapshots. */
-function SvgValueChart({ data, privacy, locale, currency, inflation }: { data: SeriesPoint[]; privacy: boolean; locale: string; currency: string; inflation?: string }) {
+function SvgValueChart({ data: full, privacy, locale, currency, inflation }: { data: SeriesPoint[]; privacy: boolean; locale: string; currency: string; inflation?: string }) {
   const { t } = useTranslation();
+  const data = downsample(full);
   const W = 1000;
   const H = 220;
   const pad = { l: 70, r: 10, t: 10, b: 24 };
@@ -592,7 +642,7 @@ function SvgValueChart({ data, privacy, locale, currency, inflation }: { data: S
   const max = Math.max(...vals) * 1.02;
   const x = (i: number) => pad.l + (i / Math.max(1, data.length - 1)) * (W - pad.l - pad.r);
   const y = (v: number) => pad.t + (1 - (v - min) / (max - min || 1)) * (H - pad.t - pad.b);
-  const path = (fn: (d: SeriesPoint) => number) => data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(fn(d)).toFixed(1)}`).join('');
+  const path = (fn: (d: SeriesPoint) => number) => data.map((d, i) => `${i ? 'L' : 'M'}${Math.round(x(i))},${Math.round(y(fn(d)))}`).join('');
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => min + (max - min) * k);
   const xt = [0, Math.floor(data.length / 3), Math.floor((2 * data.length) / 3), data.length - 1];
   const hasReal = !!inflation && data.some((d) => d.investedRealBase !== undefined);

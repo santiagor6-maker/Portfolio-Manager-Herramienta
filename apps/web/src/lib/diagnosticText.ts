@@ -4,7 +4,7 @@
  * ids, money and quantities formatted for the locale.
  */
 import type { Diagnostic, Instrument, Transaction } from '@pm/core';
-import { formatMoney } from './format';
+import { formatDate, formatMoney } from './format';
 
 type T = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -138,6 +138,51 @@ export function describeDiagnostic(d: Diagnostic, c: DiagContext): string {
     if (s) return s;
   }
   return cleanMessage(d.message, c.instruments, c.locale);
+}
+
+/**
+ * W41: validation issues (`validateTransactions`) carry English messages too ("SELL of 20 BVMF:VALE3
+ * on 2023-01-02 exceeds holding of 0"). Localized from the code and the transaction; numbers parsed
+ * from the message. Codes without a sentence fall back to the code's label + symbol, never the raw
+ * English text.
+ */
+export function describeIssue(i: { code: string; message: string; transactionId?: string }, c: DiagContext): string {
+  const m = i.message;
+  const sym = (id?: string) => (id ? (c.instruments.get(id)?.symbol ?? id.split(':').pop() ?? id) : '');
+  const tx = c.tx;
+  const day = (d?: string) => (d ? formatDate(d, c.locale, 'short') : '');
+  const base: Record<string, string> = {
+    symbol: sym(tx?.instrumentId),
+    type: tx ? c.t(`tx.type.${tx.type}`, { defaultValue: tx.type }) : '',
+    date: day(tx?.date),
+  };
+  let p: Record<string, string> | undefined = base;
+  let r: RegExpMatchArray | null;
+  switch (i.code) {
+    case 'OVERSELL':
+      r = m.match(new RegExp(`^(\\w+) of ${NUM} (\\S+) on (\\d{4}-\\d{2}-\\d{2}) exceeds holding of ${NUM}`));
+      p = r ? { ...base, symbol: sym(r[3]), quantity: qty(r[2]!, c.locale), date: day(r[4]), held: qty(r[5]!, c.locale), type: c.t(`tx.type.${r[1]}`, { defaultValue: r[1] }) } : undefined;
+      break;
+    case 'INCOME_WITHOUT_POSITION':
+      r = m.match(/^(\w+) for (\S+) on (\d{4}-\d{2}-\d{2})/);
+      p = r ? { ...base, symbol: sym(r[2]), date: day(r[3]), type: c.t(`tx.type.${r[1]}`, { defaultValue: r[1] }) } : base;
+      break;
+    case 'CURRENCY_MISMATCH':
+      r = m.match(new RegExp(`currency ${CCY} differs from instrument currency ${CCY}`));
+      p = r ? { ...base, from: r[1]!, to: r[2]! } : undefined;
+      break;
+    case 'FUTURE_DATE':
+      r = m.match(/Date (\d{4}-\d{2}-\d{2})/);
+      p = { ...base, date: r ? day(r[1]) : base.date! };
+      break;
+  }
+  if (p) {
+    const s = c.t(`diag.vtext.${i.code}`, { ...p, defaultValue: '' });
+    if (s) return s;
+  }
+  const label = c.t(`diag.code.${i.code}`, { defaultValue: '' });
+  if (label) return [label, base.symbol, base.date].filter(Boolean).join(' · ');
+  return cleanMessage(m, c.instruments, c.locale);
 }
 
 /** Core R7: "close to a factor of 10" / "1/100" in a TRADE_PRICE_UNIT_SUSPECT message. */

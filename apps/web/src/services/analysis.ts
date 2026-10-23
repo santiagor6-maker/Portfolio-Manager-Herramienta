@@ -33,6 +33,7 @@ import type {
 } from '@pm/core';
 import { addDays } from '../lib/ids';
 import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
+import { blankUnconvertible, missingFxCurrencies } from './fxCoverage';
 
 export interface Dataset {
   portfolios: (Portfolio & { isDemo?: boolean })[];
@@ -152,6 +153,11 @@ export interface Analysis {
   implicitFunding: ImplicitFunding[];
   /** W31: real holdings valued with sample (synthetic) prices. */
   demoPriced: string[];
+  /**
+   * W40: currencies in scope with no FX route to the reporting currency (pair not downloaded). When
+   * non-empty every reporting-currency figure is NaN ("—"), never the engine's zeros.
+   */
+  fxMissing: CurrencyCode[];
   /** Most recent price date across holdings (to flag stale data). */
   latestPriceDate?: ISODate;
   /** Risk-free rate used by Sharpe/Sortino and where it came from (W29). */
@@ -268,6 +274,7 @@ export function computeAnalysis(ds: Dataset): Analysis {
     diagnostics: [],
     implicitFunding: [],
     demoPriced: ds.demoPricedInstruments ?? [],
+    fxMissing: [],
     issues: { errors: [], warnings: [] },
     engineErrors,
     computeMs: 0,
@@ -291,6 +298,8 @@ export function computeAnalysis(ds: Dataset): Analysis {
   if (!txs.length) return finish(out, t0);
   const firstDate = txs.reduce((min, t) => (t.date < min ? t.date : min), txs[0]!.date);
   out.firstDate = firstDate;
+  const scopeBases = ds.portfolios.filter((p) => ds.selectedPortfolioId === 'all' || p.id === ds.selectedPortfolioId).map((p) => p.baseCurrency);
+  out.fxMissing = attempt('fxCoverage', () => missingFxCurrencies(ds.reportingCurrency, txs, ds.instruments, market, ds.asOf, scopeBases)) ?? [];
 
   // One explicit engine per input change: every call below shares the ledger pass and its caches
   // (≈0.5 ms per call vs ≈10 ms for the stateless API on 30k transactions).
@@ -565,6 +574,7 @@ function computeMovers(v: Valuation, ds: Dataset, market: MarketData): Mover[] {
 }
 
 function finish(a: Analysis, t0: number): Analysis {
+  if (a.fxMissing.length) blankUnconvertible(a);
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   a.computeMs = Math.round(t1 - t0);
   return a;

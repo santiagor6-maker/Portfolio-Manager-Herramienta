@@ -136,7 +136,13 @@ export async function buildPlan(today = todayIso()): Promise<Plan> {
   return plan;
 }
 
-export function refreshMarketData(opts: { force?: boolean } = {}): Promise<void> {
+/**
+ * Refreshes market data. `fx` (W40): fetch only the USD/<currency> series of those currencies right
+ * away (used when the reporting currency changes to one whose rate is not cached), without waiting
+ * for — or being throttled by — the full refresh.
+ */
+export function refreshMarketData(opts: { force?: boolean; fx?: CurrencyCode[] } = {}): Promise<void> {
+  if (opts.fx) return fetchFx(opts.fx).then(() => undefined);
   if (inflight) return inflight;
   inflight = (async () => {
     // Auto refreshes are throttled across reloads using persisted timestamps. Failed attempts
@@ -154,6 +160,76 @@ export function refreshMarketData(opts: { force?: boolean } = {}): Promise<void>
     inflight = null;
   });
   return inflight;
+}
+
+const fxInflight = new Map<string, Promise<boolean>>();
+
+/** First transaction date of the real portfolios (all portfolios when only the sample exists). */
+async function earliestTxDate(): Promise<string | undefined> {
+  const [portfolios, txs] = await Promise.all([db.portfolios.toArray(), db.transactions.toArray()]);
+  const demo = new Set(portfolios.filter((p) => p.isDemo).map((p) => p.id));
+  const real = txs.filter((t) => !demo.has(t.portfolioId));
+  let first: string | undefined;
+  for (const t of real.length ? real : txs) if (!first || t.date < first) first = t.date;
+  return first;
+}
+
+/**
+ * W40: downloads USD/<c> for each currency (USD itself needs none) from the first transaction, or
+ * from the last cached point when the cached real series already covers the history. The store's
+ * `fxPending` drives the "Convirtiendo a BRL…" state; `fxFailed` the "no rate" warning.
+ */
+export function fetchFx(currencies: CurrencyCode[]): Promise<boolean> {
+  const wanted = [...new Set(currencies)].filter((c) => c && c !== 'USD').sort();
+  if (!wanted.length) return Promise.resolve(true);
+  const key = wanted.join(',');
+  const running = fxInflight.get(key);
+  if (running) return running;
+  const { setMarket } = useApp.getState();
+  const pending = () => useApp.getState().market.fxPending;
+  setMarket({ fxPending: [...new Set([...pending(), ...wanted])], fxFailed: useApp.getState().market.fxFailed.filter((c) => !wanted.includes(c)) });
+  const job = (async () => {
+    const today = todayIso();
+    const first = (await earliestTxDate()) ?? addDays(today, -400);
+    const fx: FxRequest[] = [];
+    for (const c of wanted) {
+      const cached = await db.fxSeries.get(`USD/${c}`);
+      const pts = cached && !cached.isDemo ? cached.points : [];
+      const covers = pts.length > 0 && pts[0]!.date <= first;
+      fx.push({ base: 'USD', quote: c, from: covers ? addDays(pts[pts.length - 1]!.date, -7) : addDays(first, -10), interval: '1d', source: 'auto' });
+    }
+    const failed: CurrencyCode[] = [];
+    try {
+      const res = await getMarketClient().batch({ fx });
+      for (const [k, r] of res.fx.entries()) {
+        if (r.ok && r.data.series.points.length) await mergeFxSeries(r.data.series);
+        else failed.push(fx[k]!.quote);
+      }
+    } catch {
+      failed.push(...wanted);
+    }
+    const now = useApp.getState().market;
+    setMarket({
+      fxPending: now.fxPending.filter((c) => !wanted.includes(c)),
+      fxFailed: [...new Set([...now.fxFailed, ...failed])],
+    });
+    return failed.length === 0;
+  })().finally(() => fxInflight.delete(key));
+  fxInflight.set(key, job);
+  return job;
+}
+
+/**
+ * W40: called when the reporting currency changes. Fetches USD/<currency> at once when no real
+ * series is cached for it (the sample's synthetic series never value a real portfolio).
+ */
+export async function ensureReportingFx(currency: CurrencyCode): Promise<void> {
+  if (currency === 'USD') return;
+  const real = (await db.portfolios.toArray()).filter((p) => !p.isDemo);
+  if (!real.length) return;
+  const cached = await db.fxSeries.get(`USD/${currency}`);
+  if (cached && !cached.isDemo && cached.points.length) return;
+  await fetchFx([currency]);
 }
 
 async function persistStatus(status: MarketStatus, sources?: Record<string, SourceStatus>, lastRefresh?: number) {
@@ -221,6 +297,8 @@ async function doRefresh(): Promise<void> {
       for (const r of res.fx) {
         if (r.ok) {
           await mergeFxSeries(r.data.series);
+          const failedFx = useApp.getState().market.fxFailed;
+          if (failedFx.includes(r.data.series.quote)) setMarket({ fxFailed: failedFx.filter((c) => c !== r.data.series.quote) });
           bump(r.data.series.source || 'fx', true);
         } else bump('fx', false, r.error.message);
       }

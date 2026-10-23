@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
-import { saveTransaction } from '../db/repo';
+import { getMeta, saveTransaction, setMeta } from '../db/repo';
 import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
 import { Banner, Card, Field, Kpi, Modal, PageHeader, Segmented, Skeleton } from '../components/ui';
 import { parseDecimal, toInputNumber } from '../lib/parse';
-import { cleanTaxMessage } from '../lib/taxText';
+import { tidyTaxIssues, YEARLY_NOTICES } from '../lib/taxText';
 import { useApp, useFmt } from '../store/app';
 import { usePortfolios } from '../hooks/useData';
 import { formatDate, formatMoney, formatMonth, formatPct, formatQuantity } from '../lib/format';
 import { downloadText } from '../lib/export';
-import { brazilApuracaoCsv, colombiaAccountantCsv, runTaxReports, TAX_DISCLAIMER, type TaxReports } from '../services/tax';
+import { brazilApuracaoCsv, colombiaAccountantCsv, darfDueOn, pendingRedemptions, redemptionTransactions, runTaxReports, TAX_DISCLAIMER, type PendingRedemption, type TaxReports } from '../services/tax';
+import { useInstrumentLabel } from '../hooks/useAnalysis';
 import type { Lang } from '../lib/format';
 
 export default function TaxesPage() {
@@ -98,6 +99,7 @@ export default function TaxesPage() {
         </div>
       ) : country === 'CO' && reports?.colombia ? (
         <>
+          <MaturedCdts portfolioId={pid} year={year} version={txVersion} />
           <ColombiaView r={reports.colombia} money={money} />
           {reports.coPack && (
             <>
@@ -125,19 +127,90 @@ export default function TaxesPage() {
 
 type MoneyFn = (v: number | undefined, ccy: string) => string;
 
-function Issues({ issues }: { issues: { level: string; message: string }[] }) {
+/**
+ * W42: a CDT that matured without a recorded payment stays in the tax patrimonio at cost (the tax
+ * package reads transactions only). Warn and offer to record the engine's estimate in one click.
+ */
+function MaturedCdts({ portfolioId, year, version }: { portfolioId: string; year: number; version: number }) {
   const { t } = useTranslation();
-  if (!issues.length) return null;
+  const f = useFmt();
+  const label = useInstrumentLabel();
+  const [list, setList] = useState<PendingRedemption[]>([]);
+  const [busy, setBusy] = useState<string>();
+  useEffect(() => {
+    let cancel = false;
+    void pendingRedemptions(portfolioId, `${year}-12-31`).then((r) => !cancel && setList(r));
+    return () => {
+      cancel = true;
+    };
+  }, [portfolioId, year, version]);
+  if (!list.length) return null;
+  const record = async (r: PendingRedemption) => {
+    setBusy(`${r.instrumentId}|${r.date}`);
+    try {
+      for (const x of redemptionTransactions(r, t('tax.co.redemptionNote'))) await saveTransaction(x);
+    } finally {
+      setBusy(undefined);
+    }
+  };
   return (
-    <Card className="mt-3" title={t('tax.issues', { count: issues.length })}>
-      <ul className="flex flex-col gap-1.5 text-[13px]">
-        {issues.slice(0, 30).map((i, k) => (
+    <div className="flex flex-col gap-2 mb-3" data-testid="matured-cdts">
+      {list.map((r) => {
+        const net = r.principal + r.interestGross - r.withholding;
+        const key = `${r.instrumentId}|${r.date}`;
+        return (
+          <Banner
+            key={key}
+            tone="warn"
+            action={
+              <button className="btn btn-sm btn-primary" disabled={busy === key} onClick={() => void record(r)} data-testid="record-redemption">
+                {t('tax.co.recordRedemption', { amount: formatMoney(net, r.currency, f.locale) })}
+              </button>
+            }
+          >
+            <strong className="font-semibold">{t('tax.co.maturedTitle', { symbol: label(r.instrumentId).symbol, date: formatDate(r.date, f.locale) })}</strong>{' '}
+            <span className="text-ink-2">
+              {t('tax.co.maturedBody', {
+                principal: formatMoney(r.principal, r.currency, f.locale),
+                interest: formatMoney(r.interestGross, r.currency, f.locale),
+                withholding: formatMoney(r.withholding, r.currency, f.locale),
+              })}
+            </span>
+          </Banner>
+        );
+      })}
+    </div>
+  );
+}
+
+function Issues({ issues }: { issues: { level: string; message: string; code?: string }[] }) {
+  const { t } = useTranslation();
+  const f = useFmt();
+  // W45: one line per distinct message, numbers in the user's locale; yearly notices (PTAX) once.
+  const seenNotices = useLiveQuery(async () => (await getMeta<string[]>('taxNoticesSeen')) ?? [], [], [] as string[]);
+  const tidy = tidyTaxIssues(issues, f.locale);
+  const notices = tidy.filter((i) => i.code && YEARLY_NOTICES.includes(i.code) && !seenNotices.includes(i.code));
+  const list = tidy.filter((i) => !(i.code && YEARLY_NOTICES.includes(i.code)));
+  if (!list.length && !notices.length) return null;
+  return (
+    <Card className="mt-3" title={t('tax.issues', { count: list.length })}>
+      <ul className="flex flex-col gap-1.5 text-[13px]" data-testid="tax-issues">
+        {list.slice(0, 30).map((i, k) => (
           <li key={k} className="flex gap-2">
             {i.level === 'info' ? <Info size={14} className="text-info mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" />}
-            <span>{cleanTaxMessage(i.message)}</span>
+            <span>{i.text}</span>
           </li>
         ))}
       </ul>
+      {notices.map((n) => (
+        <p key={n.code} className="text-xs text-muted mt-3 flex items-start gap-2" data-testid="tax-yearly-notice">
+          <Info size={13} className="text-info mt-0.5 shrink-0" aria-hidden />
+          <span className="flex-1">{n.text}</span>
+          <button className="text-accent hover:underline shrink-0" onClick={() => void setMeta('taxNoticesSeen', [...seenNotices, n.code!])}>
+            {t('tax.gotIt')}
+          </button>
+        </p>
+      ))}
     </Card>
   );
 }
@@ -363,6 +436,14 @@ function DarfPaymentDialog({ darf, portfolioId, onClose }: { darf: Darf; portfol
   const [pid, setPid] = useState(portfolioId !== 'all' ? portfolioId : (real[0]?.id ?? ''));
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState(toInputNumber(darf.late?.total ?? darf.amount, f.locale));
+  // W44: the amount follows the payment date (multa + Selic recomputed) until the user types one.
+  const [edited, setEdited] = useState(false);
+  const due = darfDueOn(darf, date);
+  const changeDate = (d: string) => {
+    setDate(d);
+    const next = darfDueOn(darf, d);
+    if (!edited && next) setAmount(toInputNumber(next.total, f.locale));
+  };
   const value = parseDecimal(amount, f.locale);
   const save = async () => {
     if (!pid || value === undefined || value <= 0) return;
@@ -393,12 +474,34 @@ function DarfPaymentDialog({ darf, portfolioId, onClose }: { darf: Darf; portfol
         )}
         <div className="grid grid-cols-2 gap-3">
           <Field label={t('tax.br.payDate')} htmlFor="darf-date">
-            <input id="darf-date" className="input num" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            <input id="darf-date" className="input num" type="date" value={date} onChange={(e) => changeDate(e.target.value)} required />
           </Field>
           <Field label={t('tax.br.payAmount')} htmlFor="darf-amount">
-            <input id="darf-amount" className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            <input
+              id="darf-amount"
+              className="input num"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => {
+                setEdited(true);
+                setAmount(e.target.value);
+              }}
+              required
+            />
           </Field>
         </div>
+        {due && (
+          <p className="text-xs text-muted -mt-1" data-testid="darf-due-breakdown">
+            {due.daysLate > 0
+              ? t('tax.br.dueBreakdown', { principal: formatMoney(darf.amount, 'BRL', f.locale), multa: formatMoney(due.multa, 'BRL', f.locale), juros: due.juros !== undefined ? formatMoney(due.juros, 'BRL', f.locale) : '—', total: formatMoney(due.total, 'BRL', f.locale), days: due.daysLate })
+              : t('tax.br.dueOnTime', { total: formatMoney(due.total, 'BRL', f.locale) })}
+            {edited && Math.abs((value ?? 0) - due.total) > 0.005 && (
+              <button type="button" className="ml-1 text-accent hover:underline" onClick={() => { setEdited(false); setAmount(toInputNumber(due.total, f.locale)); }} data-testid="darf-use-due">
+                {t('tax.br.useDue')}
+              </button>
+            )}
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn" onClick={onClose}>
             {t('common.cancel')}

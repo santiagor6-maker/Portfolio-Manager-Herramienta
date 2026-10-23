@@ -14,7 +14,7 @@ import { downloadBlob, downloadText } from '../lib/export';
 import { db } from '../db/schema';
 import { getMeta, setMeta } from '../db/repo';
 import type { TransitResolution } from '../services/tax';
-import { cleanTaxMessage } from '../lib/taxText';
+import { cleanTaxMessage, localizeNumbers } from '../lib/taxText';
 
 type MoneyFn = (v: number | undefined, ccy: string) => string;
 
@@ -205,6 +205,7 @@ export function BensDireitosView({ report, money, onChanged }: { report: BensDir
 
 function TransitResolutionRow({ issue, onChanged }: { issue: TaxIssue; onChanged: () => void }) {
   const { t } = useTranslation();
+  const f = useFmt();
   const [busy, setBusy] = useState(false);
   const resolve = async (value: 'alienado' | 'mantido') => {
     setBusy(true);
@@ -222,7 +223,7 @@ function TransitResolutionRow({ issue, onChanged }: { issue: TaxIssue; onChanged
     <div className="rounded-lg border border-neg/30 bg-neg/5 p-3 text-[13px] flex flex-col gap-2">
       <div className="flex gap-2">
         <AlertTriangle size={15} className="text-neg shrink-0 mt-0.5" />
-        <span>{cleanTaxMessage(issue.message)}</span>
+        <span>{localizeNumbers(cleanTaxMessage(issue.message), f.locale)}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="btn btn-sm" disabled={busy} onClick={() => void resolve('alienado')} data-testid="transit-alienado">

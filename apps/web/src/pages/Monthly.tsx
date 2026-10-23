@@ -10,6 +10,7 @@ import { useApp, useFmt } from '../store/app';
 import { formatMonth, formatPct, monthName } from '../lib/format';
 import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { PriceWarnings } from '../components/PriceWarnings';
+import { FxUnavailable } from '../components/FxNotice';
 import { downloadText, downloadXlsx, toCsv } from '../lib/export';
 import { indexName } from '../lib/labels';
 
@@ -137,7 +138,7 @@ export default function MonthlyPage() {
   const closedRows = rows.filter((r) => r.month < currentMonth && !r.partial);
   const last = closedRows[closedRows.length - 1] ?? rows[rows.length - 1];
   const risk = a?.risk;
-  const positive = rows.length ? rows.filter((r) => r.twr > 0).length / rows.length : undefined;
+  const positive = rows.length && !a?.fxMissing.length ? rows.filter((r) => r.twr > 0).length / rows.length : undefined;
   const lastRow = rows[rows.length - 1];
 
   const totals = useMemo(() => {
@@ -164,7 +165,7 @@ export default function MonthlyPage() {
     flows: { label: t('monthly.col.flows'), hint: t('monthly.col.flowsHint'), cell: (r) => <Money value={r.netFlowsBase} signed className={r.netFlowsBase ? '' : 'text-muted'} />, total: <Money value={totals.flows} signed />, csv: (r) => r.netFlowsBase, fmt: 'money' },
     income: { label: t('monthly.col.income'), cell: (r) => <Money value={r.incomeBase} className={r.incomeBase ? 'text-pos' : 'text-muted'} />, total: <Money value={totals.income} />, csv: (r) => r.incomeBase, fmt: 'money' },
     fees: { label: t('monthly.col.fees'), cell: (r) => <Money value={r.feesBase ? -Math.abs(r.feesBase) : 0} className="text-muted" />, total: <Money value={-Math.abs(totals.fees)} />, csv: (r) => -Math.abs(r.feesBase), fmt: 'money' },
-    gain: { label: t('monthly.col.gain'), hint: t('monthly.col.gainHint'), cell: (r) => <Money value={r.gainBase} signed className={r.gainBase >= 0 ? 'text-pos' : 'text-neg'} />, total: <Money value={totals.gain} signed />, csv: (r) => r.gainBase, fmt: 'money' },
+    gain: { label: t('monthly.col.gain'), hint: t('monthly.col.gainHint'), cell: (r) => <Money value={r.gainBase} signed className={r.gainBase > 0 ? 'text-pos' : r.gainBase < 0 ? 'text-neg' : 'text-muted'} />, total: <Money value={totals.gain} signed />, csv: (r) => r.gainBase, fmt: 'money' },
     end: { label: t('monthly.col.end'), cell: (r) => <Money value={r.endValueBase} className="font-semibold" />, total: <Money value={totals.end} />, csv: (r) => r.endValueBase, fmt: 'money' },
     twr: {
       label: t('monthly.col.twr'),
@@ -364,6 +365,7 @@ export default function MonthlyPage() {
           </div>
         ) : (
           <>
+            {(a?.fxMissing.length ?? 0) > 0 && <FxUnavailable className="py-2 border-b border-line text-warn" />}
             {/* Desktop / tablet table */}
             <div className="hidden md:block overflow-x-auto print:block print:overflow-visible" data-testid="monthly-table">
               <table className={clsx('table monthly-table', compact && 'table-compact')}>

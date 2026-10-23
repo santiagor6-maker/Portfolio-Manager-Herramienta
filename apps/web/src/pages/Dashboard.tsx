@@ -19,6 +19,9 @@ import { renameInstrumentRows } from '../components/DiagnosticsPanel';
 import { db } from '../db/schema';
 import { previousBusinessDay } from '../services/analysis';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
+import { describeIssue } from '../lib/diagnosticText';
+import { FxUnavailable, fxPairs } from '../components/FxNotice';
+import { useConversion } from '../hooks/useConversion';
 
 const DIMS: AllocationDimension[] = ['country', 'currency', 'assetClass', 'sector'];
 
@@ -26,6 +29,8 @@ export default function DashboardPage() {
   const { t } = useTranslation();
   const { analysis: a, loading } = useAnalysis();
   const f = useFmt();
+  const conv = useConversion();
+  const noFx = conv.missing.length > 0;
   const [period, setPeriod] = useState<ChartPeriod>('ALL');
   const [dim, setDim] = useState<AllocationDimension>('country');
   const sliceLabel = useSliceLabel(dim);
@@ -71,7 +76,9 @@ export default function DashboardPage() {
           label={t('dashboard.totalValue')}
           value={<Money value={v?.totalMarketValueBase} />}
           sub={
-            stalePrices && a?.latestPriceDate ? (
+            noFx ? (
+              <span className="text-warn text-xs" data-testid="kpi-no-fx">{t('fxGuard.short', { pairs: fxPairs(conv.missing, conv.target) })}</span>
+            ) : stalePrices && a?.latestPriceDate ? (
               <span className="text-muted text-xs">{t('dashboard.pricesAsOf', { date: formatDate(a.latestPriceDate, f.locale) })}</span>
             ) : day ? (
               <span className="flex items-center gap-1.5">
@@ -153,7 +160,7 @@ export default function DashboardPage() {
             />
           }
         >
-          {loading ? <Skeleton className="h-[300px]" /> : series.length ? <ValueChart data={series} inflationLabel={a?.inflationIndex ? indexName(a.inflationIndex) : undefined} /> : <NoSeries />}
+          {loading ? <Skeleton className="h-[300px]" /> : noFx ? <FxUnavailable /> : series.length ? <ValueChart data={series} inflationLabel={a?.inflationIndex ? indexName(a.inflationIndex) : undefined} /> : <NoSeries />}
         </Card>
 
         <Card
@@ -172,7 +179,7 @@ export default function DashboardPage() {
               options={DIMS.map((d) => ({ value: d, label: t(`dim.${d}`) }))}
             />
           </div>
-          {loading ? <Skeleton className="h-[170px]" /> : <AllocationDonut slices={a?.allocations[dim] ?? []} labelFor={sliceLabel} />}
+          {loading ? <Skeleton className="h-[170px]" /> : noFx ? <FxUnavailable className="py-10" /> : <AllocationDonut slices={a?.allocations[dim] ?? []} labelFor={sliceLabel} />}
         </Card>
       </div>
 
@@ -187,6 +194,8 @@ export default function DashboardPage() {
         >
           {loading ? (
             <Skeleton className="h-[220px]" />
+          ) : noFx ? (
+            <FxUnavailable />
           ) : last12.length ? (
             <ReturnBars
               data={last12.map((m) => ({ month: m.month, twr: m.twr, bench: bench ? m.benchmarkReturns?.[bench] : undefined }))}
@@ -369,8 +378,12 @@ function WarningsCard() {
   const map = useInstrumentMap();
   const market = useApp((s) => s.market);
   const missing = a?.valuation?.missingPrices ?? [];
-  const missingFx = a?.valuation?.missingFx ?? [];
+  // W40: currencies without a rate are explained once by the page banner (with retry).
+  const missingFx = (a?.valuation?.missingFx ?? []).filter((c) => !a?.fxMissing.includes(c));
   const issues = [...(a?.issues.errors ?? []), ...(a?.issues.warnings ?? [])];
+  // W41: issues are described in the user's language from their code and transaction.
+  const issueTxIds = issues.map((i) => i.transactionId).filter((x): x is string => !!x);
+  const issueTxs = useLiveQuery(async () => new Map((await db.transactions.bulkGet(issueTxIds)).filter((x) => !!x).map((x) => [x!.id, x!])), [issueTxIds.join('|')]);
   const manualStale = (a?.valuation?.holdings ?? []).filter((h) => {
     const inst = map.get(h.instrumentId);
     // Manual prices are due at every month end: flag when the last closed month has none.
@@ -379,7 +392,7 @@ function WarningsCard() {
   const pending = a?.pendingCloses ?? [];
   const pendingIds = new Set(pending.map((p) => p.instrumentId));
   const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
-  const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error');
+  const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error' && !(d.code === 'MISSING_FX' && a?.fxMissing.length));
   const demoPriced = a?.demoPriced ?? [];
   const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0);
   return (
@@ -463,7 +476,9 @@ function WarningsCard() {
                     </button>
                   </span>
                 ) : (
-                  <span>{i.message}</span>
+                  <span className="flex-1" data-testid="warning-issue" title={i.message}>
+                    {describeIssue(i, { tx: i.transactionId ? issueTxs?.get(i.transactionId) : undefined, instruments: map, locale: f.locale, t })}
+                  </span>
                 )}
               </li>
             );

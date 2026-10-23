@@ -19,6 +19,10 @@ export interface MarketState {
   failedSymbols: string[];
   /** Last server error (W28): HTTP status and API code, e.g. 403 FORBIDDEN_ORIGIN, 429 RATE_LIMITED. */
   error?: { status?: number; code?: string; message: string };
+  /** W40: currencies whose USD rate is being downloaded for the reporting currency. */
+  fxPending: string[];
+  /** W40: currencies whose rate the server could not provide (last attempt). */
+  fxFailed: string[];
 }
 
 interface AppState {
@@ -49,7 +53,7 @@ export const useApp = create<AppState>((set) => ({
   ready: false,
   settings: DEFAULT_SETTINGS,
   computing: false,
-  market: { status: 'idle', sources: {}, failedSymbols: [] },
+  market: { status: 'idle', sources: {}, failedSymbols: [], fxPending: [], fxFailed: [] },
   onboardingOpen: false,
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   ibkrInbox: {},

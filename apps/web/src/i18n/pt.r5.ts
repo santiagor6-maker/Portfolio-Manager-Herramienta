@@ -1,0 +1,70 @@
+/** Round-5 strings (merged over pt.ts + pt.r2.ts). */
+import type { esR5 } from './es.r5';
+
+export const ptR5: typeof esR5 = {
+  fxGuard: {
+    converting: 'Convertendo para {{currency}}…',
+    convertingBody: 'Baixando a taxa de câmbio que falta; os valores aparecem assim que ela chegar.',
+    missingTitle: 'Sem taxa de câmbio para {{currency}}',
+    missingBody: 'Não há taxa {{pairs}}: os valores em {{currency}} aparecem como «—» e não são comparados com índices até obtê-la.',
+    offline: 'O servidor de cotações não responde.',
+    retry: 'Tentar de novo',
+    short: 'Sem taxa {{pairs}}',
+    chart: 'Não é possível converter para {{currency}}: falta a taxa {{pairs}}.',
+    report: 'Faltam taxas de câmbio ({{pairs}}): os valores em {{currency}} não puderam ser calculados e aparecem como «—».',
+  },
+  diag: {
+    vtext: {
+      OVERSELL: '{{type}} de {{quantity}} {{symbol}} em {{date}} maior que a posição ({{held}}). Falta registrar uma compra ou transferência?',
+      INCOME_WITHOUT_POSITION: '{{type}} de {{symbol}} em {{date}} sem unidades em carteira.',
+      CURRENCY_MISMATCH: 'O movimento de {{symbol}} está em {{from}} e o ativo é cotado em {{to}}: convertido pela taxa de mercado.',
+      FUTURE_DATE: 'Movimento com data futura ({{date}}).',
+      DUPLICATE_IMPORT: 'Possível duplicado: {{type}} de {{symbol}} de {{date}} já foi importado.',
+      ZERO_AMOUNT: '{{type}} de {{date}} sem valor.',
+      MISSING_QUANTITY: '{{type}} de {{symbol}} de {{date}} sem quantidade.',
+      MISSING_PRICE: '{{type}} de {{symbol}} de {{date}} sem preço nem valor.',
+      SPLIT_SAME_DAY_TRADE: '{{type}} de {{symbol}} no mesmo dia de um desdobramento: a quantidade deve estar em unidades pós-desdobramento.',
+      UNKNOWN_INSTRUMENT: 'O ativo deste movimento ({{date}}) não existe.',
+      MISSING_INSTRUMENT: '{{type}} de {{date}} sem ativo.',
+      SAME_CURRENCY_CONVERSION: 'Câmbio de {{date}} entre a mesma moeda.',
+      MISSING_TO_CURRENCY: 'Câmbio de {{date}} sem moeda de destino.',
+      NEGATIVE_AMOUNT: '{{type}} de {{date}} com valor negativo.',
+      NEGATIVE_QUANTITY: '{{type}} de {{symbol}} de {{date}} com quantidade negativa.',
+    },
+    code: {
+      DUPLICATE_ID: 'Movimento repetido',
+      DUPLICATE_IMPORT: 'Possível duplicado',
+      FUTURE_DATE: 'Data futura',
+      CURRENCY_MISMATCH: 'Moeda diferente da do ativo',
+      ZERO_AMOUNT: 'Sem valor',
+      MISSING_QUANTITY: 'Sem quantidade',
+      SPLIT_SAME_DAY_TRADE: 'Operação no dia de um desdobramento',
+      SAME_CURRENCY_CONVERSION: 'Câmbio para a mesma moeda',
+      MISSING_TO_CURRENCY: 'Falta a moeda de destino',
+      NEGATIVE_AMOUNT: 'Valor negativo',
+      NEGATIVE_QUANTITY: 'Quantidade negativa',
+      INVALID_COST_FRACTION: 'Fração de custo inválida',
+      INVALID_ACCRUAL: 'Renda fixa sem taxa',
+      UNKNOWN_INSTRUMENT: 'Ativo desconhecido',
+    },
+  },
+  report: {
+    amountsIn: 'Valores em {{currency}}',
+    qualityPrice: 'Preço atípico: o mês usa um preço de operação duvidoso (não confirmado ou longe do mercado).',
+    qualityImplicit: 'Aporte implícito: houve compras sem aporte registrado; os aportes e a rentabilidade do mês podem estar distorcidos.',
+  },
+  tax: {
+    gotIt: 'Entendi, não mostrar de novo',
+    co: {
+      maturedTitle: 'O CDT {{symbol}} venceu em {{date}} e o resgate não está registrado.',
+      maturedBody: 'Registre-o para que o patrimônio e os rendimentos o incluam (estimado: capital {{principal}} + juros {{interest}} − retenção {{withholding}}). Depois ajuste com o extrato do banco.',
+      recordRedemption: 'Registrar resgate estimado ({{amount}})',
+      redemptionNote: 'Resgate estimado do CDT no vencimento (capital + juros); ajuste com o extrato',
+    },
+    br: {
+      dueBreakdown: 'Nessa data: principal {{principal}} + multa {{multa}} + juros Selic {{juros}} = {{total}} ({{days}} dias de atraso).',
+      dueOnTime: 'Nessa data o pagamento está em dia: {{total}}.',
+      useDue: 'Usar o valor calculado',
+    },
+  },
+};

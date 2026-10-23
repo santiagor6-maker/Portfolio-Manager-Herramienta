@@ -4,6 +4,7 @@ import { useApp } from '../store/app';
 import type { Analysis, SeriesPoint } from '../services/analysis';
 import { useInstrumentMap } from './useData';
 import { addDays } from '../lib/ids';
+import { useConversion } from './useConversion';
 
 export function useAnalysis(): { analysis?: Analysis; loading: boolean; stale: boolean } {
   const analysis = useApp((s) => s.analysis);
@@ -12,7 +13,10 @@ export function useAnalysis(): { analysis?: Analysis; loading: boolean; stale: b
   const ccy = useApp((s) => s.settings.reportingCurrency);
   const pid = useApp((s) => s.settings.selectedPortfolioId);
   const stale = !!analysis && (analysis.baseCurrency !== ccy || analysis.portfolioId !== pid);
-  return { analysis, loading: !ready || !analysis, stale: stale || (computing && !analysis) };
+  // W40: while converting to a new reporting currency (recompute or missing rate downloading) every
+  // page shows skeletons, never the previous currency's figures or the engine's zeros.
+  const converting = useConversion().pending;
+  return { analysis, loading: !ready || !analysis || converting, stale: stale || (computing && !analysis) };
 }
 
 export type ChartPeriod = 'MTD' | 'YTD' | '1Y' | '3Y' | 'ALL';

@@ -2,9 +2,13 @@
  * W10: read-only share links without a backend account. The rendered report travels compressed
  * (deflate-raw) inside the URL fragment (`/compartido#p1.…`): browsers never send the fragment to the
  * server, so the data only lives in the link. With a passphrase the payload is AES-GCM encrypted
- * (PBKDF2, see lib/crypto) and the link alone reveals nothing (`#e1.…`).
+ * (PBKDF2, see lib/crypto) and the link alone reveals nothing (`#e2.…`).
+ *
+ * W46: the HTML is compacted before compressing (no test ids, no whitespace between tags) and the
+ * encrypted form encrypts the compressed bytes directly (`e2`: salt|iv|ciphertext in one base64url
+ * string) instead of base64 inside JSON inside base64 (`e1`, still readable).
  */
-import { decryptText, encryptText, type EncryptedFile } from './crypto';
+import { decryptBytes, decryptText, encryptBytes, type EncryptedFile } from './crypto';
 
 export interface SharePayload {
   v: 1;
@@ -33,35 +37,45 @@ async function pipe(data: Uint8Array, stream: CompressionStream | DecompressionS
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
+/** Drops what the viewer does not need from the report HTML (test ids, inter-tag whitespace). */
+export function compactReportHtml(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\sdata-testid="[^"]*"/g, '')
+    .replace(/\sstyle=""/g, '')
+    .replace(/>\s+</g, '><')
+    .trim();
+}
+
 /** Encodes the payload for the URL fragment; with a passphrase it is encrypted. */
 export async function encodeShare(p: SharePayload, passphrase?: string): Promise<string> {
-  const packed = toB64Url(await pipe(new TextEncoder().encode(JSON.stringify(p)), new CompressionStream('deflate-raw')));
-  if (!passphrase) return `p1.${packed}`;
-  const enc = await encryptText(packed, passphrase);
-  return `e1.${toB64Url(new TextEncoder().encode(JSON.stringify(enc)))}`;
+  const deflated = await pipe(new TextEncoder().encode(JSON.stringify(p)), new CompressionStream('deflate-raw'));
+  if (!passphrase) return `p1.${toB64Url(deflated)}`;
+  return `e2.${toB64Url(await encryptBytes(deflated, passphrase))}`;
 }
 
 export function isEncryptedShare(fragment: string): boolean {
-  return fragment.replace(/^#/, '').startsWith('e1.');
+  return /^e[12]\./.test(fragment.replace(/^#/, ''));
 }
 
 /** Decodes a fragment; throws 'invalid_link' or 'wrong_passphrase'. */
 export async function decodeShare(fragment: string, passphrase?: string): Promise<SharePayload> {
   const f = fragment.replace(/^#/, '');
-  let packed: string;
+  let deflated: Uint8Array;
   try {
-    if (f.startsWith('e1.')) {
-      if (!passphrase) throw new Error('needs_passphrase');
+    if (isEncryptedShare(f) && !passphrase) throw new Error('needs_passphrase');
+    if (f.startsWith('e2.')) deflated = await decryptBytes(fromB64Url(f.slice(3)), passphrase!);
+    else if (f.startsWith('e1.')) {
       const enc = JSON.parse(new TextDecoder().decode(fromB64Url(f.slice(3)))) as EncryptedFile;
-      packed = await decryptText(enc, passphrase);
-    } else if (f.startsWith('p1.')) packed = f.slice(3);
+      deflated = fromB64Url(await decryptText(enc, passphrase!));
+    } else if (f.startsWith('p1.')) deflated = fromB64Url(f.slice(3));
     else throw new Error('invalid_link');
   } catch (e) {
     if (e instanceof Error && (e.message === 'wrong_passphrase' || e.message === 'needs_passphrase')) throw e;
     throw new Error('invalid_link');
   }
   try {
-    const json = new TextDecoder().decode(await pipe(fromB64Url(packed), new DecompressionStream('deflate-raw')));
+    const json = new TextDecoder().decode(await pipe(deflated, new DecompressionStream('deflate-raw')));
     const p = JSON.parse(json) as SharePayload;
     if (p.v !== 1 || typeof p.h !== 'string') throw new Error('invalid_link');
     return p;

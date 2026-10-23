@@ -1,0 +1,70 @@
+/** Round-5 strings (merged over en.ts + en.r2.ts). */
+import type { esR5 } from './es.r5';
+
+export const enR5: typeof esR5 = {
+  fxGuard: {
+    converting: 'Converting to {{currency}}…',
+    convertingBody: 'Downloading the missing exchange rate; figures appear as soon as it arrives.',
+    missingTitle: 'No exchange rate for {{currency}}',
+    missingBody: 'There is no {{pairs}} rate: figures in {{currency}} show as “—” and are not compared with indices until it is available.',
+    offline: 'The market-data server is not responding.',
+    retry: 'Retry',
+    short: 'No {{pairs}} rate',
+    chart: 'Cannot convert to {{currency}}: the {{pairs}} rate is missing.',
+    report: 'Exchange rates are missing ({{pairs}}): figures in {{currency}} could not be computed and show as “—”.',
+  },
+  diag: {
+    vtext: {
+      OVERSELL: '{{type}} of {{quantity}} {{symbol}} on {{date}} exceeds the position ({{held}}). Is a buy or transfer missing?',
+      INCOME_WITHOUT_POSITION: '{{type}} of {{symbol}} on {{date}} with no units held.',
+      CURRENCY_MISMATCH: 'The {{symbol}} transaction is in {{from}} and the asset trades in {{to}}: converted at the market rate.',
+      FUTURE_DATE: 'Transaction dated in the future ({{date}}).',
+      DUPLICATE_IMPORT: 'Possible duplicate: {{type}} of {{symbol}} on {{date}} was already imported.',
+      ZERO_AMOUNT: '{{type}} on {{date}} without an amount.',
+      MISSING_QUANTITY: '{{type}} of {{symbol}} on {{date}} without a quantity.',
+      MISSING_PRICE: '{{type}} of {{symbol}} on {{date}} without a price or amount.',
+      SPLIT_SAME_DAY_TRADE: '{{type}} of {{symbol}} on the day of a split: the quantity must be in post-split units.',
+      UNKNOWN_INSTRUMENT: 'The asset of this transaction ({{date}}) does not exist.',
+      MISSING_INSTRUMENT: '{{type}} on {{date}} without an asset.',
+      SAME_CURRENCY_CONVERSION: 'Currency conversion on {{date}} between the same currency.',
+      MISSING_TO_CURRENCY: 'Currency conversion on {{date}} without a target currency.',
+      NEGATIVE_AMOUNT: '{{type}} on {{date}} with a negative amount.',
+      NEGATIVE_QUANTITY: '{{type}} of {{symbol}} on {{date}} with a negative quantity.',
+    },
+    code: {
+      DUPLICATE_ID: 'Repeated transaction',
+      DUPLICATE_IMPORT: 'Possible duplicate',
+      FUTURE_DATE: 'Future date',
+      CURRENCY_MISMATCH: 'Currency differs from the asset’s',
+      ZERO_AMOUNT: 'No amount',
+      MISSING_QUANTITY: 'No quantity',
+      SPLIT_SAME_DAY_TRADE: 'Trade on a split day',
+      SAME_CURRENCY_CONVERSION: 'Conversion to the same currency',
+      MISSING_TO_CURRENCY: 'Target currency missing',
+      NEGATIVE_AMOUNT: 'Negative amount',
+      NEGATIVE_QUANTITY: 'Negative quantity',
+      INVALID_COST_FRACTION: 'Invalid cost fraction',
+      INVALID_ACCRUAL: 'Fixed income without a rate',
+      UNKNOWN_INSTRUMENT: 'Unknown asset',
+    },
+  },
+  report: {
+    amountsIn: 'Amounts in {{currency}}',
+    qualityPrice: 'Unusual price: the month uses a doubtful trade price (unconfirmed or far from the market).',
+    qualityImplicit: 'Implicit deposit: there were purchases with no recorded deposit; the month’s contributions and return may be distorted.',
+  },
+  tax: {
+    gotIt: 'Got it, don’t show again',
+    co: {
+      maturedTitle: 'CDT {{symbol}} matured on {{date}} and its redemption is not recorded.',
+      maturedBody: 'Record it so the tax net worth and income include it (estimate: principal {{principal}} + interest {{interest}} − withholding {{withholding}}). Then adjust it with the bank statement.',
+      recordRedemption: 'Record estimated redemption ({{amount}})',
+      redemptionNote: 'Estimated CDT redemption at maturity (principal + interest); adjust it with the statement',
+    },
+    br: {
+      dueBreakdown: 'On that date: principal {{principal}} + late fee {{multa}} + Selic interest {{juros}} = {{total}} ({{days}} days late).',
+      dueOnTime: 'On that date it is paid on time: {{total}}.',
+      useDue: 'Use the computed amount',
+    },
+  },
+};

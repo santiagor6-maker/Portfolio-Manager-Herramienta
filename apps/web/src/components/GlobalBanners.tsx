@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useApp } from '../store/app';
 import { usePortfolios } from '../hooks/useData';
 import { Banner } from './ui';
+import { FxBanner } from './FxNotice';
 
 export function GlobalBanners() {
   const { t } = useTranslation();
@@ -71,6 +72,7 @@ export function GlobalBanners() {
           })()}
         </Banner>
       )}
+      <FxBanner />
       {engineDown && (
         <Banner tone="error">
           <strong className="font-semibold">{t('engine.downTitle')}</strong>{' '}
