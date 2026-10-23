@@ -72,7 +72,8 @@ export function tidyTaxIssues<T extends TaxIssueLike>(issues: T[], locale: strin
   for (const i of issues) {
     const text = localizeNumbers(cleanTaxMessage(i.message), locale);
     // The same notice for several years ("Alguns parâmetros de 2023…", "…de 2024…") becomes one line.
-    const years = text.match(YEAR) ?? [];
+    // Only informational notices are merged: a warning's number ("Venda de 2000 ações") is never a year.
+    const years = i.level === 'info' ? (text.match(YEAR) ?? []) : [];
     const key = years.length === 1 ? `${i.code ?? ''}|${text.replace(YEAR, '#')}` : text;
     const prev = seen.get(key);
     if (!prev) seen.set(key, { ...i, text, years: years.length === 1 ? [years[0]!] : undefined });
@@ -84,4 +85,5 @@ export function tidyTaxIssues<T extends TaxIssueLike>(issues: T[], locale: strin
     .sort((a, b) => rank(a.level) - rank(b.level));
 }
 
-const YEAR = /\b(?:19|20)\d{2}\b(?![-/.]\d)/g;
+// A year only after a word that introduces one ("de 2023", "em 2024", "of 2025"), never a quantity.
+const YEAR = /(?<=\b(?:de|del|em|of|in|ano|año|year)\s)(?:19|20)\d{2}\b(?![-/.,]\d)/gi;

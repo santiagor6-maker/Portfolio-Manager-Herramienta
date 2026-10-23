@@ -444,22 +444,60 @@ export function computeAnalysis(ds: Dataset): Analysis {
   return finish(out, t0);
 }
 
-/** W49: months without any market close for the portfolio's market-priced assets, and stale holdings. */
+/**
+ * W49: months in which the portfolio held a market-priced asset but none of those held has a close
+ * ("sin precio", not 0 %), and market-priced holdings of real portfolios whose last close is stale.
+ */
 export function priceCoverage(
-  ds: Pick<Dataset, 'instruments' | 'prices' | 'asOf'>,
+  ds: Pick<Dataset, 'instruments' | 'prices' | 'asOf'> & { portfolios?: Dataset['portfolios'] },
   txs: Transaction[],
   valuation: Valuation | undefined,
 ): { unpricedMonths: string[]; staleMarket: { instrumentId: string; priceDate?: ISODate }[] } {
   const market = new Set(ds.instruments.filter((i) => i.pricing !== 'manual' && !i.accrual && i.assetClass !== 'cash').map((i) => i.id));
-  const traded = new Set(txs.filter((t) => t.instrumentId && market.has(t.instrumentId)).map((t) => t.instrumentId!));
-  const firstBuy = txs.filter((t) => t.instrumentId && traded.has(t.instrumentId) && (t.type === 'BUY' || t.type === 'TRANSFER_IN')).reduce<string | undefined>((m, t) => (!m || t.date < m ? t.date : m), undefined);
-  const priced = new Set<string>();
-  for (const ps of ds.prices) if (traded.has(ps.instrumentId)) for (const p of ps.points) priced.add(p.date.slice(0, 7));
-  const unpricedMonths: string[] = [];
-  if (firstBuy) for (let m = firstBuy.slice(0, 7); m <= ds.asOf.slice(0, 7); m = addMonths(m, 1)) if (!priced.has(m)) unpricedMonths.push(m);
+  // Months each market-priced asset was held (from the buy to the month it was sold out).
+  const held = new Map<string, Set<string>>();
+  const byInst = new Map<string, Transaction[]>();
+  for (const t of txs) if (t.instrumentId && market.has(t.instrumentId)) byInst.set(t.instrumentId, [...(byInst.get(t.instrumentId) ?? []), t]);
+  const endMonth = ds.asOf.slice(0, 7);
+  for (const [id, list] of byInst) {
+    list.sort((a, b) => (a.date < b.date ? -1 : 1));
+    let q = 0;
+    let from: string | undefined;
+    const add = (a: string, b: string) => {
+      for (let m = a; m <= b; m = addMonths(m, 1)) {
+        const set = held.get(m) ?? new Set<string>();
+        set.add(id);
+        held.set(m, set);
+      }
+    };
+    for (const t of list) {
+      const n = t.quantity ?? 0;
+      if (t.type === 'BUY' || t.type === 'TRANSFER_IN' || t.type === 'STOCK_DIVIDEND') q += n;
+      else if (t.type === 'SELL' || t.type === 'TRANSFER_OUT') q -= n;
+      else if (t.type === 'SPLIT' && t.ratio) q *= t.ratio;
+      if (q > 1e-9 && !from) from = t.date.slice(0, 7);
+      if (q <= 1e-9 && from) {
+        add(from, t.date.slice(0, 7));
+        from = undefined;
+      }
+    }
+    if (from) add(from, endMonth);
+  }
+  const pricedIn = new Map<string, Set<string>>();
+  for (const ps of ds.prices) if (byInst.has(ps.instrumentId)) for (const p of ps.points) {
+    const m = p.date.slice(0, 7);
+    pricedIn.set(m, (pricedIn.get(m) ?? new Set()).add(ps.instrumentId));
+  }
+  const unpricedMonths = [...held.entries()]
+    .filter(([m, ids]) => m <= endMonth && ![...ids].some((id) => pricedIn.get(m)?.has(id)))
+    .map(([m]) => m)
+    .sort();
+  // The frozen sample's prices end on purpose: only assets of real portfolios are "stale".
+  const demo = new Set((ds.portfolios ?? []).filter((p) => p.isDemo).map((p) => p.id));
+  const real = new Set(txs.filter((t) => t.instrumentId && !demo.has(t.portfolioId)).map((t) => t.instrumentId!));
   const cutoff = previousBusinessDay(ds.asOf);
   const staleMarket = (valuation?.holdings ?? [])
-    .filter((h) => h.quantity > 0 && market.has(h.instrumentId) && (!h.priceDate || h.priceDate < cutoff))
+    .filter((h) => h.quantity > 0 && market.has(h.instrumentId) && real.has(h.instrumentId) && (!h.priceDate || h.priceDate < cutoff))
     .map((h) => ({ instrumentId: h.instrumentId, priceDate: h.priceDate }));
   return { unpricedMonths, staleMarket };
 }

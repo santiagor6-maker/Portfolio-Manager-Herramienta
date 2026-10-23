@@ -20,6 +20,14 @@ describe('W49: months and holdings without market prices', () => {
     const r = priceCoverage({ instruments: [CDT], asOf: '2024-06-20', prices: [] }, [buy(CDT.id, '2024-01-02')], undefined);
     expect(r).toEqual({ unpricedMonths: [], staleMarket: [] });
   });
+  it('months after the asset was sold out are not "sin precio"; sample holdings are never stale', () => {
+    const sell: Transaction = { ...buy(PETR.id, '2024-04-10'), id: 's', type: 'SELL' };
+    const ds = { instruments: [PETR], asOf: '2024-06-20', prices: [{ instrumentId: PETR.id, currency: 'BRL', source: 't', points: [{ date: '2024-03-08', close: 10 }] }] };
+    expect(priceCoverage(ds, [buy(PETR.id, '2024-03-08'), sell], undefined).unpricedMonths).toEqual(['2024-04']);
+    const demo = { ...ds, portfolios: [{ id: 'p', name: 'x', baseCurrency: 'BRL', costMethod: 'FIFO' as const, createdAt: '2024-01-01', isDemo: true }] };
+    const valuation = { holdings: [{ instrumentId: PETR.id, quantity: 1, priceDate: '2024-03-08' }] } as unknown as Valuation;
+    expect(priceCoverage(demo, [buy(PETR.id, '2024-03-08')], valuation).staleMarket).toEqual([]);
+  });
   it('the current month without prices is included', () => {
     expect([...unpricedMonths({ asOf: '2026-10-23', latestPriceDate: '2026-09-30', unpricedMonths: ['2026-05'] })].sort()).toEqual(['2026-05', '2026-10']);
   });
@@ -33,6 +41,11 @@ describe('W45/W53: tax and import texts', () => {
       'pt-BR',
     );
     expect(out.map((i) => i.text)).toEqual(['Alguns parâmetros de 2023, 2024, 2025 estão marcados para verificação.']);
+    const sales = tidyTaxIssues(
+      [2000, 2050].map((n) => ({ level: 'warning', code: 'OVERSELL', message: `Venda de ${n} ações excede a posição` })),
+      'pt-BR',
+    );
+    expect(sales).toHaveLength(2);
     expect(localizeNumbers('o líquido calculado (-2000.6) não confere (de 2023-01-02): 0.07', 'pt-BR')).toBe('o líquido calculado (-2.000,6) não confere (de 02/01/2023): 0,07');
   });
   it('words provider corporate actions in the UI language', async () => {

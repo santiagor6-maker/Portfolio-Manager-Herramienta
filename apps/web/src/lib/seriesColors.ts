@@ -32,9 +32,14 @@ const CONFLICTS = new Set(['0-6', '1-3', '1-4', '1-5', '2-4', '2-5', '3-5']);
 const clash = (a: number, b: number) => CONFLICTS.has(a < b ? `${a}-${b}` : `${b}-${a}`);
 
 /** Palette index (0-based) per key for one chart: stable per entity, no two slices sharing a colour. */
-export function colorSlots(dim: string | undefined, keys: string[]): Map<string, number> {
+export function colorSlots(
+  dim: string | undefined,
+  keys: string[],
+  opts: { prefer?: (key: string) => number; reserved?: number[] } = {},
+): Map<string, number> {
   const out = new Map<string, number>();
-  const used: number[] = [];
+  const used: number[] = [...(opts.reserved ?? [])];
+  const prefer = opts.prefer ?? ((k: string) => preferredSlot(dim, k));
   // Keys with a fixed slot first, so a hashed key never takes COP's colour.
   const ordered = [...keys].sort((a, b) => Number(ORDER[dim ?? '']?.includes(b) ?? false) - Number(ORDER[dim ?? '']?.includes(a) ?? false));
   const conflicts = (slot: number) => used.filter((u) => clash(u, slot)).length;
@@ -43,7 +48,11 @@ export function colorSlots(dim: string | undefined, keys: string[]): Map<string,
       out.set(k, OTHER_SLOT);
       continue;
     }
-    const free = Array.from({ length: SLOTS }, (_, i) => (preferredSlot(dim, k) + i) % SLOTS).filter((s) => !used.includes(s));
+    const free = Array.from({ length: SLOTS }, (_, i) => (prefer(k) + i) % SLOTS).filter((s) => !used.includes(s));
+    if (!free.length) {
+      out.set(k, OTHER_SLOT);
+      continue;
+    }
     // The preferred slot unless it clashes with one already drawn; then the free slot with fewest clashes.
     const slot = free.reduce((best, s) => (conflicts(s) < conflicts(best) ? s : best), free[0]!);
     used.push(slot);

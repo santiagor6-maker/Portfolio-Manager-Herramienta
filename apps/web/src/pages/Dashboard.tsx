@@ -12,7 +12,7 @@ import { formatDate, formatMonth } from '../lib/format';
 import { indexName } from '../lib/labels';
 import { GettingStarted } from '../components/Onboarding';
 import { addDays, addMonths, monthEnd, previousBusinessDay } from '../lib/ids';
-import { useInstrumentMap, usePortfolios } from '../hooks/useData';
+import { useInstrumentMap } from '../hooks/useData';
 import { refreshMarketData } from '../services/marketData';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { renamedPair } from '../lib/diagnosticText';
@@ -76,11 +76,12 @@ export default function DashboardPage() {
       />
 
       <GettingStarted />
-      {/* W54: on the phone the headline spans the row and the three others share one row below it. */}
-      <div className="grid grid-cols-3 xl:grid-cols-5 gap-2 sm:gap-3" data-testid="kpis">
+      {/* W54: on the phone one compact card per row (figures keep their full width, no empty cell);
+          three across from 640 px, the headline two columns wide from 1280 px. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-5 gap-2 sm:gap-3" data-testid="kpis">
         <Kpi
           primary
-          className="col-span-3 xl:col-span-2"
+          className="sm:col-span-3 xl:col-span-2"
           loading={loading}
           label={t('dashboard.totalValue')}
           value={<Money value={v?.totalMarketValueBase} />}
@@ -108,6 +109,7 @@ export default function DashboardPage() {
             loading={loading}
             label={t('monthly.lastClosed', { month: formatMonth(lastClosed.month, f.locale) })}
             value={<Money value={lastClosed.gainBase} signed />}
+            valueCompact={<Money value={lastClosed.gainBase} signed compact />}
             sub={
               <span className="flex items-center gap-2 flex-wrap" data-testid="kpi-open-month">
                 <Pct value={lastClosed.twr} signed colored />
@@ -116,18 +118,20 @@ export default function DashboardPage() {
             }
           />
         ) : (
-          <Kpi loading={loading} label={t('dashboard.month')} value={<Money value={mtd?.gainBase} signed />} sub={<Pct value={mtd?.twr} signed colored />} />
+          <Kpi loading={loading} label={t('dashboard.month')} value={<Money value={mtd?.gainBase} signed />} valueCompact={<Money value={mtd?.gainBase} signed compact />} sub={<Pct value={mtd?.twr} signed colored />} />
         )}
         <Kpi
           loading={loading}
           label={t('dashboard.ytd')}
           value={<Money value={ytd?.gainBase} signed />}
+          valueCompact={<Money value={ytd?.gainBase} signed compact />}
           sub={<Pct value={ytd?.twr} signed colored />}
         />
         <Kpi
           loading={loading}
           label={t('dashboard.totalGain')}
           value={<Money value={si?.gainBase} signed />}
+          valueCompact={<Money value={si?.gainBase} signed compact />}
           sub={
             <span className="flex items-center gap-2 flex-wrap">
               <Pct value={si?.twr} signed colored />
@@ -365,12 +369,9 @@ function WarningsCard() {
   const pendingIds = new Set(pending.map((p) => p.instrumentId));
   const manualStaleOnly = manualStale.filter((h) => !pendingIds.has(h.instrumentId));
   const diagErrors = (a?.diagnostics ?? []).filter((d) => d.severity === 'error' && !(d.code === 'MISSING_FX' && a?.fxMissing.length));
-  // W49: market-priced holdings without a recent close (an interrupted refresh, a server down…). The
-  // frozen sample is excluded: its prices end on purpose.
-  const portfolios = usePortfolios();
-  const selected = useApp((s) => s.settings.selectedPortfolioId);
-  const sampleOnly = portfolios.filter((p) => selected === 'all' || p.id === selected).every((p) => p.isDemo);
-  const staleMarket = sampleOnly ? [] : (a?.staleMarket ?? []);
+  // W49: market-priced holdings of real portfolios without a recent close (interrupted refresh, server
+  // down…); the analysis already leaves out the frozen sample.
+  const staleMarket = a?.staleMarket ?? [];
   const staleSince = staleMarket.reduce<string | undefined>((m, h) => (h.priceDate && (!m || h.priceDate < m) ? h.priceDate : m), undefined);
   const demoPriced = a?.demoPriced ?? [];
   const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0);

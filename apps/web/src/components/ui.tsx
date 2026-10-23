@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { ArrowDownRight, ArrowUpRight, Minus, X, AlertTriangle, Info, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -156,6 +156,7 @@ export function Kpi({
   hint,
   primary,
   className,
+  valueCompact,
 }: {
   label: ReactNode;
   value: ReactNode;
@@ -166,9 +167,11 @@ export function Kpi({
   primary?: boolean;
   /** Grid placement override (e.g. the primary card's span). */
   className?: string;
+  /** D1: the same figure in compact notation, used only when the full one cannot fit at 12 px. */
+  valueCompact?: ReactNode;
 }) {
   return (
-    <div className={clsx('card px-3 sm:px-4 py-3 sm:py-3.5 min-w-0', primary && 'kpi-primary', primary && !className && 'col-span-2', className)} title={hint}>
+    <div className={clsx('card px-3 sm:px-4 py-2.5 sm:py-3.5 min-w-0', primary && 'kpi-primary', primary && !className && 'col-span-2', className)} title={hint}>
       <div className="text-xs font-medium text-muted line-clamp-2">{label}</div>
       {loading ? (
         <>
@@ -177,7 +180,7 @@ export function Kpi({
         </>
       ) : (
         <>
-          <FitValue>{value}</FitValue>
+          <FitValue compact={valueCompact}>{value}</FitValue>
           {sub && <div className="mt-1 text-[13px]">{sub}</div>}
         </>
       )}
@@ -190,32 +193,49 @@ export function Kpi({
  * one line (nowrap) and its font shrinks to the card width (down to 12 px, enough for any amount at
  * 390 px); the full text is also in `title`.
  */
-function FitValue({ children }: { children: ReactNode }) {
+function FitValue({ children, compact }: { children: ReactNode; compact?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [useCompact, setUseCompact] = useState(false);
+  const full = useRef('');
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const fit = () => {
+      // The full figure is always in the tooltip, also when the compact one is shown.
+      if (!useCompact) full.current = el.textContent ?? '';
+      el.title = full.current;
       el.style.fontSize = '';
       const base = parseFloat(getComputedStyle(el).fontSize) || 22;
       let size = base;
-      for (let i = 0; i < 4 && el.scrollWidth > el.clientWidth + 0.5 && size > 12; i++) {
-        size = Math.max(12, Math.floor(size * (el.clientWidth / el.scrollWidth) * 10) / 10 - 0.2);
+      for (let i = 0; i < 4 && el.scrollWidth > el.clientWidth + 0.5 && size > MIN_FIT; i++) {
+        size = Math.max(MIN_FIT, Math.floor(size * (el.clientWidth / el.scrollWidth) * 10) / 10 - 0.2);
         el.style.fontSize = `${size}px`;
       }
-      el.title = el.textContent ?? '';
+      // Still too wide at the smallest size (three KPIs side by side on a phone): compact notation.
+      if (compact && !useCompact && el.scrollWidth > el.clientWidth + 0.5) setUseCompact(true);
     };
     fit();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : undefined;
     ro?.observe(el);
     return () => ro?.disconnect();
-  }, [children]);
+  });
+  // A wider card later (rotation, resize) tries the full figure again.
+  useEffect(() => {
+    if (!useCompact || typeof ResizeObserver === 'undefined' || !ref.current) return;
+    const el = ref.current;
+    const w0 = el.clientWidth;
+    const ro = new ResizeObserver(() => el.clientWidth > w0 + 24 && setUseCompact(false));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [useCompact]);
   return (
-    <div ref={ref} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden">
-      {children}
+    <div ref={ref} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden" data-compact={useCompact || undefined}>
+      {useCompact ? compact : children}
     </div>
   );
 }
+
+const MIN_FIT = 12;
 
 export function Skeleton({ className }: { className?: string }) {
   return <div className={clsx('skeleton', className)} aria-hidden />;

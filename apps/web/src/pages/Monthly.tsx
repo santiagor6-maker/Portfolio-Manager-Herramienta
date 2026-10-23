@@ -348,7 +348,7 @@ export default function MonthlyPage() {
           </div>
         ) : (
           <div className="px-4" data-testid="monthly-heatmap">
-            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} openMonth={monthWithoutPrices(a)} unpriced={unpricedMonths(a)} onPick={(m) => {
+            <Heatmap heat={heat} mode={mode} bench={hasBench ? bench : undefined} focus={focus} openMonth={monthWithoutPrices(a)} unpriced={noPriceMonths} onPick={(m) => {
               setFocus(m);
               setYear('all');
               setTimeout(() => document.getElementById(`m-${m}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);

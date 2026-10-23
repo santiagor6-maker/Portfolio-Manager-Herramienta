@@ -16,6 +16,7 @@ import { evaluateAlerts } from './alerts';
 import { canonicalInstrument, type RenamedInstrument } from '../lib/renames';
 
 let inflight: Promise<void> | null = null;
+let queuedForce: Promise<void> | null = null;
 let lastAuto = 0;
 
 /** Indices fetched for real returns and rate benchmarks. */
@@ -146,9 +147,15 @@ export function refreshMarketData(opts: { force?: boolean; fx?: CurrencyCode[] }
   if (inflight) {
     if (!opts.force) return inflight;
     // W49: a forced refresh (e.g. after an import) runs again after the current one, whose plan may
-    // not include the new assets; the flag makes a reload in between retry it.
+    // not include the new assets — once, however many callers ask; the flag makes a reload retry it.
     void db.meta.put({ key: 'refreshPending', value: true });
-    return inflight.then(() => refreshMarketData(opts));
+    queuedForce ??= inflight
+      .catch(() => undefined)
+      .then(() => {
+        queuedForce = null;
+        return refreshMarketData(opts);
+      });
+    return queuedForce;
   }
   inflight = (async () => {
     // Auto refreshes are throttled across reloads using persisted timestamps. Failed attempts
@@ -168,6 +175,8 @@ export function refreshMarketData(opts: { force?: boolean; fx?: CurrencyCode[] }
       { key: 'refreshPending', value: true },
     ]);
     await doRefresh();
+    // Finished (ok, partial or failed): only a refresh cut short by a reload keeps the flag.
+    await db.meta.delete('refreshPending');
   })().finally(() => {
     inflight = null;
   });
@@ -278,7 +287,6 @@ async function doRefresh(): Promise<void> {
   const byIdAll = new Map<string, Instrument>([...BENCHMARKS, ...(await db.instruments.toArray())].map((i) => [i.id, i]));
   if (!plan.histories.length && !plan.fx.length && !plan.indices.length) {
     // Only the frozen sample portfolio: nothing to refresh, server is fine.
-    await db.meta.delete('refreshPending');
     setMarket({ status: 'ok', failedSymbols: [] });
     await persistStatus('ok');
     return;
@@ -353,7 +361,6 @@ async function doRefresh(): Promise<void> {
       for (const q of quotes) await mergePriceSeries({ instrumentId: q.instrumentId, currency: q.currency, points: [{ date: q.date, close: q.price }], source: q.source });
     }
     await dropSupersededDemoFx();
-    await db.meta.delete('refreshPending');
     const now = Date.now();
     const status: MarketStatus = failed.length ? 'partial' : 'ok';
     await persistStatus(status, sources, now);

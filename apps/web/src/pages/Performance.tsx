@@ -7,7 +7,7 @@ import { useAnalysis } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatMonth, formatPct } from '../lib/format';
 import { benchmarkName, HOME_BENCHMARK, HOME_RATE } from '../lib/benchmarks';
-import { BENCH_SLOT } from '../lib/seriesColors';
+import { BENCH_SLOT, colorSlots } from '../lib/seriesColors';
 import { indexName } from '../lib/labels';
 import { addMonths, monthEnd } from '../lib/ids';
 import type { SummaryKey } from '../services/analysis';
@@ -95,7 +95,12 @@ export default function PerformancePage() {
     () => [...benches, ...rateIdx.filter((id) => rows.some((r) => r.indexReturns?.[id] !== undefined))],
     [benches.join(), rateIdx.join(), rows], // eslint-disable-line react-hooks/exhaustive-deps
   );
-  const shown = available.filter((id) => id === home || id === homeRate || extra.includes(id));
+  // The currency's index (or, for MXN/GBP…, the first one chosen in Ajustes) and rate are drawn by default.
+  const defaultBench = benches.includes(home ?? '') ? home : benches[0];
+  const isDefault = (id: string) => id === defaultBench || id === homeRate;
+  const shown = available.filter((id) => isDefault(id) || extra.includes(id));
+  // Colour per index, moved to a free non-clashing slot when two drawn indices would share one.
+  const slots = useMemo(() => colorSlots(undefined, shown, { prefer: (id) => BENCH_SLOT[id] ?? 6, reserved: [0] }), [shown.join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const cumSeries: LineSeries[] = useMemo(() => {
     if (!rows.length) return [];
     const first = rows[0]!.month;
@@ -110,11 +115,11 @@ export default function PerformancePage() {
     const out: LineSeries[] = [{ name: t('chart.portfolio'), width: 2.5, data: [start, ...rows.map((r) => [monthEnd(r.month), r.cumulativeTwr] as [string, number])], area: true }];
     for (const id of shown) {
       const isBench = benches.includes(id);
-      out.push({ name: isBench ? benchmarkName(id) : indexName(id), colorIndex: BENCH_SLOT[id] ?? 6, data: chain((r) => (isBench ? r.benchmarkReturns?.[id] : r.indexReturns?.[id])) });
+      out.push({ name: isBench ? benchmarkName(id) : indexName(id), colorIndex: slots.get(id), data: chain((r) => (isBench ? r.benchmarkReturns?.[id] : r.indexReturns?.[id])) });
     }
     if (inflation && rows.some((r) => r.inflation !== undefined)) out.push({ name: t('perf.inflationLine', { index: indexName(inflation) }), colorIndex: 7, dashed: true, data: chain((r) => r.inflation) });
     return out;
-  }, [rows, shown.join(), inflation, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rows, shown.join(), inflation, t, slots]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ddSeries: LineSeries[] = useMemo(() => [{ name: t('perf.drawdown'), data: drawdowns(rows), area: true, tone: 'neg' }], [rows, t]);
   const pctFmt = useCallback((v: number, axis?: boolean) => formatPct(v, f.locale, { decimals: axis ? (v !== 0 && Math.abs(v) < 0.1 ? 1 : 0) : 2, signed: !axis }), [f.locale]);
@@ -193,11 +198,11 @@ export default function PerformancePage() {
       </div>
 
       <Card className="mt-3" title={t('perf.cumulative')} subtitle={t('perf.cumulativeSub')}>
-        {available.some((id) => id !== home && id !== homeRate) && (
+        {available.some((id) => !isDefault(id)) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs" data-testid="bench-chips">
             <span className="text-muted">{t('perf.addIndex')}</span>
             {available
-              .filter((id) => id !== home && id !== homeRate)
+              .filter((id) => !isDefault(id))
               .map((id) => (
                 <button
                   key={id}
@@ -206,7 +211,7 @@ export default function PerformancePage() {
                   aria-pressed={extra.includes(id)}
                   onClick={() => setExtra((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))}
                 >
-                  <span className="size-2 rounded-full" style={{ background: `var(--series-${(BENCH_SLOT[id] ?? 6) + 1})` }} aria-hidden />
+                  <span className="size-2 rounded-full" style={{ background: `var(--series-${(slots.get(id) ?? BENCH_SLOT[id] ?? 6) + 1})` }} aria-hidden />
                   {benches.includes(id) ? benchmarkName(id) : indexName(id)}
                 </button>
               ))}

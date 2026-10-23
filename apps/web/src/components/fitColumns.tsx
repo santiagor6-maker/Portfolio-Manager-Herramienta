@@ -12,6 +12,18 @@ export function useFitColumns<K extends string>(dropOrder: K[], resetKey: unknow
   const [box, ref] = useState<HTMLElement | null>(null);
   const [hidden, setHidden] = useState<K[]>([]);
   const [showAll, setShowAll] = useState(false);
+  // Print shows every chosen column (the note naming hidden ones is not printed).
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    const on = () => setPrinting(true);
+    const off = () => setPrinting(false);
+    window.addEventListener('beforeprint', on);
+    window.addEventListener('afterprint', off);
+    return () => {
+      window.removeEventListener('beforeprint', on);
+      window.removeEventListener('afterprint', off);
+    };
+  }, []);
   const order = dropOrder.join('|');
 
   // Start over when the content or the available columns change.
@@ -20,7 +32,7 @@ export function useFitColumns<K extends string>(dropOrder: K[], resetKey: unknow
   // Before paint: hide one more column while the table overflows (each pass re-renders synchronously).
   useLayoutEffect(() => {
     const table = box?.querySelector('table');
-    if (!box || !table || showAll) return;
+    if (!box || !table || showAll || printing) return;
     if (table.scrollWidth > box.clientWidth + 1) {
       const next = dropOrder.find((k) => !hidden.includes(k));
       if (next) setHidden((h) => (h.includes(next) ? h : [...h, next]));
@@ -33,7 +45,8 @@ export function useFitColumns<K extends string>(dropOrder: K[], resetKey: unknow
     if (!box || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(([e]) => {
       const w = Math.round(e!.contentRect.width);
-      if (w !== width.current) {
+      // A scrollbar appearing or vanishing (≈ 15 px) is not a new layout: no re-fit, no flicker loop.
+      if (Math.abs(w - width.current) > 24) {
         width.current = w;
         setHidden([]);
       }
@@ -42,7 +55,8 @@ export function useFitColumns<K extends string>(dropOrder: K[], resetKey: unknow
     return () => ro.disconnect();
   }, [box]);
 
-  return { ref, hidden: showAll ? new Set<K>() : new Set(hidden), hiddenList: showAll ? [] : hidden, showAll, setShowAll };
+  const all = showAll || printing;
+  return { ref, hidden: all ? new Set<K>() : new Set(hidden), hiddenList: all ? [] : hidden, showAll, setShowAll };
 }
 
 /** "Columnas ocultas por espacio: … · Mostrar todas" (or "Ajustar al ancho" when all are shown). */

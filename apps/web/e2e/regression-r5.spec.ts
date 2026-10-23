@@ -159,6 +159,8 @@ async function kpiProblems(page: Page): Promise<string[]> {
       const out: string[] = [];
       if (tops.length > 1) out.push(`${text}: ${tops.length} lines`);
       if (el.scrollWidth > el.clientWidth + 1) out.push(`${text}: clipped ${el.scrollWidth}>${el.clientWidth}`);
+      // A compact figure ("+$ 21,1 M") is allowed on narrow cards only with the full one in the tooltip.
+      if ((el as HTMLElement).dataset.compact && !/\d{3}/.test(el.getAttribute('title') ?? '')) out.push(`${text}: compact without the full value`);
       return out;
     }),
   );
@@ -197,7 +199,7 @@ test('W49: holdings without market prices are flagged and the refresh is retried
   let serve = false;
   await page.route('**/api/health', (route) => route.fulfill({ json: { ok: true, service: 'mock', version: '0', time: new Date().toISOString() } }));
   await page.route('**/api/batch', async (route) => {
-    if (!serve) return route.abort('connectionreset');
+    if (!serve) return; // never answered: the refresh is cut short by the next reload (W49)
     const req = route.request().postDataJSON() as { histories?: { symbol: string; from: string }[]; fx?: { base: string; quote: string; from: string }[]; quotes?: unknown[]; indices?: unknown[] };
     const today = new Date().toISOString().slice(0, 10);
     const err = { ok: false, error: { code: 'NOT_FOUND', message: 'mock' } };
@@ -229,7 +231,7 @@ test('W49: holdings without market prices are flagged and the refresh is retried
   await page.getByTestId('import-confirm').click();
   await expect(page.getByText(/importado/)).toBeVisible();
 
-  // The refresh after the import failed: reload — the holding is flagged, months are "sin precio".
+  // The refresh after the import never finished: reload — the holding is flagged, months are "sin precio".
   await page.goto('/');
   await expect(page.getByTestId('stale-market')).toContainText('PETR4', { timeout: 30_000 });
   await page.screenshot({ path: `${SHOTS}/r6-stale-market.png` });
@@ -294,7 +296,7 @@ for (const [locale, ccy] of [['es-CO', 'COP'], ['pt-BR', 'BRL']] as const) {
   });
 }
 
-test('W54: on the phone the first chart starts within the first screen; secondary KPIs share one row', async ({ page }) => {
+test('W54: on the phone the first chart starts within the first screen; KPI cards fill their rows', async ({ page }) => {
   await mockMarket(page, { brl: 'late' });
   await onboardCO(page, '30.000.000', '2024-01-02');
   await page.setViewportSize({ width: 390, height: 844 });
@@ -302,8 +304,9 @@ test('W54: on the phone the first chart starts within the first screen; secondar
   await expect(page.getByTestId('gs-next')).toBeVisible();
   const kpis = page.getByTestId('kpis').locator('.card');
   await expect(kpis).toHaveCount(4);
-  const tops = await kpis.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
-  expect(new Set(tops.slice(1)).size).toBe(1); // the three secondary cards on one row, no empty cell
+  // One card per row on the phone: every card as wide as the grid (no empty cell next to a lone card).
+  const widths = await kpis.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+  expect(new Set(widths).size).toBe(1);
   const chartTop = await page.getByRole('heading', { name: 'Valor vs. aportado' }).evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
   expect(chartTop).toBeLessThan(844);
   await page.screenshot({ path: `${SHOTS}/r6-phone-dashboard.png` });
