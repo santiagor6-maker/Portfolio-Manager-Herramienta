@@ -80,4 +80,5 @@ export const ptR5: typeof esR5 = {
   tx: { costs: 'Custos' },
   div: { byMonthSub: 'Ano escolhido contra o anterior (líquido; o anterior em cinza)' },
   fx: { fromPrice: 'Preço (posições abertas)', fromFx: 'Câmbio (posições abertas)', approxNote: 'mensal, sem o termo cruzado diário', cumulativeSplit: 'TWR desde o início' },
+  alerts: { thresholdPriceNoCcy: 'Preço' },
 };

@@ -1,0 +1,150 @@
+/**
+ * Round 5 (reviews/web-r4.md W40–W48, reviews/web-design-r1.md D1/D3/D4) against the production build.
+ * The market-data server is mocked with page.route: USD/COP always answers; USD/BRL answers late (to
+ * see "Convirtiendo a BRL…") or not at all (no rate → "—" and a warning, never R$ 0,00).
+ */
+import { expect, test, type Page, type Route } from '@playwright/test';
+
+const SHOTS = 'e2e/screenshots';
+const RATES: Record<string, number> = { COP: 4000, BRL: 5, EUR: 0.9 };
+
+async function mockMarket(page: Page, opts: { brl: 'late' | 'never' }) {
+  await page.route('**/api/health', (route) => route.fulfill({ json: { ok: true, service: 'mock', version: '0', time: new Date().toISOString() } }));
+  await page.route('**/api/batch', async (route: Route) => {
+    const req = route.request().postDataJSON() as { histories?: unknown[]; fx?: { base: string; quote: string; from: string }[]; quotes?: unknown[]; indices?: unknown[] };
+    const err = { ok: false, error: { code: 'NOT_FOUND', message: 'mock' } };
+    const fx = (req.fx ?? []).map((r) => {
+      const rate = RATES[r.quote];
+      if (!rate || (r.quote === 'BRL' && opts.brl === 'never')) return err;
+      const today = new Date().toISOString().slice(0, 10);
+      return { ok: true, data: { interval: '1d', series: { base: r.base, quote: r.quote, source: 'mock', points: [{ date: r.from, rate }, { date: today, rate }] } } };
+    });
+    if (opts.brl === 'late' && (req.fx ?? []).some((r) => r.quote === 'BRL')) await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({
+      json: { histories: (req.histories ?? []).map(() => err), fx, quotes: (req.quotes ?? []).map(() => err), indices: (req.indices ?? []).map(() => err), tookMs: 1 },
+    });
+  });
+}
+
+async function onboardCO(page: Page, deposit: string, date: string) {
+  await page.goto('/');
+  await page.getByTestId('start-portfolio').click();
+  const wizard = page.getByRole('dialog', { name: 'Empieza tu portafolio' });
+  await wizard.getByLabel('Nombre').fill('Portafolio CO');
+  await wizard.getByLabel('Moneda base').selectOption('COP');
+  await wizard.getByTestId('onboarding-create').click();
+  await wizard.getByLabel(/Aporte inicial/).fill(deposit);
+  await wizard.getByLabel('¿Desde cuándo inviertes?').fill(date);
+  await wizard.getByRole('button', { name: 'Siguiente' }).click();
+  await wizard.getByRole('button', { name: /Ir al resumen/ }).click();
+  await expect(page.getByTestId('kpis')).toContainText('30.000.000', { timeout: 30_000 });
+}
+
+test('W40: switching to a currency whose rate is not cached downloads it ("Convirtiendo a BRL…"), never R$ 0,00', async ({ page }) => {
+  await mockMarket(page, { brl: 'late' });
+  await onboardCO(page, '30.000.000', '2024-01-02');
+  await page.getByTestId('currency-switch').selectOption('BRL');
+  await expect(page.getByTestId('fx-converting')).toContainText('Convirtiendo a BRL');
+  await page.screenshot({ path: `${SHOTS}/r5-converting.png` });
+  await expect(page.getByTestId('kpis')).not.toContainText('R$ 0,00');
+  // 30.000.000 COP ÷ 4.000 × 5 = R$ 37.500
+  await expect(page.getByTestId('kpis')).toContainText('37.500', { timeout: 30_000 });
+  await expect(page.getByTestId('fx-converting')).toHaveCount(0);
+  await expect(page.getByTestId('fx-missing')).toHaveCount(0);
+});
+
+test('W40: without a rate every figure is "—" with a warning (KPIs, monthly table, charts, report)', async ({ page }) => {
+  await mockMarket(page, { brl: 'never' });
+  await onboardCO(page, '30.000.000', '2024-01-02');
+  await page.getByTestId('currency-switch').selectOption('BRL');
+  await expect(page.getByTestId('fx-missing')).toContainText('COP/BRL', { timeout: 30_000 });
+  await expect(page.getByTestId('kpi-no-fx')).toBeVisible();
+  await expect(page.getByTestId('kpis')).not.toContainText('R$ 0,00');
+  await expect(page.getByTestId('kpis')).toContainText('—');
+  await expect(page.getByTestId('fx-unavailable').first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/r5-no-rate.png` });
+
+  await page.goto('/mensual');
+  await expect(page.getByTestId('fx-unavailable')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('monthly-table')).not.toContainText('R$ 0,00');
+  await expect(page.getByTestId('monthly-table')).not.toContainText('0,00 %');
+
+  await page.goto('/informe');
+  await expect(page.getByTestId('report-fx-missing')).toContainText('COP/BRL', { timeout: 30_000 });
+  await expect(page.getByTestId('report')).not.toContainText('R$ 0,00');
+
+  // Retry (same page, no reload) once the server has the pair.
+  await page.unroute('**/api/batch');
+  await mockMarket(page, { brl: 'late' });
+  await page.getByTestId('fx-retry').click();
+  await expect(page.getByTestId('report-fx-missing')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId('report')).toContainText('37.500');
+});
+
+test('W46 + W47 + W48: compact links that follow the hash, report table fits, data-quality marks travel', async ({ page, browser }) => {
+  await mockMarket(page, { brl: 'late' });
+  await onboardCO(page, '30.000.000', '2026-06-01');
+  // Buys in April 2026 before the June deposit → implicit deposits (W22) in April.
+  await page.goto('/importar');
+  await page.getByTestId('import-file').setInputFiles('e2e/fixtures/extracto-trii.csv');
+  await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('import-confirm').click();
+  await expect(page.getByText(/importado/)).toBeVisible();
+
+  await page.goto('/informe');
+  const report = page.getByTestId('report');
+  await expect(report).toBeVisible({ timeout: 30_000 });
+  await expect(report.getByTestId('report-mark-implicit').first()).toBeVisible();
+  await expect(report.getByTestId('report-quality-legend')).toContainText('Aporte implícito');
+  // W47: the monthly table fits its sheet at 1440 px (no clipped benchmark column).
+  const fits = await report.locator('.tw').first().evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+  expect(fits).toBe(true);
+  await report.locator('.tw').first().screenshot({ path: `${SHOTS}/r5-report-table.png` });
+
+  await page.getByTestId('report-share').click();
+  await page.getByTestId('share-create').click();
+  const first = await page.getByTestId('share-url').inputValue();
+  await page.getByLabel('Contraseña (opcional)').fill('clave-r5');
+  await page.getByTestId('share-create').click();
+  await expect(page.getByTestId('share-url')).toHaveValue(/#e2\./);
+  const enc = await page.getByTestId('share-url').inputValue();
+  // W46: the encrypted link costs only salt + iv + tag over the plain one (e1 was ≈ 1.8×).
+  expect(enc.length - first.length).toBeLessThan(80);
+
+  const ctx = await browser.newContext();
+  const viewer = await ctx.newPage();
+  await viewer.goto(first);
+  const frame = viewer.frameLocator('[data-testid=shared-frame]');
+  await expect(frame.getByText('‡').first()).toBeVisible();
+  await expect(frame.getByText(/Aporte implícito/)).toBeVisible();
+
+  // Another link pasted in the same tab (only the # changes): the new report shows without reload.
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Mes', exact: true }).click();
+  await page.getByTestId('report-share').click();
+  await page.getByLabel('Contraseña (opcional)').fill('');
+  await page.getByTestId('share-create').click();
+  await expect(page.getByTestId('share-url')).not.toHaveValue(first);
+  const second = await page.getByTestId('share-url').inputValue();
+  const titleBefore = await viewer.locator('header .font-semibold').first().textContent();
+  await viewer.evaluate((h) => (location.hash = h), new URL(second).hash);
+  await expect(viewer.locator('header .font-semibold').first()).not.toHaveText(titleBefore ?? '');
+  await viewer.screenshot({ path: `${SHOTS}/r5-share-hashchange.png` });
+  await ctx.close();
+});
+
+test('D3: long tables keep their header while scrolling; D1: KPI figures are never cut', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/mensual');
+  const box = page.getByTestId('monthly-table');
+  await expect(box.locator('tbody tr').nth(10)).toBeVisible({ timeout: 30_000 });
+  await box.evaluate((el) => (el.scrollTop = 600));
+  const [th, top] = await box.evaluate((el) => [el.querySelector('th')!.getBoundingClientRect().top, el.getBoundingClientRect().top]);
+  expect(Math.abs(th - top)).toBeLessThan(2);
+  await page.screenshot({ path: `${SHOTS}/r5-sticky-monthly.png` });
+
+  await page.goto('/');
+  await expect(page.getByTestId('kpis')).toBeVisible();
+  const cut = await page.locator('.kpi-value').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis').length);
+  expect(cut).toBe(0);
+});

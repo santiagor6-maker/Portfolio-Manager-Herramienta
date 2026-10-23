@@ -78,4 +78,5 @@ export const esR5 = {
   tx: { costs: 'Costos' },
   div: { byMonthSub: 'Año elegido frente al anterior (neto; el anterior en gris)' },
   fx: { fromPrice: 'Precio (posiciones abiertas)', fromFx: 'Divisa (posiciones abiertas)', approxNote: 'mensual, sin el término cruzado diario', cumulativeSplit: 'TWR desde el inicio' },
+  alerts: { thresholdPriceNoCcy: 'Precio' },
 };

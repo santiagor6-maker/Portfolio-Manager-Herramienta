@@ -286,7 +286,7 @@ function ReportBody({
       ? MASK
       : v === undefined || !Number.isFinite(v)
         ? '—'
-        : new Intl.NumberFormat(f.locale, { minimumFractionDigits: dec, maximumFractionDigits: dec, signDisplay: signed ? 'exceptZero' : 'auto' }).format(v).replace(/[\u00a0\u202f]/g, ' ');
+        : new Intl.NumberFormat(f.locale, { minimumFractionDigits: dec, maximumFractionDigits: dec, signDisplay: signed ? 'exceptZero' : 'auto' }).format(v || 0).replace(/[\u00a0\u202f]/g, ' ');
   // W48: months whose figures depend on a doubtful trade price or an implicit deposit carry a mark.
   const implicitMonths = new Set((a?.implicitFunding ?? []).map((x) => x.month));
   const priceMonths = new Set(allRows.filter((r) => parsePriceWarnings(r.warnings).length).map((r) => r.month));
