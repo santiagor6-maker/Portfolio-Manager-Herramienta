@@ -31,7 +31,9 @@ import type {
   Valuation,
   ValidationIssue,
 } from '@pm/core';
-import { addDays } from '../lib/ids';
+import { addDays, previousBusinessDay } from '../lib/ids';
+
+export { previousBusinessDay };
 import { pendingCloses, type PendingClose } from '../lib/pendingCloses';
 import { blankUnconvertible, missingFxCurrencies } from './fxCoverage';
 
@@ -181,15 +183,6 @@ export const RATE_INDICES_BY_CURRENCY: Record<string, IndexId[]> = { COP: ['IBR'
 /** Typical dividend withholding by country of the payer (non-resident, no treaty relief). */
 const DEFAULT_WITHHOLDING: Record<string, number> = { US: 0.3, ES: 0.19, NL: 0.15, DE: 0.26375, FR: 0.25, CO: 0.1, BR: 0, GB: 0, IE: 0, CH: 0.35, MX: 0.1, CL: 0.35, PE: 0.05 };
 
-export function previousBusinessDay(date: ISODate): ISODate {
-  let d = addDays(date, -1);
-  for (let i = 0; i < 4; i++) {
-    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-    if (dow !== 0 && dow !== 6) break;
-    d = addDays(d, -1);
-  }
-  return d;
-}
 
 function engineOptions(ds: Dataset): EngineInput['options'] {
   const loaded = new Set((ds.indexSeries ?? []).map((s) => s.id));

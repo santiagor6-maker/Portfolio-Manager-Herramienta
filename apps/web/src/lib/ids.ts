@@ -44,3 +44,14 @@ export function monthsBetween(from: string, to: string): string[] {
   }
   return out;
 }
+
+/** Last weekday before `date` (prices older than this are stale for a "today" change). */
+export function previousBusinessDay(date: string): string {
+  let d = addDays(date, -1);
+  for (let i = 0; i < 4; i++) {
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+    if (dow !== 0 && dow !== 6) break;
+    d = addDays(d, -1);
+  }
+  return d;
+}

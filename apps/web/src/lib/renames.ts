@@ -3,7 +3,10 @@
  * the same table as the engine (`@pm/core` tickerRenames): instruments are created under the current
  * id and remember the old symbol ("antes PFBCOLOM"); lookups of an old id resolve to the new one.
  */
-import { renamedTickerId, tickerRenameMap, type Instrument } from '@pm/core';
+import type { Instrument } from '@pm/core';
+// W20: the rename table alone (pure data, no imports), not the engine behind the package index: this
+// module is on the first-paint path (repo, useData). @pm/core exports only ".", hence the path.
+import { renamedTickerId, tickerRenameMap } from '../../../../packages/core/src/tickerRenames';
 
 export type RenamedInstrument<T extends Instrument = Instrument> = T & { renamedFrom?: string };
 

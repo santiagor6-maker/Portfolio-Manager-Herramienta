@@ -2,7 +2,13 @@
  * Runs `computeAnalysis` off the main thread. Only the latest request matters: older
  * in-flight results are dropped so fast currency/portfolio switching never shows stale data.
  */
-import { computeAnalysis, type Analysis, type Dataset } from './analysis';
+import type { Analysis, Dataset } from './analysis';
+
+/** W20: the engine itself only loads on the main thread when the worker is unavailable. */
+async function computeHere(dataset: Dataset): Promise<Analysis> {
+  const { computeAnalysis } = await import('./analysis');
+  return computeAnalysis(dataset);
+}
 
 type Pending = { resolve: (a: Analysis) => void; reject: (e: Error) => void };
 
@@ -47,7 +53,7 @@ export function isWorkerActive(): boolean {
 export async function runAnalysis(dataset: Dataset): Promise<{ id: number; analysis: Analysis }> {
   const id = ++seq;
   const w = getWorker();
-  if (!w) return { id, analysis: computeAnalysis(dataset) };
+  if (!w) return { id, analysis: await computeHere(dataset) };
   try {
     const analysis = await new Promise<Analysis>((resolve, reject) => {
       pending.set(id, { resolve, reject });
@@ -55,7 +61,7 @@ export async function runAnalysis(dataset: Dataset): Promise<{ id: number; analy
     });
     return { id, analysis };
   } catch {
-    return { id, analysis: computeAnalysis(dataset) };
+    return { id, analysis: await computeHere(dataset) };
   }
 }
 

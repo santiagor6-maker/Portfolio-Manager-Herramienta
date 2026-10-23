@@ -1,7 +1,6 @@
 import { db } from '../db/schema';
 import { createPortfolio, getMeta, loadSettings, removeDemoData, saveSetting, seedData, setMeta, type AppSettings } from '../db/repo';
 import { useApp } from '../store/app';
-import { loadDemoData } from './demo';
 import i18n from '../i18n';
 
 /**
@@ -26,6 +25,8 @@ export async function bootstrap(): Promise<AppSettings> {
 }
 
 export async function seedDemo(): Promise<void> {
+  // W20: the sample (and the engine it is generated with) loads only when it is seeded.
+  const { loadDemoData } = await import('./demo');
   await seedData(loadDemoData(), true);
   await setMeta('demoSeeded', true);
 }
