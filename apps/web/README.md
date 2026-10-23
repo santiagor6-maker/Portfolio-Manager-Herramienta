@@ -175,7 +175,7 @@ src/
   en frío con BRL → Ibovespa), W51 (tablas que caben a 1280/1440 px en es-COP y pt-BRL, columnas ocultas
   con aviso) y W54 (teléfono).
 
-Totales: 115 pruebas unitarias (17 archivos) y 55 pruebas e2e (+1 en vivo que se omite sin servidor).
+Totales: 115 pruebas unitarias (17 archivos) y 54 pruebas e2e (+1 en vivo que se omite sin servidor).
 Todas las e2e corren contra el build de producción (`vite preview`).
 
 Capturas en `e2e/screenshots/`.
