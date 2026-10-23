@@ -77,4 +77,7 @@ export const ptR5: typeof esR5 = {
     openNoPrices: '{{month}} em curso: sem cotações novas',
   },
   settings: { heatCvd: 'Mapa de calor em azul/laranja (mais fácil de distinguir com daltonismo)' },
+  tx: { costs: 'Custos' },
+  div: { byMonthSub: 'Ano escolhido contra o anterior (líquido; o anterior em cinza)' },
+  fx: { fromPrice: 'Preço (posições abertas)', fromFx: 'Câmbio (posições abertas)', approxNote: 'mensal, sem o termo cruzado diário', cumulativeSplit: 'TWR desde o início' },
 };

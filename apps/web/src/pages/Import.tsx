@@ -324,9 +324,12 @@ export default function ImportPage() {
             <div className="mt-4">
               <div className="text-xs font-medium text-muted mb-2">{t('imp.supported')}</div>
               <div className="flex flex-wrap gap-1.5">
-                {presets.map((p) => (
-                  <span key={p.id} className="chip" title={p.description}>
-                    {p.broker} · {p.country}
+                {/* D7/D24: one chip per broker and country (several parsers share one), never wider than the card. */}
+                {[...new Map(presets.map((p) => [`${p.broker}|${p.country}`, p])).values()].map((p) => (
+                  <span key={`${p.broker}|${p.country}`} className="chip max-w-full min-w-0" title={`${p.broker} · ${p.country} — ${p.description}`}>
+                    <span className="truncate">
+                      {p.broker} · {p.country}
+                    </span>
                   </span>
                 ))}
               </div>

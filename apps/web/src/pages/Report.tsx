@@ -72,7 +72,7 @@ export const REPORT_CSS = `
 @media print{.rp{padding:0;max-width:none}.rp .tw{overflow:visible}.rp tfoot{display:table-row-group}.rp thead{display:table-header-group}}
 `;
 
-const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#8a8f99'];
+const SERIES = ['#2a78d6', '#eb6834', '#0e9384', '#9a6b00', '#c2457a', '#008300', '#4a3aa7', '#8a8f99'];
 
 /** Diverging heat colour (green/red over white) as a plain rgb() string (no color-mix: portable). */
 export function heatColor(r: number | undefined, cap = HEAT_CAP): string {

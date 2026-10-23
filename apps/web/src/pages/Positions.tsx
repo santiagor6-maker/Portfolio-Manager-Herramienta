@@ -4,13 +4,13 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Download, Layers, Search } from 'lucide-react';
 import type { AllocationDimension, Holding, Instrument, PositionPerformance } from '@pm/core';
-import { Card, Delta, EmptyState, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
+import { Card, CountryTag, Delta, EmptyState, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useInstrumentMap } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPct, formatPrice, formatQuantity } from '../lib/format';
-import { countryName, flagEmoji, useSliceLabel } from '../lib/labels';
+import { countryName, useSliceLabel } from '../lib/labels';
 import { exchangeLabel } from '../lib/exchanges';
 import { downloadText, toCsv } from '../lib/export';
 import { parseDecimal, toInputNumber } from '../lib/parse';
@@ -78,9 +78,7 @@ export default function PositionsPage() {
     sortValue: (r) => r.inst?.symbol ?? r.instrumentId,
     cell: (r) => (
       <div className="flex items-center gap-2.5 min-w-[150px] max-w-[230px]">
-        <span className="text-base leading-none" aria-hidden>
-          {flagEmoji(r.inst?.country ?? '')}
-        </span>
+        <CountryTag code={r.inst?.country} />
         <div className="min-w-0">
           <div className="font-semibold text-ink">
             {r.inst?.symbol ?? r.instrumentId}
@@ -166,34 +164,24 @@ export default function PositionsPage() {
       ),
       footer: <Delta amount={totalGain} pct={totalCost ? totalGain / totalCost : undefined} size="sm" />,
     },
+    // D15: price and currency effects as two sortable columns with spelled-out headers (no "P / D").
     {
-      id: 'effects',
-      header: t('pos.effects'),
-      headerTitle: `${t('pos.priceEffectHint')} / ${t('pos.fxEffectHint')}`,
+      id: 'priceEffect',
+      header: t('pos.priceEffectShort'),
+      headerTitle: t('pos.priceEffectHint'),
+      align: 'right',
+      sortValue: (r) => r.priceGainBase,
+      cell: (r) => <Money value={r.priceGainBase} signed className={clsx('text-[12.5px]', tone(r.priceGainBase))} />,
+      footer: <Money value={sum((r) => r.priceGainBase)} signed />,
+    },
+    {
+      id: 'fxEffect',
+      header: t('pos.fxEffectShort'),
+      headerTitle: t('pos.fxEffectHint'),
       align: 'right',
       sortValue: (r) => r.fxGainBase,
-      cell: (r) => (
-        <div className="text-[12px] leading-snug">
-          <div>
-            <span className="text-muted mr-1">{t('pos.priceAbbr')}</span>
-            <Money value={r.priceGainBase} signed className={tone(r.priceGainBase)} />
-          </div>
-          <div>
-            <span className="text-muted mr-1">{t('pos.fxAbbr')}</span>
-            <Money value={r.fxGainBase} signed className={tone(r.fxGainBase)} />
-          </div>
-        </div>
-      ),
-      footer: (
-        <div className="text-[12px] leading-snug">
-          <div>
-            {t('pos.priceAbbr')} <Money value={sum((r) => r.priceGainBase)} signed />
-          </div>
-          <div>
-            {t('pos.fxAbbr')} <Money value={sum((r) => r.fxGainBase)} signed />
-          </div>
-        </div>
-      ),
+      cell: (r) => <Money value={r.fxGainBase} signed className={clsx('text-[12.5px]', tone(r.fxGainBase))} />,
+      footer: <Money value={sum((r) => r.fxGainBase)} signed />,
     },
     {
       id: 'weight',
@@ -208,6 +196,7 @@ export default function PositionsPage() {
           <Pct value={r.weight} decimals={1} />
         </div>
       ),
+      footer: <Pct value={sum((r) => r.weight) || undefined} decimals={1} />,
     },
   ];
 
@@ -318,7 +307,7 @@ export default function PositionsPage() {
               <option value="">{t('pos.allCountries')}</option>
               {countries.map((c) => (
                 <option key={c} value={c}>
-                  {flagEmoji(c)} {countryName(c, f.locale)}
+                  {countryName(c, f.locale)}
                 </option>
               ))}
             </select>
@@ -380,7 +369,7 @@ export default function PositionsPage() {
                   .map((r) => (
                     <li key={r.instrumentId}>
                       <Link to={`/posiciones/${encodeURIComponent(r.instrumentId)}`} className="flex items-center gap-3 px-4 py-3">
-                        <span aria-hidden>{flagEmoji(r.inst?.country ?? '')}</span>
+                        <CountryTag code={r.inst?.country ?? ''} />
                         <div className="flex-1 min-w-0">
                           <div className="font-semibold">{r.inst?.symbol ?? r.instrumentId}</div>
                           <div className="text-xs text-muted truncate">

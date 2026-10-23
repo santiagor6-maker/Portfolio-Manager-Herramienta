@@ -323,7 +323,7 @@ function DividendsCard() {
                   <li key={i} className="flex items-center gap-2">
                     <span className="w-[86px] font-semibold truncate">{e.instrumentId ? label(e.instrumentId).symbol : t('tx.type.INTEREST')}</span>
                     <span className="text-muted text-xs flex-1">{formatDate(e.date, f.locale)}</span>
-                    <Money value={e.netBase} className="text-pos" signed />
+                    <Money value={e.netBase} className="text-ink" />
                   </li>
                 ))}
               </ul>

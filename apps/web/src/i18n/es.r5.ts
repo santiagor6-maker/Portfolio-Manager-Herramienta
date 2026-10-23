@@ -75,4 +75,7 @@ export const esR5 = {
     openNoPrices: '{{month}} en curso: sin precios nuevos',
   },
   settings: { heatCvd: 'Mapa de calor en azul/naranja (más fácil de distinguir con daltonismo)' },
+  tx: { costs: 'Costos' },
+  div: { byMonthSub: 'Año elegido frente al anterior (neto; el anterior en gris)' },
+  fx: { fromPrice: 'Precio (posiciones abiertas)', fromFx: 'Divisa (posiciones abiertas)', approxNote: 'mensual, sin el término cruzado diario', cumulativeSplit: 'TWR desde el inicio' },
 };

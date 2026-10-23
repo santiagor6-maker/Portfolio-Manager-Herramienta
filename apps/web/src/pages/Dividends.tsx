@@ -2,13 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Landmark } from 'lucide-react';
 import type { IncomeEvent } from '@pm/core';
-import { Card, EmptyState, Kpi, Money, PageHeader, Pct, Skeleton } from '../components/ui';
+import { Card, CountryTag, EmptyState, Kpi, Money, PageHeader, Pct, Skeleton } from '../components/ui';
 import { GroupedBars } from '../components/charts';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatMonth, formatPct, monthName } from '../lib/format';
 import { addDays, addMonths } from '../lib/ids';
-import { countryName, flagEmoji } from '../lib/labels';
+import { countryName } from '../lib/labels';
 
 /** Gross and withholding in base currency, derived from the event's net/base ratio. */
 export function toBase(e: IncomeEvent): { grossBase: number; taxesBase: number } {
@@ -43,12 +43,12 @@ export default function DividendsPage() {
   const cutoff = `${prevYear}${asOf.slice(4)}`;
   const prevSamePeriod = isCurrentYear ? events.filter((e) => e.date.startsWith(prevYear) && e.date <= cutoff).reduce((s, e) => s + e.netBase, 0) : prevNet;
 
-  // Monthly bars for the last 4 years.
-  const chartYears = years.slice(0, 4).reverse();
+  // D20: the selected year against the previous one (two series, not 4 × 12 bars); grey = previous.
+  const chartYears = [prevYear, selYear].filter((y) => years.includes(y));
   const chart = useMemo(() => {
-    const series = chartYears.map((y, i) => ({
+    const series = chartYears.map((y) => ({
       name: y,
-      colorIndex: i,
+      colorIndex: y === selYear ? 0 : 7,
       data: Array.from({ length: 12 }, (_, m) =>
         events.filter((e) => e.date.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)).reduce((s, e) => s + e.netBase, 0),
       ),
@@ -162,6 +162,8 @@ export default function DividendsPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
         <Card title={t('div.byCountry', { year: selYear })} bodyClassName="!p-0">
+          {/* D7: the table scrolls inside its card on a phone, never the page. */}
+          <div className="overflow-x-auto">
           <table className="table">
             <thead>
               <tr>
@@ -180,7 +182,7 @@ export default function DividendsPage() {
                       t('div.cashInterest')
                     ) : (
                       <>
-                        <span aria-hidden>{flagEmoji(c)}</span> {countryName(c, f.locale)}
+                        <CountryTag code={c} /> {countryName(c, f.locale)}
                       </>
                     )}
                   </td>
@@ -199,10 +201,31 @@ export default function DividendsPage() {
                 </tr>
               ))}
             </tbody>
+            {byCountry.length > 1 && (
+              <tfoot>
+                {/* D18: totals row. */}
+                <tr className="font-semibold">
+                  <td>{t('common.total')}</td>
+                  <td className="r">
+                    <Money value={byCountry.reduce((x, [, r]) => x + r.gross, 0)} />
+                  </td>
+                  <td className="r">
+                    <Money value={byCountry.reduce((x, [, r]) => x + r.taxes, 0)} />
+                  </td>
+                  <td className="r">
+                    <Pct value={yearGross ? yearTaxes / yearGross : undefined} decimals={1} />
+                  </td>
+                  <td className="r">
+                    <Money value={byCountry.reduce((x, [, r]) => x + r.net, 0)} />
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
+          </div>
         </Card>
         <Card title={t('div.byInstrument')} subtitle={t('div.byInstrumentSub')} bodyClassName="!p-0">
-          <div className="max-h-[360px] overflow-auto">
+          <div className="table-scroll max-h-[360px]">
             <table className="table">
               <thead>
                 <tr>
@@ -216,7 +239,11 @@ export default function DividendsPage() {
                 {byInstrument.map((r) => (
                   <tr key={r.id}>
                     <td>
-                      <span className="font-semibold">{label(r.id).symbol}</span> <span className="text-xs text-muted">{label(r.id).name}</span>
+                      {/* D8: the name goes to a second, truncated line so the figures stay visible. */}
+                      <span className="font-semibold">{label(r.id).symbol}</span>
+                      <span className="block max-w-[240px] truncate text-xs text-muted" title={label(r.id).name}>
+                        {label(r.id).name}
+                      </span>
                     </td>
                     <td className="r">
                       <Money value={r.ttm} />
@@ -236,7 +263,7 @@ export default function DividendsPage() {
       </div>
 
       <Card className="mt-3" title={t('div.payments', { year: selYear })} bodyClassName="!p-0">
-        <div className="max-h-[480px] overflow-auto">
+        <div className="table-scroll max-h-[480px]">
           <table className="table">
             <thead>
               <tr>
@@ -272,6 +299,16 @@ export default function DividendsPage() {
                 </tr>
               ))}
             </tbody>
+            {yearEvents.length > 1 && (
+              <tfoot>
+                <tr className="font-semibold">
+                  <td colSpan={5}>{t('common.total')}</td>
+                  <td className="r">
+                    <Money value={yearEvents.reduce((x, e) => x + e.netBase, 0)} />
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </Card>
@@ -298,7 +335,7 @@ function UpcomingCalendar() {
   const series = useMemo(
     () => [
       { name: t('div.announced'), colorIndex: 0, data: months.map((m) => list.filter((d) => d.source === 'provider' && d.payDate.startsWith(m)).reduce((s, d) => s + d.netBase, 0)) },
-      { name: t('div.estimated'), colorIndex: 2, data: months.map((m) => list.filter((d) => d.source === 'history' && d.payDate.startsWith(m)).reduce((s, d) => s + d.netBase, 0)) },
+      { name: t('div.estimated'), colorIndex: 6, data: months.map((m) => list.filter((d) => d.source === 'history' && d.payDate.startsWith(m)).reduce((s, d) => s + d.netBase, 0)) },
     ],
     [months, list, t],
   );

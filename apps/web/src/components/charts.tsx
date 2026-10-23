@@ -341,7 +341,7 @@ export function LineChart({
           showSymbol: false,
           symbolSize: 8,
           data: s.data,
-          lineStyle: { width: i === 0 ? 2 : 1.5, color, type: s.dashed ? ('dotted' as const) : ('solid' as const) },
+          lineStyle: { width: 2, color, type: s.dashed ? ('dotted' as const) : ('solid' as const) },
           itemStyle: { color },
           // D5: an area only over a zero baseline (drawdown); scaled axes keep plain lines.
           areaStyle: s.area && !scale ? { color: hexA(color, 0.14) } : undefined,

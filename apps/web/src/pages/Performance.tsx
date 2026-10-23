@@ -99,7 +99,7 @@ export default function PerformancePage() {
     const out: LineSeries[] = [{ name: t('chart.portfolio'), data: [start, ...rows.map((r) => [monthEnd(r.month), r.cumulativeTwr] as [string, number])], area: true }];
     benches.forEach((b, i) => out.push({ name: benchmarkName(b), colorIndex: i + 1, data: chain((r) => r.benchmarkReturns?.[b]) }));
     rateIdx.forEach((id, i) => {
-      if (rows.some((r) => r.indexReturns?.[id] !== undefined)) out.push({ name: indexName(id), colorIndex: benches.length + 1 + i, dashed: true, data: chain((r) => r.indexReturns?.[id]) });
+      if (rows.some((r) => r.indexReturns?.[id] !== undefined)) out.push({ name: indexName(id), colorIndex: benches.length + 1 + i, data: chain((r) => r.indexReturns?.[id]) }); // D11: dotted only for inflation
     });
     if (inflation && rows.some((r) => r.inflation !== undefined)) out.push({ name: t('perf.inflationLine', { index: indexName(inflation) }), colorIndex: 7, dashed: true, data: chain((r) => r.inflation) });
     return out.slice(0, 8);

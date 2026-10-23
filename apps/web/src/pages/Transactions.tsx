@@ -89,6 +89,8 @@ export default function TransactionsPage() {
 
   const accounts = useMemo(() => [...new Set((txs ?? []).map((x) => x.account).filter(Boolean))] as string[], [txs]);
   const portfolioName = useMemo(() => new Map(portfolios.map((p) => [p.id, p.name])), [portfolios]);
+  // D9: the Portafolio column only helps when "Todos" mixes several portfolios.
+  const showPortfolio = selectedPortfolio === 'all' && portfolios.length > 1;
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -229,10 +231,11 @@ export default function TransactionsPage() {
                   <th className="r">{t('tx.quantity')}</th>
                   <th className="r">{t('tx.price')}</th>
                   <th className="r">{t('tx.amount')}</th>
-                  <th className="r hidden md:table-cell">{t('tx.fees')}</th>
-                  <th className="r hidden md:table-cell">{t('tx.taxesShort')}</th>
+                  <th className="r hidden md:table-cell" title={`${t('tx.fees')} + ${t('tx.taxesShort')}`}>
+                    {t('tx.costs')}
+                  </th>
                   <th className="hidden lg:table-cell">{t('tx.account')}</th>
-                  {selectedPortfolio === 'all' && <th className="hidden xl:table-cell">{t('tx.portfolio')}</th>}
+                  {showPortfolio && <th className="hidden xl:table-cell">{t('tx.portfolio')}</th>}
                   <th className="w-24">
                     <span className="sr-only">{t('common.actions')}</span>
                   </th>
@@ -281,10 +284,15 @@ export default function TransactionsPage() {
                       <td className="r num">{x.quantity !== undefined ? formatQuantity(x.quantity, f.locale, f.privacy) : x.ratio ? `×${x.ratio}` : '—'}</td>
                       <td className="r num">{x.price !== undefined ? formatPrice(x.price, x.currency, f.locale) : '—'}</td>
                       <td className="r num">{amount}</td>
-                      <td className="r num text-muted hidden md:table-cell">{x.fees ? formatMoney(x.fees, x.currency, f.locale, { privacy: f.privacy }) : '—'}</td>
-                      <td className="r num text-muted hidden md:table-cell">{x.taxes ? formatMoney(x.taxes, x.currency, f.locale, { privacy: f.privacy }) : '—'}</td>
+                      {/* D9: fees and withholding in one "Costs" column (breakdown in the tooltip). */}
+                      <td
+                        className="r num text-muted hidden md:table-cell"
+                        title={x.fees || x.taxes ? `${t('tx.fees')}: ${formatMoney(x.fees ?? 0, x.currency, f.locale, { privacy: f.privacy })} · ${t('tx.taxesShort')}: ${formatMoney(x.taxes ?? 0, x.currency, f.locale, { privacy: f.privacy })}` : undefined}
+                      >
+                        {x.fees || x.taxes ? formatMoney((x.fees ?? 0) + (x.taxes ?? 0), x.currency, f.locale, { privacy: f.privacy }) : '—'}
+                      </td>
                       <td className="text-ink-2 text-xs hidden lg:table-cell">{x.account ?? '—'}</td>
-                      {selectedPortfolio === 'all' && <td className="text-ink-2 text-xs hidden xl:table-cell">{portfolioName.get(x.portfolioId)}</td>}
+                      {showPortfolio && <td className="text-ink-2 text-xs hidden xl:table-cell">{portfolioName.get(x.portfolioId)}</td>}
                       <td>
                         <div className="flex gap-0.5 justify-end">
                           <button

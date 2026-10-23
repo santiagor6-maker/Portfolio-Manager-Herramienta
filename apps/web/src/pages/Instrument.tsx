@@ -9,13 +9,13 @@ import { exchangeLabel } from '../lib/exchanges';
 import { indexName } from '../lib/labels';
 import { IrrCell } from './Positions';
 import { db } from '../db/schema';
-import { Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented } from '../components/ui';
+import { Card, CountryTag, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented } from '../components/ui';
 import { LineChart } from '../components/charts';
 import { useAnalysis, type ChartPeriod, periodStart } from '../hooks/useAnalysis';
 import { useInstrumentMap, useScopedTransactions } from '../hooks/useData';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPct, formatPrice, formatQuantity } from '../lib/format';
-import { countryName, flagEmoji } from '../lib/labels';
+import { countryName } from '../lib/labels';
 import { TxTypeBadge } from './Transactions';
 
 export default function InstrumentPage() {
@@ -72,7 +72,7 @@ export default function InstrumentPage() {
       <PageHeader
         title={
           <span className="flex items-center gap-2">
-            <span aria-hidden>{flagEmoji(inst?.country ?? '')}</span>
+            <CountryTag code={inst?.country ?? ''} />
             {inst?.symbol ?? instrumentId}
             <span className="text-ink-2 font-normal text-base truncate">{inst?.name}</span>
             {(inst as { renamedFrom?: string } | undefined)?.renamedFrom && (

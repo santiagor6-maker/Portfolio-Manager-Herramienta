@@ -170,7 +170,7 @@ export default function MonthlyPage() {
   const colDef: Record<ColKey, { label: string; hint?: string; cell: (r: MonthlyRow) => ReactNode; total?: ReactNode; csv: (r: MonthlyRow) => number | string; fmt?: 'pct' | 'money' }> = {
     start: { label: t('monthly.col.start'), cell: (r) => <Money value={r.startValueBase} className="text-ink-2" />, total: <Money value={totals.start} />, csv: (r) => r.startValueBase, fmt: 'money' },
     flows: { label: t('monthly.col.flows'), hint: t('monthly.col.flowsHint'), cell: (r) => <Money value={r.netFlowsBase} signed className={r.netFlowsBase ? '' : 'text-muted'} />, total: <Money value={totals.flows} signed />, csv: (r) => r.netFlowsBase, fmt: 'money' },
-    income: { label: t('monthly.col.income'), cell: (r) => <Money value={r.incomeBase} className={r.incomeBase ? 'text-pos' : 'text-muted'} />, total: <Money value={totals.income} />, csv: (r) => r.incomeBase, fmt: 'money' },
+    income: { label: t('monthly.col.income'), cell: (r) => <Money value={r.incomeBase} className={r.incomeBase ? 'text-ink' : 'text-muted'} />, total: <Money value={totals.income} />, csv: (r) => r.incomeBase, fmt: 'money' },
     fees: { label: t('monthly.col.fees'), cell: (r) => <Money value={r.feesBase ? -Math.abs(r.feesBase) : 0} className="text-muted" />, total: <Money value={-Math.abs(totals.fees)} />, csv: (r) => -Math.abs(r.feesBase), fmt: 'money' },
     gain: { label: t('monthly.col.gain'), hint: t('monthly.col.gainHint'), cell: (r) => <Money value={r.gainBase} signed className={r.gainBase > 0 ? 'text-pos' : r.gainBase < 0 ? 'text-neg' : 'text-muted'} />, total: <Money value={totals.gain} signed />, csv: (r) => r.gainBase, fmt: 'money' },
     end: { label: t('monthly.col.end'), cell: (r) => <Money value={r.endValueBase} className="font-semibold" />, total: <Money value={totals.end} />, csv: (r) => r.endValueBase, fmt: 'money' },
@@ -185,7 +185,7 @@ export default function MonthlyPage() {
       csv: (r) => r.twr,
       fmt: 'pct',
     },
-    cumulative: { label: t('monthly.col.cumulative'), cell: (r) => <Pct value={r.cumulativeTwr} signed colored />, csv: (r) => r.cumulativeTwr, fmt: 'pct' },
+    cumulative: { label: t('monthly.col.cumulative'), cell: (r) => <Pct value={r.cumulativeTwr} signed className="text-ink-2" />, csv: (r) => r.cumulativeTwr, fmt: 'pct' },
     local: { label: t('monthly.col.priceEffect'), hint: t('monthly.col.priceEffectHint'), cell: (r) => <Pct value={r.localReturn} signed className="text-ink-2" />, total: <Pct value={totals.local} signed />, csv: (r) => r.localReturn ?? '', fmt: 'pct' },
     fx: { label: t('monthly.col.fxEffect'), hint: t('monthly.col.fxEffectHint'), cell: (r) => <Pct value={r.fxReturn} signed className="text-ink-2" />, total: <Pct value={totals.fx} signed />, csv: (r) => r.fxReturn ?? '', fmt: 'pct' },
     inflation: { label: t('monthly.col.inflation', { index: indexName(a?.inflationIndex) }), cell: (r) => <Pct value={r.inflation} signed className="text-ink-2" />, total: <Pct value={totals.inflation} signed />, csv: (r) => r.inflation ?? '', fmt: 'pct' },

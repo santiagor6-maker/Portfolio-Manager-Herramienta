@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Bell, Plus, Star, Trash2 } from 'lucide-react';
-import { Banner, Card, EmptyState, PageHeader, Pct } from '../components/ui';
+import { Banner, Card, CountryTag, EmptyState, PageHeader, Pct } from '../components/ui';
 import { InstrumentPicker } from '../components/InstrumentPicker';
 import { db } from '../db/schema';
 import { upsertInstruments } from '../db/repo';
@@ -12,7 +12,6 @@ import { useFmt } from '../store/app';
 import { addDays, todayIso } from '../lib/ids';
 import { formatDate, formatPrice } from '../lib/format';
 import { exchangeLabel } from '../lib/exchanges';
-import { flagEmoji } from '../lib/labels';
 import { fetchHistory } from '../services/marketData';
 
 /** Instruments the user follows without holding them: price, changes, 52-week range (W11). */
@@ -84,7 +83,7 @@ export default function WatchlistPage() {
                     <tr key={w.instrumentId}>
                       <td>
                         <Link to={`/posiciones/${encodeURIComponent(w.instrumentId)}`} className="flex items-center gap-2">
-                          <span aria-hidden>{flagEmoji(inst?.country ?? '')}</span>
+                          <CountryTag code={inst?.country ?? ''} />
                           <span className="font-semibold">{inst?.symbol ?? w.instrumentId}</span>
                           <span className="text-xs text-muted truncate max-w-[220px]">{inst?.name}</span>
                           <span className="text-[11px] text-muted">{exchangeLabel(inst?.exchange)}</span>

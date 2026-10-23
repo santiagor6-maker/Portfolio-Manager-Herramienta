@@ -408,3 +408,16 @@ export function DemoBadge() {
     </span>
   );
 }
+
+/**
+ * D17: country as a two-letter tag. Regional-indicator flag emoji are not drawn on Windows (most users
+ * in Colombia and Brazil), where they showed as loose letters.
+ */
+export function CountryTag({ code }: { code?: string }) {
+  if (!code || !/^[A-Z]{2}$/i.test(code)) return null;
+  return (
+    <span className="inline-grid place-items-center h-4 min-w-[22px] px-1 rounded-[4px] border border-line-strong text-[9.5px] font-semibold tracking-wide text-ink-2 leading-none shrink-0" aria-hidden>
+      {code.toUpperCase()}
+    </span>
+  );
+}

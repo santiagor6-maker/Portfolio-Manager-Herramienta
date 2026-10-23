@@ -5,9 +5,9 @@ import clsx from 'clsx';
 import type { Instrument } from '@pm/core';
 import { searchInstruments } from '../services/marketData';
 import type { SearchResult } from '../services/marketClient';
-import { flagEmoji } from '../lib/labels';
 import { exchangeLabel } from '../lib/exchanges';
 import { canonicalInstrument } from '../lib/renames';
+import { CountryTag } from './ui';
 
 export interface ManualRequest {
   name: string;
@@ -113,7 +113,7 @@ export function InstrumentPicker({
     <div className="relative">
       {value && !open ? (
         <button type="button" id={inputId} className={clsx('input flex items-center gap-2 text-left', invalid && '!border-neg')} onClick={() => setOpen(true)}>
-          <span aria-hidden>{flagEmoji(value.country)}</span>
+          <CountryTag code={value.country} />
           <span className="font-semibold">{value.symbol}</span>
           <span className="text-muted truncate text-xs flex-1">{value.name}</span>
           <span className="chip !h-5 font-medium" data-testid="picked-exchange" title={t('picker.exchange')}>{exchangeLabel(value.exchange)}</span>
@@ -190,7 +190,7 @@ export function InstrumentPicker({
                 }}
                 onMouseEnter={() => setActive(i)}
               >
-                <span aria-hidden>{flagEmoji(r.country)}</span>
+                <CountryTag code={r.country} />
                 <span className="font-semibold w-24 truncate">{r.symbol}</span>
                 <span className="flex-1 truncate text-ink-2">
                   {r.name}

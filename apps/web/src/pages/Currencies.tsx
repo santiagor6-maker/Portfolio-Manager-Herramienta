@@ -104,10 +104,11 @@ export default function CurrenciesPage() {
         <Kpi
           loading={loading}
           label={t('fx.cumulativeSplit')}
-          value={<Pct value={(1 + cumLocal) * (1 + cumFx) - 1} signed colored />}
+          // D12: the headline is the same TWR as Resumen/Mensual; the split is shown as an approximation.
+          value={<Pct value={a?.summaries.SI?.twr ?? (1 + cumLocal) * (1 + cumFx) - 1} signed colored />}
           sub={
             <span className="text-xs text-muted num" data-testid="fx-composition">
-              (1 {formatPct(cumLocal, f.locale, { signed: true })}) × (1 {formatPct(cumFx, f.locale, { signed: true })}) − 1
+              ≈ (1 {formatPct(cumLocal, f.locale, { signed: true })}) × (1 {formatPct(cumFx, f.locale, { signed: true })}) − 1 · {t('fx.approxNote')}
             </span>
           }
           hint={t('fx.cumulativeSplitSub')}
@@ -242,10 +243,11 @@ function Waterfall() {
           else running = s.value;
           const left = (Math.min(from, to) / max) * 100;
           const width = Math.max((Math.abs(to - from) / max) * 100, 0.4);
-          const color = s.total ? 'var(--series-1)' : s.value >= 0 ? 'var(--pos)' : 'var(--neg)';
+          // D14: contributions are not a gain: neutral grey; green/red only for results.
+          const color = s.total ? 'var(--series-1)' : s.key === 'flows' ? 'var(--series-8)' : s.value >= 0 ? 'var(--pos)' : 'var(--neg)';
           return (
-            <li key={s.key} className="grid grid-cols-[140px_1fr_150px] items-center gap-3">
-              <span className="text-ink-2 truncate">{t(`fx.step.${s.key}`)}</span>
+            <li key={s.key} className="grid grid-cols-[minmax(0,170px)_1fr_minmax(0,150px)] items-center gap-3">
+              <span className="text-ink-2 leading-tight">{t(`fx.step.${s.key}`)}</span>
               <span className="relative h-5 rounded bg-surface-2 overflow-hidden" aria-hidden>
                 <span className="absolute inset-y-0 rounded print-heat" style={{ left: `${Math.max(0, left)}%`, width: `${Math.min(100, width)}%`, background: color }} />
               </span>
