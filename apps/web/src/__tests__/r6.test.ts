@@ -52,3 +52,12 @@ describe('W45/W53: tax and import texts', () => {
     expect(axisCompactDigits(90e6, 400e6)).toBe(0);
   });
 });
+
+describe('D16: price decimals', () => {
+  it('uses the currency decimals and 4 only when a small price has them', async () => {
+    const { formatPrice } = await import('../lib/format');
+    expect(formatPrice(2.5, 'USD', 'en-US')).toBe('$2.50');
+    expect(formatPrice(0.5432, 'USD', 'en-US')).toBe('$0.5432');
+    expect(formatPrice(38_500, 'COP', 'es-CO')).toBe('$ 38.500');
+  });
+});

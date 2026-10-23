@@ -351,7 +351,7 @@ function UpcomingCalendar() {
         <ul className="xl:col-span-2 text-[13px] flex flex-col gap-1 max-h-[260px] overflow-auto" data-testid="div-calendar">
           {list.slice(0, 30).map((d, i) => (
             <li key={i} className="flex items-center gap-2 border-b border-line/60 py-1">
-              <span className="w-20 font-semibold truncate">{label(d.instrumentId).symbol}</span>
+              <span className="min-w-20 max-w-[120px] font-semibold truncate" title={label(d.instrumentId).symbol}>{label(d.instrumentId).symbol}</span>
               <span className="text-xs text-muted flex-1">
                 {d.source === 'history' ? '≈ ' : ''}
                 {formatDate(d.payDate, f.locale)}

@@ -100,8 +100,10 @@ export function formatQuantity(value: number | undefined | null, locale: string,
 /** Price in instrument currency (more decimals for small prices). */
 export function formatPrice(value: number | undefined | null, currency: CurrencyCode, locale: string): string {
   if (value === undefined || value === null || !Number.isFinite(value)) return '—';
-  const decimals = Math.abs(value) < 10 ? 4 : currencyDecimals(currency) === 0 ? 0 : 2;
-  return formatMoney(value, currency, locale, { decimals });
+  // D16: the currency's decimals; up to 4 only when a small price actually has them (0,5432 USD).
+  const base = currencyDecimals(currency);
+  const needs4 = Math.abs(value) < 10 && Math.abs(value * 100 - Math.round(value * 100)) > 1e-6;
+  return formatMoney(value, currency, locale, { decimals: needs4 ? 4 : Math.abs(value) < 10 && base === 0 ? 2 : base });
 }
 
 /** Percent from a decimal (0.0123 → "1,23 %" in es-CO). */
