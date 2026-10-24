@@ -503,7 +503,8 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
             accept(id, r.day, r.price);
           }
           if (reject.unit) {
-            outliers.push({ tx, code: 'TRADE_PRICE_UNIT_SUSPECT', severity: 'warning', message: `${reject.message} — accepted because ${days} consistent prices on distinct days confirm the new level` });
+            // Structured: `accepted` 1 = the price is already used; `unitFactor` = the suspected factor.
+            outliers.push({ tx, code: 'TRADE_PRICE_UNIT_SUSPECT', severity: 'warning', data: { unitFactor: reject.unit, accepted: 1 }, message: `${reject.message} — accepted because ${days} consistent prices on distinct days confirm the new level` });
             priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_UNIT_SUSPECT' });
           }
           priceFlags.push({ day, instrumentId: id, code: 'TRADE_PRICE_CONFIRMED_BY_RUN' });
@@ -513,7 +514,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
           continue;
         }
         const code = reject.unit ? ('TRADE_PRICE_UNIT_SUSPECT' as const) : ('TRADE_PRICE_OUTLIER' as const);
-        const outlier = { tx, code, severity: 'warning' as const, message: reject.message };
+        const outlier = { tx, code, severity: 'warning' as const, message: reject.message, ...(reject.unit ? { data: { unitFactor: reject.unit, accepted: 0 } } : {}) };
         const flag = { day, instrumentId: id, code };
         outliers.push(outlier);
         priceFlags.push(flag);

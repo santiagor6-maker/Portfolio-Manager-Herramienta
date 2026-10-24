@@ -92,6 +92,10 @@ describe('C53 / C54 — power-of-ten moves and the split detector', () => {
     const w = performanceSummary(inp, 'YTD', '2024-07-31').warnings ?? [];
     expect(w).toContain('TRADE_PRICE_UNIT_SUSPECT:PNY');
     expect(w).toContain('TRADE_PRICE_CONFIRMED_BY_RUN:PNY');
+    // Web R7 W67: structured data says which suspects are already accepted, and the factor.
+    const unit = ledgerDiagnostics(inp).filter((d) => d.code === 'TRADE_PRICE_UNIT_SUSPECT');
+    expect(unit.map((d) => d.data)).toContainEqual({ unitFactor: 10, accepted: 1 });
+    expect(unit.filter((d) => d.data?.accepted === 0).every((d) => d.data?.unitFactor === 10)).toBe(true);
   });
 
   it('two x100 prints on distinct days are still never confirmed', () => {
