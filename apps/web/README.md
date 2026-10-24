@@ -448,3 +448,27 @@ Revisión: `reviews/web-r3.md`.
 - Pruebas: `src/__tests__/r7.test.ts` (unitarias) y `e2e/regression-r7.spec.ts` (NVDA 10:1, proventos de
   Brasil, columnas, tamaños de KPI, desbordes, textos). Totales: 130 unitarias y 60 e2e (1 omitida, la
   prueba en vivo contra el servidor real).
+
+## Respuesta a la revisión ronda 7 (`reviews/web-r7.md`)
+
+- **W61 (alta):** todas las escrituras de un clic son idempotentes (`lib/writeGuard.ts`).
+  - Un candado por grupo de botones (`useGuardedAction`) ignora el segundo clic aunque llegue antes de que el botón se deshabilite.
+  - `addTransactionsOnce` (`db/repo.ts`) comprueba si el evento ya existe y lo escribe dentro de una misma transacción de lectura y escritura. La clave es portafolio, tipo, instrumento y fecha; un split o un dividendo en acciones a ±7 días cuenta como el mismo evento, y en los movimientos de efectivo también cuentan importe, cuenta, subtipo y nota.
+  - Se aplica a «Registrar split», «Crear aporte», «Corregir unidad», «Registrar todos», el aviso del Resumen, «Rescatar», el pago de DARF, el asistente, «Nuevo portafolio», la confirmación de la importación y las alertas.
+  - Avisos marca un split grabado dos veces y ofrece «Eliminar duplicados».
+- **W62 (alta):** `packages/market-data/src/corporate.ts` clasifica como SPLIT los factores 1:k y k:1 de cualquier tamaño y todo factor menor que 1 en B3 (AMER3 1:100, IRBR3 1:30, BHIA3 1:25, CMG 50:1).
+  - En la web, los grupamentos que ya estaban en caché como «SPINOFF a revisar» se convierten en contrasplits.
+  - Los eventos del proveedor que no se pueden clasificar, de posiciones abiertas, se muestran en el Resumen con «Revisar» e «Ignorar», cuentan en Avisos y la bandeja los describe en el idioma.
+- **W63 (alta):** la tarjeta con la etiqueta a la izquierda y la cifra a la derecha solo se usa donde la tarjeta ocupa todo el ancho (`rowOnPhone`, en el Resumen).
+  - El mínimo de 16 px (20 px la cifra principal) vale en todas las tarjetas. Si la cifra no cabe, pasa a notación compacta y, como último recurso, se muestra con elipsis y la cifra completa en el *tooltip*.
+  - La e2e recorre seis páginas a 390 y 360 px.
+- **W64:** los splits pendientes guardan la sugerencia de cada portafolio («en 2 portafolios»).
+  - Desde «Todos», un split inferido se graba en todos los portafolios que tenían el activo antes de la fecha.
+  - Lo ya registrado se oculta en cada vista de portafolio.
+- **W65:** «+ Nuevo portafolio» en Importar pide nombre y moneda y crea el portafolio una sola vez, al confirmar.
+- **W66:** Impuestos abre en la jurisdicción del portafolio: la residencia fiscal o, si no la hay, la de la moneda base (`lib/currencyDefaults.ts`). Las pestañas se traducen («Colômbia») y llevan las *chips* CO y BR.
+- **W67:** el motor marca `TRADE_PRICE_UNIT_SUSPECT` con `data.unitFactor` y `data.accepted`, así que la web ya no lee el texto en inglés.
+  - Un split que solo se deduce de los precios se muestra como «Posible split» y pide confirmación antes de grabarse.
+  - La nota de columnas ocultas usa el nombre corto de la columna.
+- **Pruebas:** `src/__tests__/r8.test.ts` (unitarias) y `e2e/regression-r8.spec.ts` (doble clic, AMER3, NVDA en dos portafolios, importar a un portafolio nuevo, KPIs en el teléfono, Impuestos).
+  Totales: 146 pruebas unitarias de la web, 1.297 en el resto de paquetes y 66 e2e (1 omitida, la prueba en vivo).

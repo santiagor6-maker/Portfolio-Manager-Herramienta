@@ -200,7 +200,8 @@ test('W66: Impuestos opens on Brasil for a BRL portfolio (no tax residence set) 
   // Portuguese names the tab «Colômbia».
   await page.goto('/ajustes');
   await page.getByLabel(/Idioma/).selectOption('pt');
-  await page.goto('/impuestos');
+  // Navigate in the app (a reload could race the saved language setting).
+  await page.getByRole('link', { name: 'Impostos' }).click();
   await expect(page.getByRole('heading', { name: 'Impostos' })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('button', { name: /Colômbia/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Brasil/ })).toHaveAttribute('aria-pressed', 'true');
