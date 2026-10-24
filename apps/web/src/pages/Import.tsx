@@ -14,6 +14,7 @@ import { db } from '../db/schema';
 import { bulkAddTransactions } from '../db/repo';
 import { parseDecimal } from '../lib/parse';
 import { createPortfolio } from '../db/repo';
+import { once } from '../lib/writeGuard';
 import { downloadText } from '../lib/export';
 import { IbkrSyncCard, syncErrorText, type SyncOrigin } from '../components/IbkrSync';
 import { clearIbkrInbox } from '../services/ibkrSync';
@@ -27,6 +28,9 @@ import type { Locale } from '@pm/importers';
 type Step = 'upload' | 'mapping' | 'preview' | 'done';
 const MAP_FIELDS: MappingField[] = ['date', 'type', 'symbol', 'isin', 'name', 'quantity', 'price', 'amount', 'netAmount', 'fees', 'taxes', 'currency', 'exchange', 'account', 'note'];
 
+/** Value of the «+ Nuevo portafolio» option. */
+const NEW = '__new';
+
 export default function ImportPage() {
   const { t } = useTranslation();
   const f = useFmt();
@@ -38,9 +42,11 @@ export default function ImportPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const writable = portfolios.filter((p) => !p.isDemo);
-  const [portfolioId, setPortfolioId] = useState<string>(
-    writable.find((p) => p.id === selected)?.id ?? writable[0]?.id ?? '__new',
-  );
+  const preferred = writable.find((p) => p.id === selected)?.id ?? writable[0]?.id;
+  const [choice, setPortfolioId] = useState<string>();
+  // Until the user picks one, follow the selected portfolio (the list loads after the first render);
+  // "+ Nuevo portafolio" only when there is none or the user chose it.
+  const portfolioId = choice ?? preferred ?? NEW;
   const [account, setAccount] = useState('');
   const [presetId, setPresetId] = useState('');
   const [defaultCurrency, setDefaultCurrency] = useState(f.currency);
@@ -64,10 +70,16 @@ export default function ImportPage() {
   const [skippedNotes, setSkippedNotes] = useState<string[]>([]);
   const profile = profiles.find((p) => p.id === profileId);
 
-  const resolvePortfolio = async (): Promise<string> => {
-    if (portfolioId !== '__new') return portfolioId;
-    if (writable[0]) return writable[0].id;
-    const p = await createPortfolio({ name: t('portfolio.defaultName'), baseCurrency: f.currency, costMethod: 'FIFO' });
+  // W65: "+ Nuevo portafolio" always creates one (name and currency chosen here), once, when the
+  // import is confirmed (the preview runs against an empty placeholder).
+  const [newName, setNewName] = useState(() => t('portfolio.defaultName'));
+  const [newCcy, setNewCcy] = useState(f.currency);
+  const resolvePortfolio = async (create = true): Promise<string> => {
+    if (portfolioId !== NEW) return portfolioId;
+    if (!create) return NEW;
+    const p = await once(`import|new-portfolio|${newName}|${newCcy}`, () =>
+      createPortfolio({ name: newName.trim() || t('portfolio.defaultName'), baseCurrency: newCcy, costMethod: newCcy === 'BRL' ? 'AVERAGE' : 'FIFO', taxResidence: newCcy === 'BRL' ? 'BR' : newCcy === 'COP' ? 'CO' : undefined }),
+    );
     setPortfolioId(p.id);
     return p.id;
   };
@@ -76,7 +88,7 @@ export default function ImportPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const pid = await resolvePortfolio();
+      const pid = await resolvePortfolio(false);
       const r = await runImport({
         file: fl,
         portfolioId: pid,
@@ -118,7 +130,9 @@ export default function ImportPage() {
     void process(fl);
   };
 
-  const confirm = async () => {
+  // W61: one commit per preview, whatever the number of clicks.
+  const confirm = () => (result ? once(`import|confirm|${result.transactions[0]?.id ?? ''}|${result.transactions.length}`, confirmNow) : Promise.resolve());
+  const confirmNow = async () => {
     if (!result) return;
     setBusy(true);
     try {
@@ -242,9 +256,23 @@ export default function ImportPage() {
                       {p.name}
                     </option>
                   ))}
-                  <option value="__new">+ {t('imp.newPortfolio')}</option>
+                  <option value={NEW}>+ {t('imp.newPortfolio')}</option>
                 </select>
               </Field>
+              {portfolioId === NEW && (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2" data-testid="import-new-portfolio">
+                  <Field label={t('settings.name')} htmlFor="i-new-name">
+                    <input id="i-new-name" className="input" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                  </Field>
+                  <Field label={t('settings.base')} htmlFor="i-new-ccy">
+                    <select id="i-new-ccy" className="select" value={newCcy} onChange={(e) => setNewCcy(e.target.value as typeof newCcy)}>
+                      {CURRENCY_CODES.map((c) => (
+                        <option key={c}>{c}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
               <Field label={t('impr.broker')} htmlFor="i-broker" hint={profile?.help}>
                 <select
                   id="i-broker"
