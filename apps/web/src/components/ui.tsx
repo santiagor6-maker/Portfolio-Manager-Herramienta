@@ -171,8 +171,19 @@ export function Kpi({
   valueCompact?: ReactNode;
 }) {
   return (
-    <div className={clsx('card px-3 sm:px-4 py-2.5 sm:py-3.5 min-w-0', primary && 'kpi-primary', primary && !className && 'col-span-2', className)} title={hint}>
-      <div className="text-xs font-medium text-muted line-clamp-2">{label}</div>
+    <div
+      className={clsx(
+        'card px-3 sm:px-4 py-2.5 sm:py-3.5 min-w-0',
+        // W54: on the phone a secondary card is one row (label and sub-line left, figure right), so the
+        // first chart's trace starts within the first screen.
+        !primary && 'max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] max-sm:gap-x-3 max-sm:items-center',
+        primary && 'kpi-primary',
+        primary && !className && 'col-span-2',
+        className,
+      )}
+      title={hint}
+    >
+      <div className="text-xs font-medium text-muted line-clamp-2 max-sm:col-start-1">{label}</div>
       {loading ? (
         <>
           <div className="skeleton h-7 w-3/4 mt-2" />
@@ -180,10 +191,10 @@ export function Kpi({
         </>
       ) : (
         <>
-          <FitValue compact={valueCompact} primary={primary}>
+          <FitValue compact={valueCompact} primary={primary} className={primary ? undefined : 'max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2 max-sm:text-right'}>
             {value}
           </FitValue>
-          {sub && <div className="mt-1 text-[13px]">{sub}</div>}
+          {sub && <div className="mt-1 text-[13px] max-sm:col-start-1 max-sm:mt-0.5">{sub}</div>}
         </>
       )}
     </div>
@@ -199,7 +210,7 @@ export function Kpi({
  * - The decision is re-made on every fit from a hidden copy of the full figure (no sticky state), and a
  *   zero-width measurement (full-page capture, hidden tab) is ignored.
  */
-function FitValue({ children, compact, primary }: { children: ReactNode; compact?: ReactNode; primary?: boolean }) {
+function FitValue({ children, compact, primary, className }: { children: ReactNode; compact?: ReactNode; primary?: boolean; className?: string }) {
   const box = useRef<HTMLDivElement>(null);
   const fullProbe = useRef<HTMLSpanElement>(null);
   const compactProbe = useRef<HTMLSpanElement>(null);
@@ -234,7 +245,7 @@ function FitValue({ children, compact, primary }: { children: ReactNode; compact
     return () => ro?.disconnect();
   });
   return (
-    <div className="relative overflow-hidden">
+    <div className={clsx('relative overflow-hidden', className)}>
       <div ref={box} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden" data-compact={useCompact || undefined}>
         {useCompact ? compactNode : children}
       </div>

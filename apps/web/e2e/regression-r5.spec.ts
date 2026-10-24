@@ -307,7 +307,9 @@ test('W54: on the phone the first chart starts within the first screen; KPI card
   // One card per row on the phone: every card as wide as the grid (no empty cell next to a lone card).
   const widths = await kpis.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
   expect(new Set(widths).size).toBe(1);
-  const chartTop = await page.getByRole('heading', { name: 'Valor vs. aportado' }).evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
-  expect(chartTop).toBeLessThan(844);
+  // R7 (W54): the plotted area, not only the chart title, starts within the first screen.
+  const heading = page.getByRole('heading', { name: 'Valor vs. aportado' });
+  const plotTop = await heading.locator('xpath=ancestor::*[contains(@class,"card")][1]').locator('canvas, svg[role], .echarts-root, [_echarts_instance_]').first().evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
+  expect(plotTop + 80, `plot starts at ${plotTop}`).toBeLessThan(844);
   await page.screenshot({ path: `${SHOTS}/r6-phone-dashboard.png` });
 });
