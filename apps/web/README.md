@@ -487,3 +487,11 @@ Revisión: `reviews/web-r3.md`.
 - **W69:** dos eventos del mismo activo a menos de 7 días solo se consideran el mismo con la misma razón (1/3 y 0,3333 cuentan como la misma). Si se omite uno porque ya estaba registrado, se avisa.
 - **W70:** si la razón es menor que 1, el texto usa la variante de contrasplit: «grupamento» en pt, «contrasplit» en es y «reverse split» en en. Se aplica al aviso del Resumen, a Avisos, a la *chip* de Posiciones y al Diagnóstico. Avisos presenta un split deducido de los precios como «posible».
 - **Totales:** 155 pruebas unitarias en la web, 1.317 en el resto de paquetes (19 omitidas) y 69 e2e (1 omitida, la prueba en vivo).
+
+## Respuesta a la revisión ronda 9 (`reviews/web-r9.md`)
+
+- **W71:** en «Todos», cada portafolio conserva su método de costo, por ejemplo FIFO en uno y costo promedio en otro.
+  - El motor tiene una opción nueva y compatible, `portfolioCostMethods`: con `isolatePortfolios`, el libro de cada portafolio se crea con su propio método. Si se indica un `costMethod` explícito, este sigue mandando sobre todos.
+  - Así, la ganancia no realizada, la realizada y el efecto precio de «Todos» son la suma de los portafolios.
+  - **Pruebas:** unitarias en el motor, y una e2e con A en FIFO y B en costo promedio que compara los totales de Posiciones. Esa e2e falla sin la corrección.
+- **Totales:** 155 pruebas unitarias en la web, 1.319 en el resto de paquetes (19 omitidas) y 70 e2e (1 omitida, la prueba en vivo).

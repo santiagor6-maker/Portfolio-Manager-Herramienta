@@ -226,6 +226,7 @@ export function DataTable<T>({
               {columns.map((c) => (
                 <td
                   key={c.id}
+                  data-col={c.id}
                   className={clsx(
                     'font-semibold bg-surface-2 border-t border-line',
                     c.align === 'right' && 'r num',

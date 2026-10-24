@@ -175,3 +175,39 @@ test('W68: ITUB4 bonificação 10 % and AMER3 grupamento 1:100 in two portfolios
   await expect(table).toContainText('220', { timeout: 30_000 }); // 2 × 110 ITUB4
   await expect(table.locator('tr', { hasText: 'AMER3' })).toContainText('40'); // 2 × 2.000 / 100
 });
+
+/** A Posiciones footer total (unrealized "gain" in the value view, "realized" in the performance view). */
+async function footerIn(page: Page, view: string, col: 'gain' | 'realized'): Promise<number> {
+  const pf = page.locator('#pf-select');
+  if (view === 'all') await pf.selectOption('all');
+  else await pf.selectOption({ label: view });
+  await page.goto('/posiciones');
+  if (col === 'realized') await page.getByRole('button', { name: 'Rendimiento', exact: true }).click();
+  const cell = page.getByTestId('positions-table').locator(`tfoot td[data-col="${col}"]`);
+  await expect(cell).toContainText(/\d/, { timeout: 30_000 });
+  await page.waitForTimeout(800);
+  // The first amount of the cell ("+USD 5.000,00" — a percentage may follow).
+  const text = (await cell.textContent()) ?? '';
+  const m = text.match(/([+\-−])?[^\d+\-−]*(\d{1,3}(?:\.\d{3})*,\d{2})/);
+  if (!m) throw new Error(`no amount in «${text}»`);
+  const n = Number(m[2]!.replace(/\./g, '').replace(',', '.'));
+  return m[1] && m[1] !== '+' ? -n : n;
+}
+
+test('W71: with A in FIFO and B at average cost, unrealized and realized gains in "Todos" equal A + B', async ({ page }) => {
+  await mockProvider(page, {}, { NVDA: [['2023-01-05', 100], ['2023-06-01', 140], ['2023-09-01', 150], ['2024-01-05', 150]] });
+  await onboard(page, 'USD', '100.000', '2023-01-02'); // Cartera A: USD → FIFO
+  await importCsv(page, 'nvda-fifo.csv');
+  // Cartera B in BRL → average cost (B3 rule); figures are reported in USD in every view.
+  await importCsv(page, 'nvda-fifo.csv', { name: 'Cartera B', ccy: 'BRL' });
+  const sums: Record<string, number[]> = {};
+  for (const col of ['gain', 'realized'] as const) {
+    const a = await footerIn(page, 'Cartera A', col);
+    const b = await footerIn(page, 'Cartera B', col);
+    const all = await footerIn(page, 'all', col);
+    sums[col] = [a, b, all];
+    expect(Math.abs(all - (a + b)), `${col}: Todos ${all} vs ${a} + ${b}`).toBeLessThan(0.02);
+  }
+  // FIFO and average cost really differ here (otherwise the check proves nothing).
+  expect(sums.realized![0]).not.toBeCloseTo(sums.realized![1]!, 0);
+});

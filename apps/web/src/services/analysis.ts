@@ -222,7 +222,9 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
     // per portfolio (the same file in two portfolios is not a "possible duplicate").
     const transactions = scopeImportHashes(ds.transactions);
     const portfolioBaseCurrencies = Object.fromEntries(ds.portfolios.map((p) => [p.id, p.baseCurrency]));
-    return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options: { ...options, isolatePortfolios: true, portfolioBaseCurrencies } };
+    // W71: and each portfolio's own cost method (FIFO in one, average in another).
+    const portfolioCostMethods = Object.fromEntries(ds.portfolios.map((p) => [p.id, p.costMethod ?? ds.defaultCostMethod]));
+    return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options: { ...options, isolatePortfolios: true, portfolioBaseCurrencies, portfolioCostMethods } };
   }
   const portfolio = ds.portfolios.find((p) => p.id === ds.selectedPortfolioId);
   if (!portfolio) return undefined;
