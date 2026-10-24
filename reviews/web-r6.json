@@ -1,0 +1,72 @@
+{
+  "id": "web-r6",
+  "score": 8.0,
+  "competitorScore": 8.0,
+  "competitor": "Sharesight",
+  "approved": false,
+  "fixed": [
+    "D1",
+    "W49",
+    "W50",
+    "W51",
+    "W52",
+    "W45",
+    "D9",
+    "D16",
+    "D19",
+    "D21",
+    "D22"
+  ],
+  "gaps": [
+    {
+      "id": "W55",
+      "severity": "alta",
+      "text": "El Resumen dice «Avisos: Todo en orden» con un split sin registrar: 10.000 NVDA compradas a USD 142,65 el 05-01-2023 se valoran en USD 2.183.091 en vez de ≈ USD 21 M (split 10:1 del 10-06-2024), el gráfico cae −85 % en un día y Posiciones no marca nada. El split solo aparece en la bandeja de Movimientos («16 eventos por registrar») y como etiqueta en Rendimiento. Además, 230 proventos anunciados esperan en la bandeja mientras Proventos dice «Ainda não há proventos», sin enlace. Causa: Dashboard.tsx:371 solo cuenta diagnósticos de severidad error, Dashboard.tsx:377 no cuenta la bandeja, Dividends.tsx:97 y la bandeja solo existe en Transactions.tsx:152. Corrección: aplicar los splits del proveedor que coinciden con POSSIBLE_UNRECORDED_SPLIT (con deshacer) o un aviso bloqueante en Resumen y Posiciones, «N eventos corporativos por registrar» en Avisos, y proventos pendientes en Proventos."
+    },
+    {
+      "id": "W56",
+      "severity": "media",
+      "text": "La prioridad de columnas oculta lo esencial y conserva columnas de ceros. En Posições a 1440 px oculta Quantidade y muestra «Ef. câmbio» con R$ 0,00 en las 14 filas (portafolio solo en BRL), con «Ef. preço» igual a «Ganho». En Mensal a 1280 px oculta Aportes/resgates, Proventos y Valor inicial y deja «Ef. câmbio 0,00%» en todos los meses. Causa: Positions.tsx:360 (dropOrder qty primero), Monthly.tsx:160 (income/flows antes que fx) y fitColumns.tsx no mira el contenido. Corrección: quitar primero las columnas constantes o duplicadas y nunca ocultar Cantidad, Aportes ni Dividendos."
+    },
+    {
+      "id": "W57",
+      "severity": "media",
+      "text": "Efectos secundarios del ajuste de D1. En pt con COP a 1280 px, la cifra del KPI baja a 12,6 px: igual que la etiqueta y más pequeña que el % de abajo (13 px). En una misma fila hay tres tamaños (16,2/17,4/14,5 px). En es, el compacto mezcla «−$8568,3 M» (cuatro cifras sin separador) y «+$62,8 MRD» en la misma fila, con una unidad poco usada en Colombia. Solo 4 de 48 KPIs tienen valueCompact; los demás bajan a 12 px y luego se recortan sin elipsis. Causa: ui.tsx:208-215, MIN_FIT 12 en ui.tsx:238, ui.tsx:232 y format.ts:61. Corrección: un tamaño por fila, mínimo de 16 px, compacto propio para es («$ 8.568 M» o «$ 62,8 mil M») y valueCompact en todos los KPIs monetarios."
+    },
+    {
+      "id": "W58",
+      "severity": "baja",
+      "text": "El compacto queda pegado tras una medición de ancho 0. Una captura de página completa (CDP captureBeyondViewport, la misma que usa DevTools) pasa «+R$ 3.730,04» a «+R$ 3,7 mil» con 183 px de tarjeta, y no vuelve a la cifra completa hasta cambiar de moneda. Causa: ui.tsx:210-215 no protege clientWidth 0, ui.tsx:223-230 solo vuelve si la tarjeta crece más de 24 px y ui.tsx:205 solo actualiza el title fuera del compacto. Corrección: ignorar ancho 0 y decidir el compacto midiendo un clon en cada ajuste."
+    },
+    {
+      "id": "W59",
+      "severity": "baja",
+      "text": "Desplazamiento horizontal residual. Divisas a 360 px en es (scrollWidth 395/373) por la chip de fuente con nowrap (Currencies.tsx:211, index.css:280). El mapa de calor de Mensual con meses de tres cifras desborda la página a 1024 px (1071) y a 768 px (811) (Monthly.tsx:604). La bandeja de eventos corporativos a 1280 px mide 1134 px en una caja de 970 y deja fuera los botones «Registrar» por la nota larga de las bonificações (SuggestionsInbox.tsx:59-71)."
+    },
+    {
+      "id": "W60",
+      "severity": "baja",
+      "text": "Textos residuales (resto de W53): «…não atribuídos ao à vista: 0.07.» en la vista previa de SINACOR (taxText.ts:37: la expresión regular no localiza un número seguido de punto final; además «ao à vista»); «Se agregaron 1 activos nuevos» sin plural (es.ts:397); nombre de CDT con fecha ISO «vence 2025-01-09»; «Inicia el servidor (npm run dev:server)» mostrado a inversionistas tras un 503 de un solo par, con el aviso rojo que sigue aunque el servidor ya responde (es/pt/en.ts:78-80); resumen accesible de Rendimiento con la fecha futura «31 de oct de 2026»."
+    },
+    {
+      "id": "W53",
+      "severity": "baja",
+      "text": "Parcial: se corrigieron los ejes, las notas y razones de bonificação (GOAU4 +33,33% coherente tras 1bb70a6), las cifras de las notas y «(1 + 0,00%)». Queda «0.07.» en la vista previa de SINACOR (detalle en W60)."
+    },
+    {
+      "id": "W54",
+      "severity": "baja",
+      "text": "Parcial: «Primeros pasos» ya va en una línea, pero los 3 KPIs secundarios pasaron a uno por fila (7183768). Por eso el primer gráfico del Resumen empieza en y = 782–788 de 844 px y solo se ven su título y su leyenda, no el trazo."
+    },
+    {
+      "id": "W20",
+      "severity": "baja",
+      "text": "Parcial: en la primera visita se cargan 811 kB de JS/CSS antes de los KPIs (800 en R5), con los KPIs a los 740 ms; ECharts (576 kB) llega después."
+    },
+    {
+      "id": "W10",
+      "severity": "baja",
+      "text": "Sigue sin haber sincronización entre dispositivos ni con corredores o B3, salvo IBKR y el buzón de correo con servidor propio."
+    }
+  ]
+}
