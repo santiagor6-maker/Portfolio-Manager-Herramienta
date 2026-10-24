@@ -123,7 +123,8 @@ test('W64/W65: "+ Nuevo portafolio" creates a portfolio; from "Todos" the split 
   await importCsv(page, 'nvda-split.csv');
   await importCsv(page, 'nvda-split.csv', { name: 'Cartera B', ccy: 'USD' });
   const pf = page.locator('#pf-select');
-  await expect(pf.locator('option')).toContainText(['Cartera A', 'Cartera B']);
+  await expect(pf.locator('option', { hasText: 'Cartera B' })).toHaveCount(1);
+  await expect(pf.locator('option', { hasText: 'Cartera A' })).toHaveCount(1);
   const byPf = (list: { portfolioId: string }[]) => Object.values(list.reduce<Record<string, number>>((m, r) => ({ ...m, [r.portfolioId]: (m[r.portfolioId] ?? 0) + 1 }), {}));
   expect(byPf(await rows(page, 'BUY'))).toEqual([1, 1]); // one BUY in each, none duplicated into A
   await pf.selectOption('all');
