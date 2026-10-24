@@ -112,3 +112,48 @@ test('W56: in a one-currency BRL portfolio Cantidad, Aportes and Dividendos stay
   const hidden = page.getByTestId('hidden-columns');
   if (await hidden.count()) await expect(hidden).not.toContainText(/Aportes|Dividendos/);
 });
+
+/** Font size, compact flag and grid row (offsetTop of the card) of every secondary KPI figure. */
+async function kpiSizes(page: Page) {
+  return page.locator('.card:not(.kpi-primary) .kpi-value').evaluateAll((els) =>
+    els.map((el) => ({
+      size: parseFloat(getComputedStyle(el).fontSize),
+      compact: !!(el as HTMLElement).dataset.compact,
+      row: `${(el.closest('.card')!.parentElement as HTMLElement).dataset.testid ?? ''}@${(el.closest('.card') as HTMLElement).offsetTop}`,
+      text: el.textContent ?? '',
+    })),
+  );
+}
+
+test.describe('W57/W58 in es-CO', () => {
+  test.use({ locale: 'es-CO' });
+  test('KPI figures keep a floor above the label, one size per row, and re-fit after resize and a full-page capture', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await expect(page.getByTestId('kpis')).toContainText(/\d{3}\.\d{3}/, { timeout: 30_000 });
+    await page.waitForTimeout(200);
+    for (const [w, h] of [[1280, 800], [1366, 768], [1440, 900], [1024, 768]] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.waitForTimeout(200);
+      const sizes = await kpiSizes(page);
+      for (const k of sizes) expect(k.size, `${w}px ${k.text}`).toBeGreaterThanOrEqual(16);
+      const byRow = new Map<string, number[]>();
+      for (const k of sizes) byRow.set(k.row, [...(byRow.get(k.row) ?? []), k.size]);
+      for (const [row, s] of byRow) expect(new Set(s).size, `${w}px row ${row}: ${s.join('/')}`).toBe(1);
+    }
+    // Phone → desktop: the compact fallback chosen at 360 px does not stick.
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.waitForTimeout(200);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(200);
+    const wide = await kpiSizes(page);
+    expect(wide.filter((k) => k.compact).map((k) => k.text)).toEqual([]);
+    // A full-page capture (which relayouts the page) leaves the same fit behind.
+    await page.screenshot({ path: `${SHOTS}/r7-kpis-1440-fullpage.png`, fullPage: true });
+    await page.waitForTimeout(200);
+    expect(await kpiSizes(page)).toEqual(wide);
+    // Compact notation in Spanish: "M" / "mil", never "MRD" or a mix.
+    await page.getByTestId('currency-switch').selectOption('COP');
+    await expect(page.locator('body')).not.toContainText(/\bMRD\b/);
+  });
+});

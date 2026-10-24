@@ -50,6 +50,7 @@ export function formatMoney(
 ): string {
   if (opts.privacy) return MASK;
   if (amount === undefined || amount === null || !Number.isFinite(amount)) return '—';
+  if (opts.compact && locale.startsWith('es')) return compactEs(amount, currency, locale, opts);
   const decimals = opts.decimals ?? currencyDecimals(currency);
   const o: Intl.NumberFormatOptions = {
     style: 'currency',
@@ -66,6 +67,21 @@ export function formatMoney(
     out = out.replace('$', `${currency} `).replace(/  /g, ' ');
   }
   return clean(out);
+}
+
+/**
+ * W57: Spanish compact notation as read in Colombia: millions ("M") up to the billions — "$ 8.568 M",
+ * "$ 62.804 M", "$ 789,6 M" — and "mil" below a million. Intl's es compact gives "8568,3 M" (no
+ * thousands separator) and "MRD" (millardo), mixed in one row. Same symbol spacing as full amounts.
+ */
+function compactEs(amount: number, currency: CurrencyCode, locale: string, opts: MoneyOptions): string {
+  const abs = Math.abs(amount);
+  const [div, unit, digits] = abs >= 1e9 ? [1e6, 'M', 0] : abs >= 1e6 ? [1e6, 'M', opts.compactDigits ?? 1] : abs >= 1e3 ? [1e3, 'mil', opts.compactDigits ?? 1] : [1, '', 0];
+  const scaled = formatMoney(amount / div, currency, locale, { decimals: digits, signed: opts.signed });
+  if (!unit) return scaled;
+  // Keep trailing zeros out ("$ 12 mil", not "$ 12,0 mil").
+  const sep = new Intl.NumberFormat(locale).format(1.5).charAt(1);
+  return `${scaled.replace(new RegExp(`\\${sep}0+(?=\\D*$)`), '')} ${unit}`;
 }
 
 const LOCAL_DOLLAR: Record<string, CurrencyCode> = { 'es-CO': 'COP', 'en-US': 'USD', 'es-MX': 'MXN', 'es-CL': 'CLP' };

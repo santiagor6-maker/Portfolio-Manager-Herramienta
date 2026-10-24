@@ -149,10 +149,25 @@ body {
   font-size: clamp(18px, 1.55vw, 24px);
   line-height: 1.2;
 }
+.kpi-probe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  font-size: clamp(18px, 1.55vw, 24px);
+}
+.kpi-primary .kpi-probe {
+  font-size: clamp(24px, 2.4vw, 32px);
+}
 .kpi-primary .kpi-value {
   font-size: clamp(24px, 2.4vw, 32px);
 }
-.kpi-value .num {
+.kpi-value .num,
+.kpi-probe .num {
   font-variant-numeric: proportional-nums;
   font-feature-settings: normal;
 }

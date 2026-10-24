@@ -84,3 +84,16 @@ describe('W56: redundant columns give way first', () => {
     expect(redundantColumns(['twr', 'income'], rows, v as never, ['twr'])).toEqual([]);
   });
 });
+
+describe('W57: compact amounts', () => {
+  it('Spanish uses millions and "mil", never MRD, with the full amount spacing', async () => {
+    const { formatMoney } = await import('../lib/format');
+    const c = (v: number, signed = false) => formatMoney(v, 'COP', 'es-CO', { compact: true, signed });
+    expect(c(-8_568_345_718)).toMatch(/^-\$\s8\.568\sM$/);
+    expect(c(62_804_000_000, true)).toMatch(/^\+\$\s62\.804\sM$/);
+    expect(c(789_600_000, true)).toMatch(/^\+\$\s789,6\sM$/);
+    expect(c(12_000)).toMatch(/^\$\s12\smil$/);
+    expect(c(3_730.04)).toMatch(/^\$\s3,7\smil$/);
+    expect(formatMoney(3_730.04, 'BRL', 'pt-BR', { compact: true })).toMatch(/R\$\s3,7\smil/);
+  });
+});

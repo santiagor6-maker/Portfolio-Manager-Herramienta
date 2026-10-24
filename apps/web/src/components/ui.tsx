@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { ArrowDownRight, ArrowUpRight, Minus, X, AlertTriangle, Info, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -167,7 +167,7 @@ export function Kpi({
   primary?: boolean;
   /** Grid placement override (e.g. the primary card's span). */
   className?: string;
-  /** D1: the same figure in compact notation, used only when the full one cannot fit at 12 px. */
+  /** D1/W57: the same figure in compact notation, used only when the full one cannot fit at the floor size (Money values derive it automatically). */
   valueCompact?: ReactNode;
 }) {
   return (
@@ -180,7 +180,9 @@ export function Kpi({
         </>
       ) : (
         <>
-          <FitValue compact={valueCompact}>{value}</FitValue>
+          <FitValue compact={valueCompact} primary={primary}>
+            {value}
+          </FitValue>
           {sub && <div className="mt-1 text-[13px]">{sub}</div>}
         </>
       )}
@@ -189,50 +191,77 @@ export function Kpi({
 }
 
 /**
- * D1: a headline figure is never cut nor broken inside the number ("+COP 21.081.⏎632"). It stays on
- * one line (nowrap) and its font shrinks to the card width (down to 12 px, enough for any amount at
- * 390 px); the full text is also in `title`.
+ * D1/W57/W58: a headline figure is never cut nor broken inside the number ("+COP 21.081.⏎632").
+ * - It stays on one line and its font shrinks to the card, but never below a floor clearly larger than
+ *   the label (16 px, 20 px for the headline card); below that it switches to compact notation
+ *   ("+$ 8.568 M"), with the full figure always in the tooltip.
+ * - Cards of one row share the smallest size, so a row never mixes 16 / 17 / 14 px figures.
+ * - The decision is re-made on every fit from a hidden copy of the full figure (no sticky state), and a
+ *   zero-width measurement (full-page capture, hidden tab) is ignored.
  */
-function FitValue({ children, compact }: { children: ReactNode; compact?: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
+function FitValue({ children, compact, primary }: { children: ReactNode; compact?: ReactNode; primary?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const fullProbe = useRef<HTMLSpanElement>(null);
+  const compactProbe = useRef<HTMLSpanElement>(null);
   const [useCompact, setUseCompact] = useState(false);
-  const full = useRef('');
+  // Money values get their compact form for free.
+  const compactNode = compact ?? (isValidElement(children) && children.type === Money ? cloneElement(children as ReactElement<{ compact?: boolean }>, { compact: true }) : undefined);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const el = box.current;
+    const full = fullProbe.current;
+    if (!el || !full) return;
     const fit = () => {
-      // The full figure is always in the tooltip, also when the compact one is shown.
-      if (!useCompact) full.current = el.textContent ?? '';
-      el.title = full.current;
-      el.style.fontSize = '';
-      const base = parseFloat(getComputedStyle(el).fontSize) || 22;
-      let size = base;
-      for (let i = 0; i < 4 && el.scrollWidth > el.clientWidth + 0.5 && size > MIN_FIT; i++) {
-        size = Math.max(MIN_FIT, Math.floor(size * (el.clientWidth / el.scrollWidth) * 10) / 10 - 0.2);
-        el.style.fontSize = `${size}px`;
-      }
-      // Still too wide at the smallest size (three KPIs side by side on a phone): compact notation.
-      if (compact && !useCompact && el.scrollWidth > el.clientWidth + 0.5) setUseCompact(true);
+      const avail = el.clientWidth;
+      if (!avail) return; // W58: hidden / zero-width layout pass: keep the last good fit.
+      el.title = full.textContent ?? '';
+      const base = parseFloat(getComputedStyle(full).fontSize) || 22;
+      const floor = primary ? 20 : 16;
+      const needed = full.scrollWidth ? Math.floor(base * (avail / full.scrollWidth) * 10) / 10 - 0.2 : base;
+      let size = Math.min(base, needed);
+      let compactNow = false;
+      if (needed < floor && compactNode && compactProbe.current?.scrollWidth) {
+        compactNow = true;
+        size = Math.max(floor - 2, Math.min(base, Math.floor(base * (avail / compactProbe.current.scrollWidth) * 10) / 10 - 0.2));
+      } else size = Math.max(MIN_FIT, size);
+      if (compactNow !== useCompact) setUseCompact(compactNow);
+      el.dataset.fit = String(size);
+      el.style.fontSize = `${size}px`;
+      if (!primary) syncRow(el);
     };
     fit();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : undefined;
     ro?.observe(el);
     return () => ro?.disconnect();
   });
-  // A wider card later (rotation, resize) tries the full figure again.
-  useEffect(() => {
-    if (!useCompact || typeof ResizeObserver === 'undefined' || !ref.current) return;
-    const el = ref.current;
-    const w0 = el.clientWidth;
-    const ro = new ResizeObserver(() => el.clientWidth > w0 + 24 && setUseCompact(false));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [useCompact]);
   return (
-    <div ref={ref} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden" data-compact={useCompact || undefined}>
-      {useCompact ? compact : children}
+    <div className="relative overflow-hidden">
+      <div ref={box} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden" data-compact={useCompact || undefined}>
+        {useCompact ? compactNode : children}
+      </div>
+      {/* Invisible copies at the natural size, for measuring only (outside .kpi-value so they never count as its text). */}
+      <span ref={fullProbe} aria-hidden className="kpi-probe">
+        {children}
+      </span>
+      {compactNode && (
+        <span ref={compactProbe} aria-hidden className="kpi-probe">
+          {compactNode}
+        </span>
+      )}
     </div>
   );
+}
+
+/** W57: secondary KPI figures on the same grid row share the smallest fitted size. */
+function syncRow(el: HTMLElement) {
+  const card = el.closest('.card');
+  const grid = card?.parentElement;
+  if (!card || !grid) return;
+  const top = (card as HTMLElement).offsetTop;
+  const row = Array.from(grid.querySelectorAll<HTMLElement>(':scope > .card:not(.kpi-primary) .kpi-value')).filter(
+    (v) => (v.closest('.card') as HTMLElement).offsetTop === top && v.dataset.fit,
+  );
+  const min = Math.min(...row.map((v) => Number(v.dataset.fit)));
+  for (const v of row) v.style.fontSize = `${min}px`;
 }
 
 const MIN_FIT = 12;
