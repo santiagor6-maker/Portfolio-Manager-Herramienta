@@ -19,7 +19,7 @@ import { renamedPair } from '../lib/diagnosticText';
 import { recordSplit, renameInstrumentRows } from '../components/DiagnosticsPanel';
 import { acceptSuggestions, dismiss } from '../services/suggestions';
 import { duplicateSplits, reviewKey, type PendingSplit } from '../lib/pendingEvents';
-import { corporateNote, formatSplitRatio } from '../lib/corporateText';
+import { corporateNote, formatSplitRatio, splitContext } from '../lib/corporateText';
 import { once, useGuardedAction } from '../lib/writeGuard';
 import { db } from '../db/schema';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
@@ -298,6 +298,7 @@ function PendingSplitsBanner() {
   const scope = useApp((s) => s.settings.selectedPortfolioId);
   const { busy, run } = useGuardedAction();
   const [confirming, setConfirming] = useState(false);
+  const [skipped, setSkipped] = useState(0);
   const [applied, setApplied] = useState<ReadonlySet<string>>(new Set());
   const key = (p: { instrumentId: string; date: string }) => `${scope}|${p.instrumentId}|${p.date}`;
   const ev = usePendingEvents();
@@ -305,11 +306,17 @@ function PendingSplitsBanner() {
   const provider = open.filter((p) => p.source === 'provider');
   const inferred = open.filter((p) => p.source === 'prices');
   const review = ev.review.filter((r) => !applied.has(key(r)));
-  if (!provider.length && !inferred.length && !review.length) return null;
+  // W69: an event left out because it was already recorded is said, not dropped in silence.
+  const notice = skipped > 0 && (
+    <Banner tone="info" onClose={() => setSkipped(0)}>
+      <span data-testid="skipped-events">{t('pending.skipped', { count: skipped })}</span>
+    </Banner>
+  );
+  if (!provider.length && !inferred.length && !review.length) return notice ? <div className="mb-3">{notice}</div> : null;
   const apply = (list: PendingSplit[]) =>
     run(`banner|${list.map(key).join(',')}`, async () => {
       const sugs = list.flatMap((p) => p.suggestions);
-      if (sugs.length) await acceptSuggestions(sugs, t, f.locale);
+      if (sugs.length) setSkipped(await acceptSuggestions(sugs, t, f.locale));
       // Without a provider suggestion: the viewed portfolio, or every holder when viewing "Todos".
       for (const p of list) if (!p.suggestions.length) await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date }, scope === 'all' ? undefined : scope);
       setApplied((s) => new Set([...s, ...list.map(key)]));
@@ -321,18 +328,22 @@ function PendingSplitsBanner() {
       setApplied((s) => new Set([...s, ...list.map(key)]));
     });
   const where = (p: PendingSplit) => (p.suggestions.length > 1 ? ` (${t('pending.inPortfolios', { count: p.suggestions.length })})` : '');
-  const line = (p: PendingSplit, k: 'splitLine' | 'inferredLine') => t(`pending.${k}`, { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) }) + where(p);
+  const line = (p: PendingSplit, k: 'splitLine' | 'inferredLine') =>
+    t(`pending.${k}`, { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale), context: splitContext(p.ratio) }) + where(p);
+  // W70: a group of grupamentos is named as such ("grupamento", "contrasplit"), never "desdobramento".
+  const ctx = (list: PendingSplit[]) => (list.every((p) => p.ratio < 1) ? 'reverse' : undefined);
   const lines = (list: PendingSplit[], k: 'splitLine' | 'inferredLine') =>
     list.slice(0, 3).map((p) => line(p, k)).join(' · ') + (list.length > 3 ? ` · ${t('pending.more', { count: list.length - 3 })}` : '');
   return (
     <div className="mb-3 flex flex-col gap-2" data-testid="pending-splits">
+      {notice}
       {provider.length > 0 && (
         <Banner
           tone="error"
           action={
             <div className="flex gap-2 flex-wrap sm:justify-end">
               <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void apply(provider)} data-testid="apply-splits">
-                {t('pending.applySplits', { count: provider.length })}
+                {t('pending.applySplits', { count: provider.length, context: ctx(provider) })}
               </button>
               <Link to="/movimientos" className="btn btn-sm">
                 {t('pending.review')}
@@ -340,7 +351,7 @@ function PendingSplitsBanner() {
             </div>
           }
         >
-          <strong className="font-semibold">{t('pending.splitsTitle', { count: provider.length })}</strong>{' '}
+          <strong className="font-semibold">{t('pending.splitsTitle', { count: provider.length, context: ctx(provider) })}</strong>{' '}
           <span className="text-ink-2">
             {lines(provider, 'splitLine')} {t('pending.splitsBody')}
           </span>
@@ -368,7 +379,7 @@ function PendingSplitsBanner() {
           }
         >
           <span data-testid="inferred-splits">
-            <strong className="font-semibold">{t('pending.inferredTitle', { count: inferred.length })}</strong>{' '}
+            <strong className="font-semibold">{t('pending.inferredTitle', { count: inferred.length, context: ctx(inferred) })}</strong>{' '}
             <span className="text-ink-2">
               {lines(inferred, 'inferredLine')} {t('pending.inferredBody')}
             </span>
@@ -543,7 +554,10 @@ function WarningsCard() {
             <li key={`${p.instrumentId}|${p.date}`} className="flex items-start gap-2" data-testid="warning-split">
               <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">
-                {t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) })} {t('pending.splitsBody')}
+                {/* W70: a split only inferred from prices is "posible" here too, not a certainty. */}
+                {p.source === 'prices'
+                  ? t('pending.inferredWarning', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale), context: splitContext(p.ratio) })
+                  : `${t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale), context: splitContext(p.ratio) })} ${t('pending.splitsBody')}`}
               </span>
             </li>
           ))}
@@ -551,7 +565,7 @@ function WarningsCard() {
             <li key={d.ids.join()} className="flex items-start gap-2" data-testid="warning-duplicate-split">
               <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">
-                {t('pending.duplicateSplit', { symbol: label(d.instrumentId).symbol, date: formatDate(d.date, f.locale), count: d.ids.length - 1 })}{' '}
+                {t('pending.duplicateSplit', { symbol: label(d.instrumentId).symbol, date: formatDate(d.date, f.locale), count: d.ids.length - 1, context: splitContext(d.ratio) })}{' '}
                 <button className="text-accent hover:underline" onClick={() => void once(`dedupe|${d.ids.join()}`, () => db.transactions.bulkDelete(d.ids.slice(1)))}>
                   {t('pending.removeDuplicates')}
                 </button>

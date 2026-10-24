@@ -51,11 +51,12 @@ describe('W61: one-click writes are idempotent', () => {
     expect(await schema.db.transactions.where('type').equals('DIVIDEND').count()).toBe(2);
   });
 
-  it('cash movements differ by amount; corporate events only by portfolio, instrument and date', async () => {
+  it('cash movements differ by amount; corporate events by portfolio, instrument, date and ratio', async () => {
     const dep = { portfolioId: 'p', date: '2024-01-02', type: 'DEPOSIT' as const, currency: 'COP' as const };
     expect(txDedupeKey({ ...dep, amount: 100 })).not.toBe(txDedupeKey({ ...dep, amount: 200 }));
     const sp = { portfolioId: 'p', date: '2024-01-02', type: 'SPLIT' as const, instrumentId: NVDA };
     expect(txDedupeKey(sp)).toBe(txDedupeKey({ ...sp, amount: 3 }));
+    expect(txDedupeKey({ ...sp, ratio: 10 })).not.toBe(txDedupeKey({ ...sp, ratio: 2 })); // W69
     await addTransactionsOnce([{ ...dep, amount: 100 }, { ...dep, amount: 100 }, { ...dep, amount: 200 }]);
     expect(await schema.db.transactions.count()).toBe(2);
   });

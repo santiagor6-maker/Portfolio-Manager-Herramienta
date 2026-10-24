@@ -11,10 +11,12 @@ export async function dismiss(keys: string[]) {
 type T = (key: string, opts?: Record<string, unknown>) => string;
 
 /** Records provider suggestions as transactions (localized note) and clears them from the inbox. */
-export async function acceptSuggestions(items: Suggestion[], t: T, locale: string): Promise<void> {
+/** Returns how many were skipped because the same event was already recorded (W69: said, not silent). */
+export async function acceptSuggestions(items: Suggestion[], t: T, locale: string): Promise<number> {
   // W61: recorded events are skipped by addTransactionsOnce (one read-write transaction per call).
   // W53: the saved note is the localized description, not the provider's English text.
   // W64: fresh ids — core gives one event the same id in every portfolio, and each row must be written.
-  await addTransactionsOnce(items.map((s) => ({ ...s.transaction, id: undefined, note: corporateNote(s.transaction, t, locale) })));
+  const written = await addTransactionsOnce(items.map((s) => ({ ...s.transaction, id: undefined, note: corporateNote(s.transaction, t, locale) })));
   await dismiss(items.map((s) => s.key));
+  return items.length - written.length;
 }

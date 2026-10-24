@@ -1,4 +1,5 @@
 /** Round 9 (reviews/web-r8.md): W68 "Todos" applies each corporate event once; W69; W70. */
+import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import type { Instrument, Transaction } from '@pm/core';
 import { computeAnalysis, type Dataset } from '../services/analysis';
@@ -119,6 +120,20 @@ describe('W68: "Todos" is the sum of the portfolios when each recorded the corpo
   });
 });
 
+describe('W69: two different splits within 7 days are both recorded', () => {
+  it('a 10:1 and a 2:1 four days apart are kept; the same 10:1 again is not', async () => {
+    const schema = await import('../db/schema');
+    const { addTransactionsOnce } = await import('../db/repo');
+    schema.resetDbInstance('r9-w69');
+    const sp = (date: string, ratio: number) => ({ portfolioId: 'A', date, type: 'SPLIT' as const, instrumentId: NVDA.id, ratio, currency: 'USD' as const });
+    await addTransactionsOnce([sp('2024-06-10', 10)]);
+    expect(await addTransactionsOnce([sp('2024-06-14', 2)])).toHaveLength(1);
+    expect(await addTransactionsOnce([sp('2024-06-12', 10)])).toHaveLength(0);
+    expect(await schema.db.transactions.count()).toBe(2);
+    await schema.db.delete();
+  });
+});
+
 describe('mergeCorporateEvents', () => {
   const s = (pid: string, date: string, ratio: number, extra: Partial<Transaction> = {}) => tx({ portfolioId: pid, date, type: 'SPLIT', instrumentId: NVDA.id, ratio, ...extra });
   it('keeps different events: another ratio, or a trade between the two dates', () => {
@@ -133,5 +148,22 @@ describe('mergeCorporateEvents', () => {
   });
   it('import hashes are scoped by portfolio', () => {
     expect(scopeImportHashes([tx({ portfolioId: 'B', importHash: 'h' })])[0]!.importHash).toBe('B:h');
+  });
+});
+
+describe('W70: grupamentos are named as such', () => {
+  it('pt says grupamento for a ratio below 1 and keeps desdobramento for splits', async () => {
+    const i18next = (await import('i18next')).default;
+    const { translationsFor } = await import('../i18n');
+    const { splitContext } = await import('../lib/corporateText');
+    const inst = i18next.createInstance();
+    await inst.init({ lng: 'pt', resources: { pt: { translation: await translationsFor('pt') } } });
+    const line = (ratio: number) => inst.t('pending.splitLine', { symbol: 'IRBR3', ratio: 'x', date: 'd', context: splitContext(ratio) });
+    expect(line(1 / 30)).toMatch(/grupamento/);
+    expect(line(1 / 30)).not.toMatch(/desdobramento/);
+    expect(line(10)).toMatch(/desdobramento/);
+    expect(inst.t('pending.applySplits', { count: 2, context: 'reverse' })).toBe('Registrar os 2 grupamentos');
+    expect(inst.t('diag.recordSplit', { ratio: '1:30', context: 'reverse' })).toBe('Registrar grupamento 1:30');
+    expect(inst.t('pending.inferredWarning', { symbol: 'X', ratio: '2:1', date: 'd' })).toMatch(/possível/);
   });
 });

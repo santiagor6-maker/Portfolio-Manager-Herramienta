@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Inbox, X } from 'lucide-react';
-import { Card } from './ui';
+import { Banner, Card } from './ui';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatQuantity } from '../lib/format';
@@ -21,20 +21,30 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
   const { analysis } = useAnalysis();
   const label = useInstrumentLabel();
   const [busy, setBusy] = useState(false);
+  const [skipped, setSkipped] = useState(0);
   // W55: Proventos shows only the announced cash events.
   const income = (s: Suggestion) => INCOME_TYPES.includes(s.transaction.type);
   const list = (analysis?.suggestions ?? []).filter((s) => kind === 'all' || income(s));
   const review = kind === 'all' ? (analysis?.reviewActions ?? []) : [];
-  if (!list.length && !review.length) return null;
+  const notice = skipped > 0 && (
+    <div className="mb-3">
+      <Banner tone="info" onClose={() => setSkipped(0)}>
+        <span data-testid="skipped-events">{t('pending.skipped', { count: skipped })}</span>
+      </Banner>
+    </div>
+  );
+  if (!list.length && !review.length) return notice || null;
   const accept = async (items: Suggestion[]) => {
     setBusy(true);
     try {
-      await acceptSuggestions(items, t, f.locale);
+      setSkipped(await acceptSuggestions(items, t, f.locale));
     } finally {
       setBusy(false);
     }
   };
   return (
+    <>
+    {notice}
     <Card
       className="mb-3"
       title={
@@ -104,5 +114,6 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
         </table>
       </div>
     </Card>
+    </>
   );
 }

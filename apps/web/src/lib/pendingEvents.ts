@@ -95,6 +95,6 @@ export function duplicateSplits(rows: { id: string; portfolioId: string; instrum
     .filter((g) => g.length > 1)
     .map((g) => {
       const sorted = [...g].sort((x, y) => (x.createdAt ?? 0) - (y.createdAt ?? 0));
-      return { instrumentId: g[0]!.instrumentId ?? '', date: g[0]!.date, ids: sorted.map((x) => x.id) };
+      return { instrumentId: g[0]!.instrumentId ?? '', date: g[0]!.date, ratio: g[0]!.ratio, ids: sorted.map((x) => x.id) };
     });
 }

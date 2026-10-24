@@ -5,7 +5,7 @@
  * - `once(key, fn)`: while an action with the same key is in flight (and for a moment after it ends),
  *   later calls get the same promise;
  * - `txDedupeKey`: the identity of an event transaction (portfolio, type, instrument, date — plus the
- *   amount for cash movements), checked against the database inside one read-write transaction by
+ *   ratio for corporate events and the amount for cash movements), checked against the database inside one read-write transaction by
  *   `addTransactionsOnce` (db/repo.ts).
  */
 import { useCallback, useRef, useState } from 'react';
@@ -30,7 +30,7 @@ export function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
 const EVENT_TYPES = new Set<Transaction['type']>(['SPLIT', 'STOCK_DIVIDEND']);
 
 type Keyed = Pick<Transaction, 'portfolioId' | 'type' | 'date'> &
-  Partial<Pick<Transaction, 'instrumentId' | 'currency' | 'amount' | 'quantity' | 'toCurrency' | 'toAmount' | 'account' | 'note' | 'subtype'>>;
+  Partial<Pick<Transaction, 'instrumentId' | 'currency' | 'amount' | 'quantity' | 'toCurrency' | 'toAmount' | 'account' | 'note' | 'subtype' | 'ratio'>>;
 
 /**
  * Cash movements are the same only with the same amounts, account, subtype and note: two DARFs paid the
@@ -39,8 +39,9 @@ type Keyed = Pick<Transaction, 'portfolioId' | 'type' | 'date'> &
  */
 export function txDedupeKey(t: Keyed): string {
   const base = `${t.portfolioId}|${t.type}|${t.instrumentId ?? ''}|${t.date}`;
-  if (EVENT_TYPES.has(t.type)) return base;
   const n = (v: number | undefined) => (v === undefined ? '' : String(Math.round(v * 1e6) / 1e6));
+  // W69: two events of one instrument are the same only with the same ratio (a 10:1 and a 2:1 are not).
+  if (EVENT_TYPES.has(t.type)) return `${base}|${n(t.ratio)}|${t.subtype ?? ''}`;
   return `${base}|${t.currency ?? ''}|${n(t.amount)}|${n(t.quantity)}|${t.toCurrency ?? ''}|${n(t.toAmount)}|${t.account ?? ''}|${t.subtype ?? ''}|${t.note ?? ''}`;
 }
 

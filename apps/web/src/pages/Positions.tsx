@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { splitContext } from '../lib/corporateText';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -31,7 +32,7 @@ export default function PositionsPage() {
   const { analysis: a, loading } = useAnalysis();
   // W55: positions whose quantity is wrong until a pending split is recorded.
   const { splits: pendingSplits } = usePendingEvents();
-  const pendingSplitIds = useMemo(() => new Set(pendingSplits.map((p) => p.instrumentId)), [pendingSplits]);
+  const pendingSplitIds = useMemo(() => new Map(pendingSplits.map((p) => [p.instrumentId, p.ratio])), [pendingSplits]);
   const map = useInstrumentMap();
   const f = useFmt();
   const [view, setView] = useState<View>('value');
@@ -88,7 +89,7 @@ export default function PositionsPage() {
             <span className="ml-1.5 text-[11px] font-normal text-muted">{exchangeLabel(r.inst?.exchange)}</span>
             {pendingSplitIds.has(r.instrumentId) && (
               <span className="chip !h-5 !text-[10.5px] !text-neg !border-neg/30 ml-1.5" title={t('pending.splitsBody')} data-testid="pending-split-chip">
-                {t('pending.splitChip')}
+                {t('pending.splitChip', { context: splitContext(pendingSplitIds.get(r.instrumentId)) })}
               </span>
             )}
           </div>

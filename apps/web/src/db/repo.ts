@@ -199,7 +199,15 @@ export async function addTransactionsOnce(rows: (Omit<StoredTransaction, 'id'> &
     for (const inst of new Set(norm.filter((r) => isEventType(r.type) && r.instrumentId).map((r) => r.instrumentId!)))
       events.push(...(await db.transactions.where('instrumentId').equals(inst).toArray()).filter((t) => isEventType(t.type)));
     const near = (r: StoredTransaction) =>
-      events.some((e) => e.portfolioId === r.portfolioId && e.type === r.type && e.instrumentId === r.instrumentId && Math.abs(Date.parse(e.date) - Date.parse(r.date)) <= EVENT_DATE_TOLERANCE_DAYS * 86_400_000);
+      events.some(
+        (e) =>
+          e.portfolioId === r.portfolioId &&
+          e.type === r.type &&
+          e.instrumentId === r.instrumentId &&
+          (e.subtype ?? '') === (r.subtype ?? '') &&
+          Math.abs((e.ratio ?? 0) - (r.ratio ?? 0)) <= 1e-9 * Math.max(1, Math.abs(r.ratio ?? 0)) && // W69: same ratio only
+          Math.abs(Date.parse(e.date) - Date.parse(r.date)) <= EVENT_DATE_TOLERANCE_DAYS * 86_400_000,
+      );
     const fresh = norm.filter((r) => {
       const k = txDedupeKey(r);
       if (seen.has(k) || (isEventType(r.type) && near(r))) return false;

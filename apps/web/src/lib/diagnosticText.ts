@@ -3,6 +3,7 @@
  * the code, the transaction and the numbers parsed out of the message: symbols instead of internal
  * ids, money and quantities formatted for the locale.
  */
+import { splitContext } from './corporateText';
 import type { Diagnostic, Instrument, Transaction } from '@pm/core';
 import { formatDate, formatMoney, formatPct } from './format';
 
@@ -108,7 +109,8 @@ function params(d: Diagnostic, c: DiagContext): Record<string, string> | undefin
     case 'POSSIBLE_UNRECORDED_SPLIT':
     case 'POSSIBLE_REDENOMINATION': {
       const sp = splitSuggestion(m, d.data);
-      return sp ? { ...base, symbol: sym(sp.instrumentId), ratio: sp.ratio >= 1 ? `${sp.ratio}:1` : `1:${Math.round(1 / sp.ratio)}`, date: sp.date } : undefined;
+      // W70: a ratio below 1 reads as a reverse split ("grupamento" in pt), via the i18n context.
+      return sp ? { ...base, symbol: sym(sp.instrumentId), ratio: sp.ratio >= 1 ? `${sp.ratio}:1` : `1:${Math.round(1 / sp.ratio)}`, date: sp.date, ...(d.code === 'POSSIBLE_UNRECORDED_SPLIT' && splitContext(sp.ratio) ? { context: 'reverse' } : {}) } : undefined;
     }
     case 'TRADE_PRICE_CONFIRMED_BY_RUN':
       return { ...base, price: c.tx?.price !== undefined ? money(c.tx.price, c.tx.currency) : '—' };

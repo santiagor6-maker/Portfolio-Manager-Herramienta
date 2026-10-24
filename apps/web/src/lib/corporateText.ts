@@ -14,6 +14,11 @@ export function formatRatio(ratio: number, locale: string): string {
   return `×${new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(ratio)}`;
 }
 
+/** W70: i18n context of a split — a ratio below 1 is a reverse split (pt "grupamento", es "contrasplit"). */
+export function splitContext(ratio: number | undefined): 'reverse' | undefined {
+  return ratio !== undefined && ratio > 0 && ratio < 1 ? 'reverse' : undefined;
+}
+
 /** A split as investors write it, in the locale: "10:1", "1,5:1", "1:10" (reverse). */
 export function formatSplitRatio(ratio: number, locale: string): string {
   const n = (x: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }).format(x);
