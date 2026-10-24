@@ -26,7 +26,7 @@ export function cleanTaxMessage(message: string): string {
 }
 
 /**
- * W45/W53: @pm/tax and @pm/importers write some numbers with a dot decimal ("0.05 BTC-USD saíram…") even in pt/es.
+ * W45/W53/W60: @pm/tax and @pm/importers write some numbers with a dot decimal ("0.05 BTC-USD saíram…") even in pt/es.
  * Rewrites plain decimals for the locale. Thousands-style groups ("Lei 14.754", "IN 1.888",
  * "R$ 1.500,00"), CNPJs and dates are left alone: only a leading 0 or a decimal part that is not
  * exactly three digits is treated as a decimal.
@@ -34,7 +34,9 @@ export function cleanTaxMessage(message: string): string {
 export function localizeNumbers(message: string, locale: string): string {
   return localizeDates(
     message
-      .replace(/(?<![\d.,/:])(-?\d+)\.(\d+)(?![\d.,/])/g, (all, int: string, dec: string) => {
+      // W60: the SINACOR importer writes "ao à vista" (duplicated preposition).
+      .replace(/\bao à vista\b/g, 'à vista')
+      .replace(/(?<![\d.,/:])(-?\d+)\.(\d+)(?!\d|[.,]\d|\/)/g, (all, int: string, dec: string) => {
         if (int.replace('-', '') !== '0' && dec.length === 3) return all;
         return new Intl.NumberFormat(locale, { minimumFractionDigits: dec.length, maximumFractionDigits: dec.length }).format(Number(`${int}.${dec}`));
       })

@@ -109,4 +109,13 @@ export const enR5: typeof esR5 = {
     unitSuspect_one: '{{count}} trade price with a possible unit error (not used until confirmed).',
     unitSuspect_other: '{{count}} trade prices with a possible unit error (not used until confirmed).',
   },
+  imp: {
+    doneBody_zero: 'Figures are already recalculated.',
+    doneBody_one: '{{count}} new asset added. Figures are already recalculated.',
+    doneBody_other: '{{count}} new assets added. Figures are already recalculated.',
+  },
+  market: {
+    offlineTitle: 'We could not update prices.',
+    offlineBody: 'We keep using the last prices saved in this browser and will retry automatically. If it continues, check the data source in Settings.',
+  },
 };

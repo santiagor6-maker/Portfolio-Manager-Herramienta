@@ -109,4 +109,13 @@ export const ptR5: typeof esR5 = {
     unitSuspect_one: '{{count}} preço de operação com possível erro de unidade (não é usado até confirmar).',
     unitSuspect_other: '{{count}} preços de operação com possível erro de unidade (não são usados até confirmar).',
   },
+  imp: {
+    doneBody_zero: 'Os valores já foram recalculados.',
+    doneBody_one: '{{count}} ativo novo adicionado. Os valores já foram recalculados.',
+    doneBody_other: '{{count}} ativos novos adicionados. Os valores já foram recalculados.',
+  },
+  market: {
+    offlineTitle: 'Não conseguimos atualizar as cotações.',
+    offlineBody: 'Seguimos com as últimas cotações salvas neste navegador e tentaremos de novo automaticamente. Se continuar, verifique a fonte de dados em Ajustes.',
+  },
 };

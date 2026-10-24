@@ -604,7 +604,7 @@ export default function ImportPage() {
           <div className="text-center py-8">
             <CheckCircle2 className="mx-auto text-pos" size={36} />
             <div className="font-semibold text-lg mt-3">{t('imp.doneTitle', { count: done.transactions })}</div>
-            <p className="text-sm text-ink-2 mt-1">{t('imp.doneBody', { instruments: done.instruments })}</p>
+            <p className="text-sm text-ink-2 mt-1">{t('imp.doneBody', { count: done.instruments })}</p>
             <div className="flex gap-2 justify-center mt-5 flex-wrap">
               <Link className="btn btn-primary" to="/mensual">
                 {t('nav.monthly')}

@@ -198,3 +198,14 @@ test('W59: no horizontal page scroll in Divisas at 360 px, in a three-digit heat
   expect(btn!.x + btn!.width).toBeLessThanOrEqual(box!.x + box!.width);
   expect(await pageOverflow(page), 'Movimientos 1280').toBeLessThanOrEqual(0);
 });
+
+test('W60: an instrument name with an ISO date reads in the user format; no developer command in the price banner', async ({ page }) => {
+  await mockProvider(page, {}, {});
+  await onboard(page, 'COP', '20.000.000', '2024-01-02');
+  await importCsv(page, 'cdt-name.csv');
+  await expect(page.getByText(/Se agregó 1 activo nuevo/)).toBeVisible();
+  await page.goto('/movimientos');
+  await expect(page.locator('main')).toContainText('vence 09/01/2025', { timeout: 30_000 });
+  await expect(page.locator('main')).not.toContainText('2025-01-09');
+  await expect(page.locator('body')).not.toContainText('npm run');
+});

@@ -1,0 +1,2 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2024-01-09,BUY,,CDTBC25,,CDT Bancolombia S.A. 11.25% E.A. vence 2025-01-09,,bond,1,10000000,COP,10000000,,,,,,,Bancolombia,

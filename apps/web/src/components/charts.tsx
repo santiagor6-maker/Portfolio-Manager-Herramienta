@@ -8,6 +8,7 @@ import { useFmt } from '../store/app';
 import type { SeriesPoint } from '../services/analysis';
 import { colorSlots } from '../lib/seriesColors';
 import { downsample } from '../lib/chartMath';
+import { todayIso } from '../lib/ids';
 
 function hexA(hex: string, a: number): string {
   const h = hex.replace('#', '');
@@ -380,13 +381,15 @@ export function LineChart({
   );
   const lens = series.map((x) => x.data.length);
   const base = series[0]?.data ?? [];
+  const today = todayIso();
   // D16: dates in the user's format and a named first column in "Ver datos".
   const table = {
     headers: [t('tx.date'), ...series.map((x) => x.name)],
-    rows: downsample(base.map((_, i) => i), 24).map((i) => [formatDate(base[i]![0], f.locale, 'short'), ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
+    rows: downsample(base.map((_, i) => i), 24).map((i) => [formatDate(base[i]![0] > today ? today : base[i]![0], f.locale, 'short'), ...series.map((x, k) => (i < lens[k]! ? valueFormat(x.data[i]![1]) : '—'))]),
   };
   const lastV = base[base.length - 1];
-  const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${formatDate(lastV[0], f.locale)})` : undefined;
+  // W60: monthly series end on the month's last day; never announce a future date ("31 oct" on 24 oct).
+  const summary = lastV ? `${series[0]!.name}: ${valueFormat(lastV[1])} (${formatDate(lastV[0] > today ? today : lastV[0], f.locale)})` : undefined;
   return <Chart option={option} height={height} ariaLabel={ariaLabel} summary={summary} data={table} />;
 }
 

@@ -97,3 +97,25 @@ describe('W57: compact amounts', () => {
     expect(formatMoney(3_730.04, 'BRL', 'pt-BR', { compact: true })).toMatch(/R\$\s3,7\smil/);
   });
 });
+
+describe('W60: residual strings', () => {
+  it('localizes a decimal that ends a sentence and drops the duplicated preposition', async () => {
+    const { localizeNumbers } = await import('../lib/taxText');
+    expect(localizeNumbers('Valores não atribuídos ao à vista: 0.07.', 'pt-BR')).toBe('Valores não atribuídos à vista: 0,07.');
+    expect(localizeNumbers('Lei 14.754.', 'pt-BR')).toBe('Lei 14.754.');
+    expect(localizeNumbers('vence 2025-01-09', 'es-CO')).toBe('vence 09/01/2025');
+  });
+
+  it('pluralizes the import summary and keeps developer commands out of the price banner', async () => {
+    const i18next = (await import('i18next')).default;
+    const { translationsFor } = await import('../i18n');
+    for (const [lng, one, other] of [['es', 'Se agregó 1 activo nuevo', 'Se agregaron 3 activos nuevos'], ['pt', '1 ativo novo adicionado', '3 ativos novos adicionados'], ['en', '1 new asset added', '3 new assets added']] as const) {
+      const inst = i18next.createInstance();
+      await inst.init({ lng, resources: { [lng]: { translation: await translationsFor(lng) } } });
+      expect(inst.t('imp.doneBody', { count: 1 })).toContain(one);
+      expect(inst.t('imp.doneBody', { count: 3 })).toContain(other);
+      expect(inst.t('imp.doneBody', { count: 0 })).not.toMatch(/\b0\b/);
+      expect(inst.t('market.offlineBody')).not.toContain('npm');
+    }
+  });
+});

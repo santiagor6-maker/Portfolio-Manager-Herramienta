@@ -107,4 +107,13 @@ export const esR5 = {
     unitSuspect_one: '{{count}} precio de operación con posible error de unidad (no se usa hasta confirmarlo).',
     unitSuspect_other: '{{count}} precios de operación con posible error de unidad (no se usan hasta confirmarlos).',
   },
+  imp: {
+    doneBody_zero: 'Las cifras ya están recalculadas.',
+    doneBody_one: 'Se agregó {{count}} activo nuevo. Las cifras ya están recalculadas.',
+    doneBody_other: 'Se agregaron {{count}} activos nuevos. Las cifras ya están recalculadas.',
+  },
+  market: {
+    offlineTitle: 'No pudimos actualizar los precios.',
+    offlineBody: 'Seguimos con los últimos precios guardados en este navegador y reintentaremos automáticamente. Si continúa, revisa la fuente de datos en Ajustes.',
+  },
 };

@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { CorporateAction, IndexSeries, Instrument, PriceSeries } from '@pm/core';
 import { db, type ManualPrice, type StoredInstrument, type StoredPortfolio, type StoredTransaction } from '../db/schema';
-import { useApp } from '../store/app';
+import { useApp, useFmt } from '../store/app';
+import { localizeDates } from '../lib/taxText';
 import { runAnalysis, latestRequestId } from '../services/engineClient';
 import type { Dataset } from '../services/analysis';
 import type { AppSettings } from '../db/repo';
@@ -23,13 +24,17 @@ export function useInstruments(): StoredInstrument[] {
 
 export function useInstrumentMap(): Map<string, Instrument> {
   const list = useInstruments();
+  const { locale } = useFmt();
   return useMemo(() => {
     const m = new Map<string, Instrument>();
     for (const b of BENCHMARKS) m.set(b.id, b);
-    for (const i of withRenamedAliases(list)) m.set(i.id, i);
+    // W60: names written by importers with ISO dates ("CDT … vence 2025-01-09") read in the user's format.
+    for (const i of withRenamedAliases(list)) m.set(i.id, i.name && ISO_IN_NAME.test(i.name) ? { ...i, name: localizeDates(i.name, locale) } : i);
     return m;
-  }, [list]);
+  }, [list, locale]);
 }
+
+const ISO_IN_NAME = /\d{4}-\d{2}-\d{2}/;
 
 export function useAllTransactions(): StoredTransaction[] | undefined {
   return useLiveQuery(() => db.transactions.toArray(), []);
