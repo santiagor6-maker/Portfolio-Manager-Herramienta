@@ -71,3 +71,40 @@ describe('W68 — corporate events apply to their own portfolio\'s lots', () => 
   });
 });
 
+
+describe('W71 — each portfolio keeps its cost method in a consolidated input', () => {
+  const pfM = (id: string, costMethod: 'FIFO' | 'AVERAGE') => ({ id, name: id, baseCurrency: 'USD', costMethod, createdAt: '2023-01-01' });
+  const mk = (pid: string) => [
+    tx({ portfolioId: pid, date: '2023-01-02', type: 'DEPOSIT', amount: 100_000 }),
+    tx({ portfolioId: pid, date: '2023-01-05', type: 'BUY', instrumentId: 'S', quantity: 100, price: 100, amount: 10_000 }),
+    tx({ portfolioId: pid, date: '2023-06-01', type: 'BUY', instrumentId: 'S', quantity: 100, price: 140, amount: 14_000 }),
+    tx({ portfolioId: pid, date: '2023-09-01', type: 'SELL', instrumentId: 'S', quantity: 100, price: 150, amount: 15_000 }),
+  ];
+  const market2 = createMarketData({ prices: [ps([['2023-01-05', 100], ['2023-06-01', 140], ['2023-09-01', 150], ['2024-01-05', 150]])], fx: [fx] });
+  const A2 = mk('A');
+  const B2 = mk('B');
+  const run = (inp: EngineInput) => performanceSummary(inp, 'SI', '2024-01-05');
+  const single = (id: string, m: 'FIFO' | 'AVERAGE', txs: Transaction[]): EngineInput => ({ portfolio: pfM(id, m), instruments: [S], market: market2, transactions: txs, options: { asOf: '2024-01-05' } });
+  const all: EngineInput = {
+    portfolio: pfM('all', 'FIFO'),
+    instruments: [S],
+    market: market2,
+    transactions: [...A2, ...B2],
+    options: { asOf: '2024-01-05', isolatePortfolios: true, portfolioCostMethods: { A: 'FIFO', B: 'AVERAGE' } },
+  };
+
+  it('realized and unrealized gains equal A (FIFO) + B (AVERAGE)', () => {
+    const a = run(single('A', 'FIFO', A2));
+    const b = run(single('B', 'AVERAGE', B2));
+    const s = run(all);
+    expect(a.realizedGainBase).not.toBeCloseTo(b.realizedGainBase, 2); // the methods really differ
+    expect(s.realizedGainBase).toBeCloseTo(a.realizedGainBase + b.realizedGainBase, 6);
+    expect(s.unrealizedGainBase).toBeCloseTo(a.unrealizedGainBase + b.unrealizedGainBase, 6);
+  });
+
+  it('an explicit costMethod still overrides every portfolio', () => {
+    const s = run({ ...all, options: { ...all.options, costMethod: 'FIFO' } });
+    const a = run(single('A', 'FIFO', A2));
+    expect(s.realizedGainBase).toBeCloseTo(2 * a.realizedGainBase, 6);
+  });
+});

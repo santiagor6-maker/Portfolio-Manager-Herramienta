@@ -101,6 +101,12 @@ export interface EngineOptions {
   isolatePortfolios?: boolean;
   /** With isolatePortfolios: each portfolio's base currency (its funding fallback without deposits). */
   portfolioBaseCurrencies?: Record<string, CurrencyCode>;
+  /**
+   * With isolatePortfolios: each portfolio's cost method (FIFO in one, AVERAGE in another), so
+   * realized and unrealized gains equal the sum of the portfolios. `costMethod`, when set, still
+   * overrides every portfolio (preview). Default: the consolidated portfolio's method.
+   */
+  portfolioCostMethods?: Record<string, CostMethod>;
 }
 
 export interface MarketDataInput {

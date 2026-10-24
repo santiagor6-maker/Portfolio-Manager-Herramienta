@@ -64,9 +64,10 @@ export interface BookView {
 export class PortfolioBooks implements BookView {
   readonly parts = new Map<string, LotBook>();
   constructor(readonly method: CostMethod) {}
-  part(portfolioId: string): LotBook {
+  /** The portfolio's book; created with its own cost method (W71: FIFO in one, AVERAGE in another). */
+  part(portfolioId: string, method: CostMethod = this.method): LotBook {
     let b = this.parts.get(portfolioId);
-    if (!b) this.parts.set(portfolioId, (b = new LotBook(this.method)));
+    if (!b) this.parts.set(portfolioId, (b = new LotBook(method)));
     return b;
   }
   get lots(): LotState[] {

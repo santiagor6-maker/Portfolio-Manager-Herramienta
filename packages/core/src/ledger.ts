@@ -901,7 +901,9 @@ export class Ledger {
     let b = this.books.get(id);
     if (this.isolated) {
       if (!b) this.books.set(id, (b = new PortfolioBooks(this.ctx.options.costMethod)));
-      return (b as PortfolioBooks).part(this.curPid);
+      // W71: each portfolio's lots follow its own cost method (an explicit costMethod option overrides).
+      const m = this.ctx.raw.costMethod ? undefined : this.ctx.raw.portfolioCostMethods?.[this.curPid];
+      return (b as PortfolioBooks).part(this.curPid, m);
     }
     if (!b) this.books.set(id, (b = new LotBook(this.ctx.options.costMethod)));
     return b as LotBook;
