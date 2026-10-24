@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { HiddenColumnsNote, useFitColumns } from './fitColumns';
+import { redundantColumns } from '../lib/columnStats';
 
 export interface Column<T> {
   id: string;
@@ -69,7 +70,22 @@ export function DataTable<T>({
 
   const { t } = useTranslation();
   const allSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(rowKey(r)));
-  const fit = useFitColumns(dropOrder, rows.length);
+  // W56: zero-only or duplicate columns (by their numeric sort value) give way first; only columns
+  // listed in dropOrder can ever be hidden.
+  const redundant = useMemo(
+    () =>
+      redundantColumns(
+        columns.map((c) => c.id),
+        rows,
+        (id, r) => {
+          const v = columns.find((c) => c.id === id)?.sortValue?.(r as T);
+          return typeof v === 'number' ? v : undefined;
+        },
+        dropOrder,
+      ),
+    [columns, rows, dropOrder.join('|')], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const fit = useFitColumns(dropOrder, rows.length, redundant);
   const allColumns = columns;
   columns = columns.filter((c) => !fit.hidden.has(c.id));
 

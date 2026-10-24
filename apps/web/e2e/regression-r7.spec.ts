@@ -96,3 +96,19 @@ test('W55: announced proventos are listed in Proventos with "registrar todos" in
   await expect(page.getByTestId('suggestions')).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/360/).first()).toBeVisible(); // 3 × 1,20 × 100
 });
+
+test('W56: in a one-currency BRL portfolio Cantidad, Aportes and Dividendos stay at 1280 px; a zero FX effect gives way first', async ({ page }) => {
+  await mockProvider(page, {}, { PETR4: [['2025-01-10', 20], ['2025-06-30', 25], [new Date().toISOString().slice(0, 10), 25]] });
+  await onboard(page, 'BRL', '10.000', '2025-01-02');
+  await importCsv(page, 'br-hold.csv');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/posiciones');
+  const pos = page.getByTestId('positions-table');
+  await expect(pos.locator('thead')).toContainText('Cantidad', { timeout: 30_000 });
+  await page.goto('/mensual');
+  const head = page.getByTestId('monthly-table').locator('thead');
+  await expect(head).toContainText('Aportes');
+  await expect(head).toContainText('Dividendos');
+  const hidden = page.getByTestId('hidden-columns');
+  if (await hidden.count()) await expect(hidden).not.toContainText(/Aportes|Dividendos/);
+});

@@ -70,3 +70,17 @@ describe('W55: pending corporate events reach the Resumen', () => {
     expect(a.income).toHaveLength(0);
   });
 });
+
+describe('W56: redundant columns give way first', () => {
+  it('flags all-zero and duplicate candidate columns, never the ones it is not allowed to hide', async () => {
+    const { redundantColumns } = await import('../lib/columnStats');
+    const rows = [
+      { twr: 0.01, local: 0.01, fx: 0, flows: 0, income: 0 },
+      { twr: -0.02, local: -0.02, fx: 0, flows: 100, income: 0 },
+    ];
+    const v = (id: string, r: Record<string, number>) => r[id];
+    expect(redundantColumns(['twr', 'local', 'fx', 'flows', 'income'], rows, v as never, ['local', 'fx'])).toEqual(['local', 'fx']);
+    // "income" is all zero but is not a candidate (dividends are never hidden).
+    expect(redundantColumns(['twr', 'income'], rows, v as never, ['twr'])).toEqual([]);
+  });
+});

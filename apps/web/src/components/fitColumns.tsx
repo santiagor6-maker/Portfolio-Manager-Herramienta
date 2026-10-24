@@ -7,7 +7,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export function useFitColumns<K extends string>(dropOrder: K[], resetKey: unknown) {
+/**
+ * W56: `redundant` columns (all zeros, or a copy of another column — "Ef. divisa" in a one-currency
+ * portfolio, "Ef. precio" equal to "Ganancia") give way before any column of `dropOrder`. Columns in
+ * neither list (quantity, contributions, dividends…) are never hidden.
+ */
+export function useFitColumns<K extends string>(priority: K[], resetKey: unknown, redundant: K[] = []) {
+  const dropOrder = [...new Set([...redundant, ...priority])];
   // Callback ref: the box may mount after the first render (empty state → table).
   const [box, ref] = useState<HTMLElement | null>(null);
   const [hidden, setHidden] = useState<K[]>([]);

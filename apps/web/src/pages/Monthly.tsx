@@ -12,6 +12,7 @@ import { BENCHMARKS, benchmarkName, primaryBenchmark } from '../lib/benchmarks';
 import { PriceWarnings } from '../components/PriceWarnings';
 import { FxUnavailable } from '../components/FxNotice';
 import { HiddenColumnsNote, useFitColumns } from '../components/fitColumns';
+import { redundantColumns } from '../lib/columnStats';
 import { downloadText, downloadXlsx, toCsv } from '../lib/export';
 import { indexName } from '../lib/labels';
 
@@ -157,8 +158,6 @@ export default function MonthlyPage() {
   ).filter((c) => (c !== 'real' && c !== 'inflation') || hasReal).filter((c) => c !== 'pctIndex' || !!pctIndexId);
   const compact = settings.density === 'compact';
   // W51: when the card is narrower than the chosen columns, the least important give way (with a note).
-  const fit = useFitColumns<ColKey>(['cumulative', 'income', 'flows', 'start', 'inflation', 'real', 'local', 'fx', 'pctIndex'], `${cols.join()}|${rows.length}|${f.currency}`);
-  const shownCols = cols.filter((c) => !fit.hidden.has(c));
 
   const currentMonth = (a?.asOf ?? '').slice(0, 7);
   const closedRows = rows.filter((r) => r.month < currentMonth && !r.partial);
@@ -229,6 +228,21 @@ export default function MonthlyPage() {
       fmt: 'pct',
     },
   };
+
+  // W56: zero-only or duplicate columns first (Ef. divisa in a one-currency portfolio, Ef. precio equal to
+  // Rent. mes), then Acumulada → índice/diferencia → efectos → valor inicial. Aportes, dividendos,
+  // ganancia, valor final and the month's return are never hidden.
+  const droppable: ColKey[] = ['cumulative', 'pctIndex', 'inflation', 'real', 'alpha', 'bench', 'local', 'fx', 'start'];
+  const redundantCols = useMemo(
+    () =>
+      redundantColumns(['twr', ...cols.filter((c) => c !== 'twr')], tableRows, (c, r: MonthlyRow) => {
+        const v = colDef[c].csv(r);
+        return typeof v === 'number' ? v : undefined;
+      }, droppable),
+    [cols.join(), tableRows], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const fit = useFitColumns<ColKey>(droppable, `${cols.join()}|${rows.length}|${f.currency}`, redundantCols);
+  const shownCols = cols.filter((c) => !fit.hidden.has(c));
 
   const exportRows = () => {
     const keys = ALL_COLUMNS.filter((c) => (c !== 'bench' && c !== 'alpha') || hasBench).filter((c) => (c !== 'real' && c !== 'inflation') || hasReal).filter((c) => c !== 'pctIndex' || !!pctIndexId);

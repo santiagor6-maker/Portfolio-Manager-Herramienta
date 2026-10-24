@@ -364,8 +364,8 @@ export default function PositionsPage() {
                   testId="positions-table"
                   rows={filtered}
                   columns={view === 'value' ? valueColumns : perfColumns}
-                  // W51: least important first when the card is narrower than the table.
-                  dropOrder={view === 'value' ? ['qty', 'fxEffect', 'priceEffect'] : ['proceeds', 'income', 'invested', 'irr']}
+                  // W51/W56: least important first; quantity, value and gain are never hidden (zero/duplicate effects go first).
+                  dropOrder={view === 'value' ? ['fxEffect', 'priceEffect'] : ['proceeds', 'irr', 'invested']}
                   rowKey={(r) => r.instrumentId}
                   initialSort={{ id: view === 'value' ? 'value' : 'total', dir: 'desc' }}
                   onRowClick={(r) => navigate(`/posiciones/${encodeURIComponent(r.instrumentId)}`)}
