@@ -12,6 +12,7 @@ import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPct, formatPrice, formatQuantity } from '../lib/format';
 import { countryName, useSliceLabel } from '../lib/labels';
 import { exchangeLabel } from '../lib/exchanges';
+import { pendingEvents } from '../lib/pendingEvents';
 import { downloadText, toCsv } from '../lib/export';
 import { parseDecimal, toInputNumber } from '../lib/parse';
 import { rebalance } from '../lib/rebalance';
@@ -29,6 +30,8 @@ export default function PositionsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { analysis: a, loading } = useAnalysis();
+  // W55: positions whose quantity is wrong until a pending split is recorded.
+  const pendingSplitIds = new Set(pendingEvents(a).splits.map((p) => p.instrumentId));
   const map = useInstrumentMap();
   const f = useFmt();
   const [view, setView] = useState<View>('value');
@@ -83,6 +86,11 @@ export default function PositionsPage() {
           <div className="font-semibold text-ink">
             {r.inst?.symbol ?? r.instrumentId}
             <span className="ml-1.5 text-[11px] font-normal text-muted">{exchangeLabel(r.inst?.exchange)}</span>
+            {pendingSplitIds.has(r.instrumentId) && (
+              <span className="chip !h-5 !text-[10.5px] !text-neg !border-neg/30 ml-1.5" title={t('pending.splitsBody')} data-testid="pending-split-chip">
+                {t('pending.splitChip')}
+              </span>
+            )}
           </div>
           <div className="text-xs text-muted truncate">
             {r.inst?.name}

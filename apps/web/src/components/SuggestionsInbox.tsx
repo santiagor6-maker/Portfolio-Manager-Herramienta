@@ -5,35 +5,30 @@ import { Card } from './ui';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatQuantity } from '../lib/format';
-import { bulkAddTransactions, getMeta, setMeta } from '../db/repo';
 import type { Suggestion } from '../services/analysis';
+import { acceptSuggestions, dismiss } from '../services/suggestions';
 import { TxTypeBadge } from '../pages/Transactions';
 import { corporateNote, formatRatio, formatTxRatio } from '../lib/corporateText';
-
-async function dismiss(keys: string[]) {
-  const prev = (await getMeta<string[]>('dismissedSuggestions')) ?? [];
-  await setMeta('dismissedSuggestions', [...new Set([...prev, ...keys])]);
-}
 
 /**
  * Corporate-action inbox: dividends, splits and bonificações announced by the data provider for
  * positions held at the ex-date but not yet recorded. Nothing is applied without confirmation.
  */
-export function SuggestionsInbox() {
+export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) {
   const { t } = useTranslation();
   const f = useFmt();
   const { analysis } = useAnalysis();
   const label = useInstrumentLabel();
   const [busy, setBusy] = useState(false);
-  const list = analysis?.suggestions ?? [];
-  const review = analysis?.reviewActions ?? [];
+  // W55: Proventos shows only the announced cash events.
+  const income = (s: Suggestion) => ['DIVIDEND', 'INTEREST', 'RETURN_OF_CAPITAL'].includes(s.transaction.type);
+  const list = (analysis?.suggestions ?? []).filter((s) => kind === 'all' || income(s));
+  const review = kind === 'all' ? (analysis?.reviewActions ?? []) : [];
   if (!list.length && !review.length) return null;
   const accept = async (items: Suggestion[]) => {
     setBusy(true);
     try {
-      // W53: the saved note is the localized description, not the provider's English text.
-      await bulkAddTransactions(items.map((s) => ({ ...s.transaction, note: corporateNote(s.transaction, t, f.locale) })));
-      await dismiss(items.map((s) => s.key));
+      await acceptSuggestions(items, t, f.locale);
     } finally {
       setBusy(false);
     }
@@ -43,7 +38,7 @@ export function SuggestionsInbox() {
       className="mb-3"
       title={
         <span className="flex items-center gap-2">
-          <Inbox size={15} className="text-accent" /> {t('ca.title', { count: list.length })}
+          <Inbox size={15} className="text-accent" /> {kind === 'income' ? t('pending.income', { count: list.length }) : t('ca.title', { count: list.length })}
         </span>
       }
       subtitle={t('ca.subtitle')}

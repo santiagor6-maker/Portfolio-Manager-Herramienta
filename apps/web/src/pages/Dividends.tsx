@@ -4,6 +4,8 @@ import { Landmark } from 'lucide-react';
 import type { IncomeEvent } from '@pm/core';
 import { Card, CountryTag, EmptyState, Kpi, Money, PageHeader, Pct, Skeleton } from '../components/ui';
 import { GroupedBars } from '../components/charts';
+import { SuggestionsInbox } from '../components/SuggestionsInbox';
+import { pendingEvents } from '../lib/pendingEvents';
 import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatMonth, formatPct, monthName } from '../lib/format';
@@ -20,6 +22,7 @@ export default function DividendsPage() {
   const { t } = useTranslation();
   const f = useFmt();
   const { analysis: a, loading } = useAnalysis();
+  const pendingIncome = pendingEvents(a).income.length;
   const label = useInstrumentLabel();
   const events = useMemo(() => [...(a?.income ?? [])].sort((x, y) => (x.date < y.date ? 1 : -1)), [a]);
   const years = useMemo(() => [...new Set(events.map((e) => e.date.slice(0, 4)))].sort().reverse(), [events]);
@@ -93,9 +96,13 @@ export default function DividendsPage() {
     return (
       <div>
         <PageHeader title={t('div.title')} />
-        <div className="card">
-          <EmptyState icon={<Landmark size={20} />} title={t('div.emptyTitle')} body={t('div.emptyBody')} />
-        </div>
+        {/* W55: announced dividends waiting to be recorded are listed here, not hidden behind "no hay". */}
+        <SuggestionsInbox kind="income" />
+        {!pendingIncome && (
+          <div className="card">
+            <EmptyState icon={<Landmark size={20} />} title={t('div.emptyTitle')} body={t('div.emptyBody')} />
+          </div>
+        )}
       </div>
     );
   }
@@ -154,6 +161,9 @@ export default function DividendsPage() {
         />
       </div>
 
+      <div className="mt-3">
+        <SuggestionsInbox kind="income" />
+      </div>
       <UpcomingCalendar />
 
       <Card className="mt-3" title={t('div.byMonth')} subtitle={t('div.byMonthSub')}>

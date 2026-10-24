@@ -1,0 +1,2 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2023-01-05,BUY,XNAS:NVDA,NVDA,XNAS,NVIDIA Corp.,,,10000,142.65,USD,1426500,,,,,,,IBKR,

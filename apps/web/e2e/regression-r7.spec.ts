@@ -1,0 +1,98 @@
+/**
+ * Round 7 (reviews/web-r6.md). W55: an unrecorded split of a held position (NVDA 10:1, 2024-06-10) and
+ * announced proventos surface on the Resumen / Proventos with one-click fixes — never "Todo en orden".
+ */
+import { expect, test, type Page, type Route } from '@playwright/test';
+
+const SHOTS = 'e2e/screenshots';
+
+async function mockProvider(page: Page, actions: Record<string, unknown[]>, series: Record<string, [string, number][]>) {
+  await page.route('**/api/health', (route) => route.fulfill({ json: { ok: true, service: 'mock', version: '0', time: new Date().toISOString() } }));
+  await page.route('**/api/batch', async (route: Route) => {
+    const req = route.request().postDataJSON() as { histories?: { symbol: string }[]; fx?: { base: string; quote: string; from: string }[]; quotes?: unknown[]; indices?: unknown[] };
+    const err = { ok: false, error: { code: 'NOT_FOUND', message: 'mock' } };
+    const today = new Date().toISOString().slice(0, 10);
+    await route.fulfill({
+      json: {
+        histories: (req.histories ?? []).map((h) => {
+          const key = Object.keys(series).find((k) => h.symbol.includes(k));
+          if (!key) return err;
+          const ccy = key === 'NVDA' ? 'USD' : 'BRL';
+          return { ok: true, data: { requested: h.symbol, providerSymbol: key, interval: '1d', actions: actions[key] ?? [], series: { currency: ccy, source: 'mock', points: series[key]!.map(([date, close]) => ({ date, close })) } } };
+        }),
+        fx: (req.fx ?? []).map((r) => ({ ok: true, data: { interval: '1d', series: { base: r.base, quote: r.quote, source: 'mock', points: [{ date: r.from, rate: r.quote === 'BRL' ? 5 : 4000 }, { date: today, rate: r.quote === 'BRL' ? 5 : 4000 }] } } })),
+        quotes: (req.quotes ?? []).map(() => err),
+        indices: (req.indices ?? []).map(() => err),
+        tookMs: 1,
+      },
+    });
+  });
+}
+
+async function onboard(page: Page, ccy: string, deposit: string, date: string) {
+  await page.goto('/');
+  await page.getByTestId('start-portfolio').click();
+  const wizard = page.getByRole('dialog', { name: 'Empieza tu portafolio' });
+  await wizard.getByLabel('Nombre').fill('Mi portafolio');
+  await wizard.getByLabel('Moneda base').selectOption(ccy);
+  await wizard.getByTestId('onboarding-create').click();
+  await wizard.getByLabel(/Aporte inicial/).fill(deposit);
+  await wizard.getByLabel('¿Desde cuándo inviertes?').fill(date);
+  await wizard.getByRole('button', { name: 'Siguiente' }).click();
+  await wizard.getByRole('button', { name: /Ir al resumen/ }).click();
+}
+
+async function importCsv(page: Page, file: string) {
+  await page.goto('/importar');
+  await page.getByTestId('import-file').setInputFiles(`e2e/fixtures/${file}`);
+  await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('import-confirm').click();
+  await expect(page.getByText(/importado/)).toBeVisible();
+}
+
+test('W55: an unrecorded NVDA 10:1 split is a blocking, one-click alert on the Resumen (never "Todo en orden")', async ({ page }) => {
+  const today = new Date().toISOString().slice(0, 10);
+  await mockProvider(
+    page,
+    { NVDA: [{ type: 'SPLIT', date: '2024-06-10', ratio: 10, source: 'yahoo' }] },
+    { NVDA: [['2023-01-05', 142.65], ['2024-06-07', 1208.88], ['2024-06-10', 121.79], [today, 140]] },
+  );
+  await onboard(page, 'USD', '1.500.000', '2023-01-02');
+  await importCsv(page, 'nvda-split.csv');
+  await page.goto('/');
+  const banner = page.getByTestId('pending-splits');
+  await expect(banner).toContainText('NVDA', { timeout: 30_000 });
+  await expect(banner).toContainText('10:1');
+  await expect(page.getByText('Todo en orden')).toHaveCount(0);
+  await expect(page.getByTestId('warning-split')).toContainText('NVDA');
+  await page.screenshot({ path: `${SHOTS}/r7-pending-split.png` });
+  await page.goto('/posiciones');
+  await expect(page.getByTestId('pending-split-chip').first()).toBeVisible();
+
+  await page.goto('/');
+  await page.getByTestId('apply-splits').click();
+  await expect(page.getByTestId('pending-splits')).toHaveCount(0, { timeout: 30_000 });
+  // 100.000 × USD 140 + USD 73.500 of cash
+  await expect(page.getByTestId('kpis')).toContainText('14.073.500');
+});
+
+test('W55: announced proventos are listed in Proventos with "registrar todos" instead of "no hay proventos"', async ({ page }) => {
+  await mockProvider(
+    page,
+    {
+      PETR4: ['2025-03-03', '2025-06-02', '2025-09-01'].map((d) => ({ type: 'DIVIDEND', date: d, exDate: d, payDate: d, amountPerShare: 1.2, currency: 'BRL', source: 'yahoo' })),
+    },
+    { PETR4: [['2025-01-10', 20], ['2025-06-30', 25], [new Date().toISOString().slice(0, 10), 25]] },
+  );
+  await onboard(page, 'BRL', '10.000', '2025-01-02');
+  await importCsv(page, 'br-hold.csv');
+  await page.goto('/');
+  await expect(page.getByTestId('dashboard-pending-income')).toContainText('3', { timeout: 30_000 });
+  await expect(page.getByTestId('warning-inbox')).toBeVisible();
+  await page.goto('/dividendos');
+  await expect(page.getByTestId('suggestions')).toContainText('PETR4');
+  await page.screenshot({ path: `${SHOTS}/r7-pending-income.png` });
+  await page.getByRole('button', { name: /Registrar todo|Aceptar todo/ }).click();
+  await expect(page.getByTestId('suggestions')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByText(/360/).first()).toBeVisible(); // 3 × 1,20 × 100
+});

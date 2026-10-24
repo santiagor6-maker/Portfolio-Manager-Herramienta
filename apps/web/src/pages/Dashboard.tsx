@@ -16,7 +16,9 @@ import { useInstrumentMap } from '../hooks/useData';
 import { refreshMarketData } from '../services/marketData';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { renamedPair } from '../lib/diagnosticText';
-import { renameInstrumentRows } from '../components/DiagnosticsPanel';
+import { recordSplit, renameInstrumentRows } from '../components/DiagnosticsPanel';
+import { acceptSuggestions } from '../services/suggestions';
+import { pendingEvents, type PendingSplit } from '../lib/pendingEvents';
 import { db } from '../db/schema';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
 import { describeIssue } from '../lib/diagnosticText';
@@ -76,6 +78,7 @@ export default function DashboardPage() {
       />
 
       <GettingStarted />
+      <PendingSplitsBanner />
       {/* W54: on the phone one compact card per row (figures keep their full width, no empty cell);
           three across from 640 px, the headline two columns wide from 1280 px. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-5 gap-2 sm:gap-3" data-testid="kpis">
@@ -275,6 +278,57 @@ export default function DashboardPage() {
   );
 }
 
+/**
+ * W55: a split of a held position that is not recorded makes the quantity and the value wrong (10.000
+ * NVDA valued as if they were 100.000 after a 10:1). Shown above the KPIs with a one-click fix.
+ */
+function PendingSplitsBanner() {
+  const { t } = useTranslation();
+  const f = useFmt();
+  const { analysis: a } = useAnalysis();
+  const label = useInstrumentLabel();
+  const [busy, setBusy] = useState(false);
+  const { splits } = pendingEvents(a);
+  if (!splits.length) return null;
+  const apply = async (list: PendingSplit[]) => {
+    setBusy(true);
+    try {
+      const provider = list.flatMap((p) => (p.suggestion ? [p.suggestion] : []));
+      if (provider.length) await acceptSuggestions(provider, t, f.locale);
+      for (const p of list) if (!p.suggestion) await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ratio = (r: number) => (r >= 1 ? `${Math.round(r * 1000) / 1000}:1` : `1:${Math.round((1 / r) * 1000) / 1000}`);
+  return (
+    <div className="mb-3" data-testid="pending-splits">
+      <Banner
+        tone="error"
+        action={
+          <div className="flex gap-2 flex-wrap sm:justify-end">
+            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void apply(splits)} data-testid="apply-splits">
+              {t('pending.applySplits', { count: splits.length })}
+            </button>
+            <Link to="/movimientos" className="btn btn-sm">
+              {t('pending.review')}
+            </Link>
+          </div>
+        }
+      >
+        <strong className="font-semibold">{t('pending.splitsTitle', { count: splits.length })}</strong>{' '}
+        <span className="text-ink-2">
+          {splits
+            .slice(0, 3)
+            .map((p) => t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: ratio(p.ratio), date: formatDate(p.date, f.locale) }))
+            .join(' · ')}
+          {splits.length > 3 ? ` · ${t('pending.more', { count: splits.length - 3 })}` : ''} {t('pending.splitsBody')}
+        </span>
+      </Banner>
+    </div>
+  );
+}
+
 function NoSeries() {
   const { t } = useTranslation();
   return <p className="text-sm text-muted py-16 text-center">{t('common.noData')}</p>;
@@ -287,6 +341,7 @@ function DividendsCard() {
   const label = useInstrumentLabel();
   // Announced by the provider first, then projected from last year's payments.
   const upcoming = (a?.upcomingDividends ?? []).filter((d) => d.payDate <= addDays(a!.asOf, 90)).slice(0, 4).map((d) => ({ ...d, date: d.payDate }));
+  const pendingIncome = pendingEvents(a).income.length;
   const last = useMemo(() => [...(a?.income ?? [])].filter((e) => e.date <= (a?.asOf ?? '')).sort((x, y) => (x.date < y.date ? 1 : -1)).slice(0, 4), [a]);
 
   return (
@@ -325,6 +380,14 @@ function DividendsCard() {
             )}
           </div>
           <div>
+            {pendingIncome > 0 && (
+              <p className="text-xs text-warn mb-1.5" data-testid="dashboard-pending-income">
+                {t('pending.income', { count: pendingIncome })}{' '}
+                <Link className="text-accent hover:underline" to="/dividendos">
+                  {t('pending.register')}
+                </Link>
+              </p>
+            )}
             <div className="text-xs font-medium text-muted mb-1">{t('dashboard.lastPayments')}</div>
             {last.length ? (
               <ul className="text-[13px] flex flex-col gap-1">
@@ -372,9 +435,13 @@ function WarningsCard() {
   // W49: market-priced holdings of real portfolios without a recent close (interrupted refresh, server
   // down…); the analysis already leaves out the frozen sample.
   const staleMarket = a?.staleMarket ?? [];
+  // W55: inbox items and valuation-changing warnings are never "Todo en orden".
+  const pendingEv = pendingEvents(a);
+  const otherPending = pendingEv.total - pendingEv.splits.filter((p) => p.suggestion).length;
+  const valuationOnly = pendingEv.valuationWarnings.filter((d) => d.code === 'TRADE_PRICE_UNIT_SUSPECT');
   const staleSince = staleMarket.reduce<string | undefined>((m, h) => (h.priceDate && (!m || h.priceDate < m) ? h.priceDate : m), undefined);
   const demoPriced = a?.demoPriced ?? [];
-  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0);
+  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0) + pendingEv.splits.length + (otherPending > 0 ? 1 : 0) + (valuationOnly.length ? 1 : 0);
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -392,6 +459,36 @@ function WarningsCard() {
               </span>
             </li>
           ))}
+          {pendingEv.splits.map((p) => (
+            <li key={`${p.instrumentId}|${p.date}`} className="flex items-start gap-2" data-testid="warning-split">
+              <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: p.ratio >= 1 ? `${p.ratio}:1` : `1:${Math.round(1 / p.ratio)}`, date: formatDate(p.date, f.locale) })} {t('pending.splitsBody')}
+              </span>
+            </li>
+          ))}
+          {otherPending > 0 && (
+            <li className="flex items-start gap-2" data-testid="warning-inbox">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('pending.inbox', { count: otherPending })}{' '}
+                <Link className="text-accent hover:underline" to="/movimientos">
+                  {t('pending.review')}
+                </Link>
+              </span>
+            </li>
+          )}
+          {valuationOnly.length > 0 && (
+            <li className="flex items-start gap-2">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('pending.unitSuspect', { count: valuationOnly.length })}{' '}
+                <Link className="text-accent hover:underline" to="/movimientos">
+                  {t('pending.review')}
+                </Link>
+              </span>
+            </li>
+          )}
           {staleMarket.length > 0 && (
             <li className="flex items-start gap-2" data-testid="stale-market">
               <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
