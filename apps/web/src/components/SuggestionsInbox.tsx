@@ -52,7 +52,7 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
       bodyClassName="!p-0"
     >
       <div className="max-h-[300px] overflow-auto" data-testid="suggestions">
-        <table className="table">
+        <table className="table w-full">
           <tbody>
             {list.map((s) => {
               const x = s.transaction;
@@ -62,8 +62,10 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
                   <td>
                     <TxTypeBadge type={x.type} />
                   </td>
-                  <td>
-                    <span className="font-semibold">{label(x.instrumentId).symbol}</span> <span className="text-xs text-muted">{corporateNote(x, t, f.locale) ?? ''}</span>
+                  <td className="!whitespace-normal min-w-[10rem]">
+                    <span className="font-semibold">{label(x.instrumentId).symbol}</span>
+                    {/* W59: the long bonificação note wraps on its own line so the actions stay inside the card. */}
+                    <span className="block text-xs text-muted">{corporateNote(x, t, f.locale) ?? ''}</span>
                   </td>
                   <td className="r num">
                     {x.type === 'DIVIDEND'
@@ -72,7 +74,7 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
                         ? formatTxRatio(x, f.locale)
                         : formatQuantity(x.quantity, f.locale, f.privacy)}
                   </td>
-                  <td className="r">
+                  <td className="r w-px">
                     <div className="flex gap-1 justify-end">
                       <button className="btn btn-sm" disabled={busy} onClick={() => void accept([s])} aria-label={t('ca.accept')}>
                         <Check size={14} /> {t('ca.accept')}
@@ -91,7 +93,7 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
                 <td>
                   <span className="chip">{t('ca.review')}</span>
                 </td>
-                <td colSpan={3}>
+                <td colSpan={3} className="!whitespace-normal">
                   <span className="font-semibold">{label(a.instrumentId).symbol}</span> · {a.type}
                   {a.subtype ? ` (${a.subtype})` : ''} {a.ratio ? formatRatio(a.ratio, f.locale) : ''} — <span className="text-xs">{t('ca.reviewHint')}</span>
                 </td>

@@ -157,3 +157,44 @@ test.describe('W57/W58 in es-CO', () => {
     await expect(page.locator('body')).not.toContainText(/\bMRD\b/);
   });
 });
+
+const pageOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+test('W59: no horizontal page scroll in Divisas at 360 px, in a three-digit heatmap at 768–1024 px, nor in the events tray at 1280 px', async ({ page }) => {
+  // Divisas (example portfolio): the long "USD/COP · TRM (Banco de la República) · hace…" chips wrap.
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto('/divisas');
+  await expect(page.locator('.kpi-value').first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(200);
+  expect(await pageOverflow(page), 'Divisas 360').toBeLessThanOrEqual(0);
+
+  // A BRL portfolio with a +180 % month and a 33,33 % bonificação waiting in the tray.
+  const today = new Date().toISOString().slice(0, 10);
+  await mockProvider(
+    page,
+    { PETR4: [{ type: 'STOCK_DIVIDEND', date: '2025-04-01', exDate: '2025-04-01', ratio: 0.3333, source: 'yahoo' }] },
+    { PETR4: [['2025-01-10', 20], ['2025-02-28', 20], ['2025-03-31', 200], [today, 200]] },
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await onboard(page, 'BRL', '10.000', '2025-01-02');
+  await importCsv(page, 'br-hold.csv');
+  await page.goto('/mensual');
+  await expect(page.getByTestId('monthly-table')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('monthly-heatmap')).toContainText(/\+1\d\d/);
+  for (const w of [1024, 768]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.waitForTimeout(250);
+    expect(await pageOverflow(page), `Mensual ${w}`).toBeLessThanOrEqual(0);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/movimientos');
+  const tray = page.getByTestId('suggestions');
+  await expect(tray).toBeVisible({ timeout: 30_000 });
+  await page.screenshot({ path: `${SHOTS}/r7-inbox-1280.png` });
+  const [scroll, client] = await tray.evaluate((el) => [el.scrollWidth, el.clientWidth]);
+  expect(scroll, 'events tray').toBeLessThanOrEqual(client);
+  const accept = tray.getByRole('button', { name: /Registrar|Aceptar/ }).first();
+  const [btn, box] = await Promise.all([accept.boundingBox(), tray.boundingBox()]);
+  expect(btn!.x + btn!.width).toBeLessThanOrEqual(box!.x + box!.width);
+  expect(await pageOverflow(page), 'Movimientos 1280').toBeLessThanOrEqual(0);
+});

@@ -208,7 +208,7 @@ function SourcesLine({ rows }: { rows: { pair: string; source: string; updatedAt
   return (
     <div className="flex flex-wrap gap-1.5 mt-3">
       {rows.map((r) => (
-        <span key={r.pair} className="chip" title={t('fx.sourceHint')}>
+        <span key={r.pair} className="chip !whitespace-normal !h-auto py-0.5 max-w-full" title={t('fx.sourceHint')}>
           {r.pair} · {r.isDemo ? t('demo.badge') : t(`source.${r.source}`, { defaultValue: r.source })} · {formatRelative(r.updatedAt, locale)}
         </span>
       ))}

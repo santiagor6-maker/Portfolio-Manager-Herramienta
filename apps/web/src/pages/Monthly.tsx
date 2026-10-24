@@ -577,6 +577,8 @@ export function Heatmap({
 }) {
   const { t } = useTranslation();
   const f = useFmt();
+  // W59: three-digit months ("+124,3 %") drop the decimal so the 14-column grid fits at 768–1024 px.
+  const pct = (v: number) => formatPct(v, f.locale, { signed: true, decimals: Math.abs(v) >= 0.995 ? 0 : 1 });
   const cell = (m: MonthlyRow | undefined, i: number, small = false) => {
     if (!m) return <div className={clsx('rounded-md border border-dashed border-line', small ? 'h-8' : 'h-9')} aria-hidden key={i} />;
     if (m.month === openMonth || unpriced?.has(m.month)) {
@@ -609,13 +611,13 @@ export function Heatmap({
         )}
         style={heatStyle(v)}
       >
-        {small ? <span className="block leading-tight"><span className="block text-[9px] text-ink">{monthName(i, f.locale)}</span>{formatPct(v, f.locale, { signed: true, decimals: 1 })}</span> : formatPct(v, f.locale, { signed: true, decimals: 1 })}
+        {small ? <span className="block leading-tight"><span className="block text-[9px] text-ink">{monthName(i, f.locale)}</span>{pct(v)}</span> : pct(v)}
       </button>
     );
   };
   return (
     <>
-      <table className="hidden md:table print:table w-full border-separate border-spacing-[3px] text-[12px]">
+      <table className="hidden md:table print:table w-full table-fixed border-separate border-spacing-[3px] text-[12px]">
         <thead>
           <tr>
             <th className="text-left text-muted font-medium w-14 px-1">{t('monthly.year')}</th>
@@ -624,8 +626,8 @@ export function Heatmap({
                 {monthName(i, f.locale)}
               </th>
             ))}
-            <th className="text-ink font-semibold">{t('monthly.yearTotal')}</th>
-            {bench && <th className="text-muted font-medium">{benchmarkName(bench)}</th>}
+            <th className="text-ink font-semibold leading-tight break-words">{t('monthly.yearTotal')}</th>
+            {bench && <th className="text-muted font-medium leading-tight break-words">{benchmarkName(bench)}</th>}
           </tr>
         </thead>
         <tbody>
@@ -641,10 +643,10 @@ export function Heatmap({
               ))}
               <td className="p-0">
                 <div className="num h-9 rounded-md grid place-items-center font-semibold border border-line-strong print-heat" style={heatStyle(y.annual, HEAT_CAP_YEAR)}>
-                  {formatPct(y.annual, f.locale, { signed: true, decimals: 1 })}
+                  {pct(y.annual)}
                 </div>
               </td>
-              {bench && <td className="text-center num text-ink-2">{y.annualBench !== undefined ? formatPct(y.annualBench, f.locale, { signed: true, decimals: 1 }) : '—'}</td>}
+              {bench && <td className="text-center num text-ink-2">{y.annualBench !== undefined ? pct(y.annualBench) : '—'}</td>}
             </tr>
           ))}
         </tbody>
