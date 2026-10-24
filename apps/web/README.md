@@ -418,3 +418,33 @@ Revisión: `reviews/web-r3.md`.
 - **Parciales:** D16 (decimales de precio por moneda, ejes sin etiquetas repetidas), D19 (etiquetas
   directas en «Rentabilidad acumulada»), D21 (leyenda del donut y símbolos), D22 (frescura en Ajustes y
   punto verde solo tras descargar), W45 (un aviso por año agrupado y sin nombres internos).
+
+## Respuesta a la revisión ronda 6 (`reviews/web-r6.md`)
+
+- **W55 (alta):** los eventos pendientes ya no quedan escondidos en Movimientos (`lib/pendingEvents.ts`,
+  `usePendingEvents()`). Un split sin registrar de una posición abierta (del proveedor o inferido del
+  historial con aviso confirmado) es un aviso rojo sobre los KPIs con «Registrar split» en un clic
+  (`services/suggestions.ts`; el inferido solo en el portafolio del aviso, sin doble registro) y una
+  *chip* «split pendiente» en Posiciones. Avisos cuenta los splits, la bandeja y los precios con posible
+  error de unidad: nunca «Todo en orden» con eventos pendientes. Proventos y la tarjeta de dividendos
+  listan los proventos anunciados con «Registrar todos».
+- **W56:** las columnas que se ocultan por espacio siguen una prioridad por página; primero las que son
+  todo cero o copia de otra (`lib/columnStats.ts`). Cantidad, aportes y dividendos nunca se ocultan.
+- **W57/W58:** la cifra del KPI nunca baja de 16 px (20 px la principal); por debajo pasa a notación
+  compacta, medida sobre copias ocultas, así que se recalcula en cada ajuste (redimensionar o captura de
+  página completa no la dejan «pegada»). Las tarjetas de una fila comparten el tamaño. En español la
+  notación compacta usa «M» y «mil» («$ 8.568 M»), nunca «MRD».
+- **W59:** sin desplazamiento horizontal en Divisas a 360 px (las *chips* de fuente se parten), en el mapa
+  de calor con meses de tres cifras (tabla fija, sin decimal desde ±100 %) ni en la bandeja de eventos a
+  1280 px (la nota va en su propia línea).
+- **W60 (cierra W53):** «0,07.» al final de una frase, «à vista», «1 activo nuevo» (plurales), fechas ISO
+  en nombres de activos (CDT «vence 09/01/2025») en el formato local, aviso de precios sin comandos de
+  desarrollo (el comando queda en Ajustes) y sin restaurar «sin conexión» de la sesión anterior; los
+  resúmenes de gráficos no anuncian fechas futuras.
+- **W54:** en el teléfono, las tarjetas secundarias son de una fila (etiqueta a la izquierda, cifra a la
+  derecha) y el área del primer gráfico empieza dentro de 390×844.
+- **W20:** la primera visita carga solo el generador de datos de ejemplo del motor (no el motor entero) y
+  arranca el *worker* mientras se abre la base: ~750 kB antes de los KPIs (antes ~830) y KPIs en ~600 ms.
+- Pruebas: `src/__tests__/r7.test.ts` (unitarias) y `e2e/regression-r7.spec.ts` (NVDA 10:1, proventos de
+  Brasil, columnas, tamaños de KPI, desbordes, textos). Totales: 130 unitarias y 60 e2e (1 omitida, la
+  prueba en vivo contra el servidor real).
