@@ -43,3 +43,31 @@ describe('W68 — isolatePortfolioCash', () => {
     expect(Object.keys(cash.accountAmounts ?? {}).every((k) => !k.includes('\\u0000'))).toBe(true);
   });
 });
+
+describe('W68 — corporate events apply to their own portfolio\'s lots', () => {
+  const split = (pid: string, ratio = 10) => tx({ portfolioId: pid, date: '2023-06-01', type: 'SPLIT', instrumentId: 'S', ratio });
+  const input = (txs: Transaction[]): EngineInput => ({ portfolio: pf('all'), instruments: [S], market, transactions: txs, options: { asOf: '2024-01-05', isolatePortfolioCash: true } });
+  const qty = (inp: EngineInput) => valuePortfolio(inp, '2024-01-05').holdings.find((h) => h.instrumentId === 'S')?.quantity;
+
+  it('a split recorded in each portfolio is applied once to each portfolio\'s lots', () => {
+    expect(qty(input([...A, ...B, split('A'), split('B')]))).toBe(1300);
+  });
+
+  it('a split recorded in one portfolio only scales that portfolio (the sum of the views)', () => {
+    expect(qty(input([...A, ...B, split('A')]))).toBe(500 + 80);
+  });
+
+  it('a sale in one portfolio does not consume another portfolio\'s lots', () => {
+    const sellB = tx({ portfolioId: 'B', date: '2023-02-01', type: 'SELL', instrumentId: 'S', quantity: 80, price: 120, amount: 9600, account: 'Clear' });
+    const v = valuePortfolio(input([...A, ...B, sellB]), '2024-01-05');
+    const h = v.holdings.find((x) => x.instrumentId === 'S')!;
+    expect(h.quantity).toBe(50);
+    expect(h.costBasis).toBeCloseTo(5000, 6); // A's 50 at 100, untouched by B's FIFO
+  });
+
+  it('bonificação (stock dividend) per portfolio', () => {
+    const bonus = (pid: string) => tx({ portfolioId: pid, date: '2023-06-01', type: 'STOCK_DIVIDEND', instrumentId: 'S', ratio: 0.1 });
+    expect(qty(input([...A, ...B, bonus('A'), bonus('B')]))).toBeCloseTo(143, 9);
+  });
+});
+

@@ -23,7 +23,7 @@ import type {
 } from './types';
 import type { EngineInput, EngineOptions } from './api';
 import { dayToIso, days360, isStrictIsoDate, isoToDay, lastIndexAtOrBefore } from './dates';
-import { LotBook, type LotState, QTY_EPS, roundQty } from './lots';
+import { type BookView, LotBook, type LotState, PortfolioBooks, QTY_EPS, roundQty } from './lots';
 import { type EngineMarket, toEngineMarket } from './market';
 import { accrualFactor, accruedLotValues, payableFactor, priceInfo } from './pricing';
 import { addBusinessDays, calendarForCurrency, nextBusinessDay } from './calendars';
@@ -777,7 +777,10 @@ type Buckets = Omit<Attribution, 'day' | 'instrumentId' | 'rateDiff' | 'cashBase
 const emptyBuckets = (): Buckets => ({ realized: 0, realizedFx: 0, income: 0, otherCosts: 0, fxConversion: 0, spread: 0, transfer: 0, corporate: 0 });
 
 export class Ledger {
-  readonly books = new Map<string, LotBook>();
+  /** Position books by instrument (PortfolioBooks with isolatePortfolioCash: read the sum). */
+  readonly books = new Map<string, BookView>();
+  /** portfolioId of the transaction being applied (isolatePortfolioCash). */
+  private curPid = '';
   readonly instrumentOf = new Map<string, Instrument>();
   readonly accountQty = new Map<string, Map<string, number>>();
   readonly cash = new Map<CurrencyCode, number>();
@@ -888,10 +891,22 @@ export class Ledger {
     return inst;
   }
 
+  /** The book a transaction mutates: the instrument's, or its portfolio's part with isolatePortfolioCash. */
   book(id: string): LotBook {
     let b = this.books.get(id);
+    if (this.ctx.fundingByPortfolio) {
+      if (!b) this.books.set(id, (b = new PortfolioBooks(this.ctx.options.costMethod)));
+      return (b as PortfolioBooks).part(this.curPid);
+    }
     if (!b) this.books.set(id, (b = new LotBook(this.ctx.options.costMethod)));
-    return b;
+    return b as LotBook;
+  }
+
+  /** Read-only lookup of the book `book(id)` would return (undefined when there is none). */
+  private peek(id: string): LotBook | undefined {
+    const b = this.books.get(id);
+    if (!b) return undefined;
+    return this.ctx.fundingByPortfolio ? (b as PortfolioBooks).parts.get(this.curPid) : (b as LotBook);
   }
 
   /** Market FX (base per unit) used for cash valuation; same function everywhere. */
@@ -1045,7 +1060,7 @@ export class Ledger {
           shortfall -= got;
           this.diag(tx, day, 'IMPLICIT_FX_CONVERSION', `Converted ${usePb.toFixed(2)} ${pb} to ${got.toFixed(2)} ${ccy} at market rate to fund ${tx.type}`, 'info');
         } else if (this.cashOfScope(pb, acct) > CASH_EPS && acct !== this.unassignedOf(acct)) {
-          this.diag(tx, day, 'IMPLICIT_FX_OTHER_ACCOUNT', `${pb} cash exists only in other accounts; not used to fund ${tx.type} in '${acct}' (implicit deposit booked instead)`, 'info');
+          this.diag(tx, day, 'IMPLICIT_FX_OTHER_ACCOUNT', `${pb} cash exists only in other accounts; not used to fund ${tx.type} in '${cashAccountLabel(acct)}' (implicit deposit booked instead)`, 'info');
         }
       }
       if (shortfall > CASH_EPS) {
@@ -1112,6 +1127,7 @@ export class Ledger {
 
   private applyWrapped(tx: Transaction, day: number): void {
     this.curTx = tx;
+    this.curPid = tx.portfolioId;
     this.curDay = day;
     this.txCash = 0;
     this.txFlow = 0;
@@ -1440,7 +1456,7 @@ export class Ledger {
 
   private income_(tx: Transaction, day: number, fees: number, taxes: number): void {
     let gross = num(tx.amount);
-    const held = tx.instrumentId ? (this.books.get(tx.instrumentId)?.quantity ?? 0) : 0;
+    const held = tx.instrumentId ? (this.peek(tx.instrumentId)?.quantity ?? 0) : 0;
     if (tx.amount === undefined) {
       if (tx.quantity && tx.price) gross = tx.quantity * tx.price;
       else if (tx.price && tx.instrumentId) gross = held * tx.price;
@@ -1500,7 +1516,7 @@ export class Ledger {
    * longest since its anchor.
    */
   private couponPlan(tx: Transaction, inst: Instrument, day: number, amountTx: number): CouponPlan | undefined {
-    const b = this.books.get(inst.id);
+    const b = this.peek(inst.id);
     if (!b || b.quantity <= 0) return undefined;
     const totalQ = b.lots.reduce((s, l) => s + l.quantity, 0);
     if (!(totalQ > 0)) return undefined;
@@ -1599,7 +1615,7 @@ export class Ledger {
    *   is income that leaves the principal intact (COUPON_EXCEEDS_ACCRUED_INTEREST).
    */
   private payCoupon(tx: Transaction, inst: Instrument, day: number, grossTx: number, plan: CouponPlan, unexplained: boolean): void {
-    const b = this.books.get(inst.id);
+    const b = this.peek(inst.id);
     if (!b || !(grossTx > 0)) return;
     const coupon = grossTx * plan.conv;
     const perUnit = coupon / plan.units;
@@ -1649,7 +1665,7 @@ export class Ledger {
     if (tx.amountIsNet === false) return undefined;
     const regime = taxRegimeFor(inst, this.ctx.taxResidence);
     if (regime !== 'CO_RETENCION' && regime !== 'BR_IR_REGRESSIVE') return undefined;
-    const b = this.books.get(inst.id);
+    const b = this.peek(inst.id);
     if (!b) return undefined;
     const explicit = tx.amountIsNet === true;
     let I = 0;
@@ -1823,13 +1839,22 @@ export class Ledger {
 
   /** Automatic redemption of an accrual instrument at maturity, at its accrued value. */
   private redeemAtMaturity(id: string, day: number): void {
-    const b = this.books.get(id);
+    const all = this.books.get(id);
+    if (!all) return;
+    // isolatePortfolioCash: each portfolio's lots are redeemed into that portfolio's cash.
+    if (all instanceof PortfolioBooks) {
+      for (const [pid, part] of all.parts) if (part.quantity > 0) this.redeemPart(id, day, part, pid);
+    } else this.redeemPart(id, day, all as LotBook, '');
+  }
+
+  private redeemPart(id: string, day: number, b: LotBook, portfolioId: string): void {
     const inst = this.instrumentOf.get(id) ?? this.ctx.instruments.get(id);
-    if (!b || !inst || b.quantity <= 0) return;
+    if (!inst || b.quantity <= 0) return;
+    this.curPid = portfolioId;
     const acct = Array.from(this.accountQty.get(id)?.entries() ?? []).find(([, v]) => v > QTY_EPS)?.[0] ?? NO_ACCOUNT;
     const tx: Transaction = {
-      id: `maturity:${id}:${dayToIso(day)}`,
-      portfolioId: '',
+      id: `maturity:${id}:${dayToIso(day)}${portfolioId ? `:${portfolioId}` : ''}`,
+      portfolioId,
       date: dayToIso(day),
       type: 'SELL',
       instrumentId: id,

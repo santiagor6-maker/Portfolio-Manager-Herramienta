@@ -48,7 +48,48 @@ export interface ClosedPiece {
   costBase: number;
 }
 
-export class LotBook {
+/** What valuation reads from a position's book (one LotBook, or the sum of a PortfolioBooks). */
+export interface BookView {
+  readonly lots: LotState[];
+  readonly quantity: number;
+  readonly costBasis: number;
+  readonly costBasisBase: number;
+}
+
+/**
+ * Web review R8 (W68), isolatePortfolioCash: one LotBook per portfolio for an instrument, so a
+ * portfolio's split, bonificação, sale or restructuring touches only its own lots; valuation reads
+ * the sum (same lots, quantity and cost as the portfolios computed one by one).
+ */
+export class PortfolioBooks implements BookView {
+  readonly parts = new Map<string, LotBook>();
+  constructor(readonly method: CostMethod) {}
+  part(portfolioId: string): LotBook {
+    let b = this.parts.get(portfolioId);
+    if (!b) this.parts.set(portfolioId, (b = new LotBook(this.method)));
+    return b;
+  }
+  get lots(): LotState[] {
+    return [...this.parts.values()].flatMap((b) => b.lots);
+  }
+  get quantity(): number {
+    let s = 0;
+    for (const b of this.parts.values()) s += b.quantity;
+    return s;
+  }
+  get costBasis(): number {
+    let s = 0;
+    for (const b of this.parts.values()) s += b.costBasis;
+    return s;
+  }
+  get costBasisBase(): number {
+    let s = 0;
+    for (const b of this.parts.values()) s += b.costBasisBase;
+    return s;
+  }
+}
+
+export class LotBook implements BookView {
   lots: LotState[] = [];
   /** Cached aggregates, refreshed after every mutation. */
   quantity = 0;

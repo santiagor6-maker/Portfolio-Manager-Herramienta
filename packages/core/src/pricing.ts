@@ -15,7 +15,7 @@ import type { AccrualSpec, DayCount, Instrument } from './types';
 import { isoToDay, lastIndexAtOrBefore } from './dates';
 import { fixedGrowth } from './indices';
 import { calendarForCurrency } from './calendars';
-import type { LotBook, LotState } from './lots';
+import type { BookView, LotState } from './lots';
 import type { EngineContext, Ledger } from './ledger';
 
 export type PriceSource = 'market' | 'trade' | 'accrual' | 'cost';
@@ -211,7 +211,7 @@ export const quick = { mv: 0, mvBase: 0, rate: 0 as number | undefined, missingF
  * Allocation-free valuation for the hot loops (daily chain). Same rules as valuePosition for
  * instruments without accrual and without an override; returns false otherwise (use valuePosition).
  */
-export function quickValue(ledger: Ledger, book: LotBook, inst: Instrument, day: number, fxDay: number): boolean {
+export function quickValue(ledger: Ledger, book: BookView, inst: Instrument, day: number, fxDay: number): boolean {
   if (inst.accrual) return false;
   const ctx = ledger.ctx;
   const m = ctx.market;
@@ -268,7 +268,7 @@ export function quickValue(ledger: Ledger, book: LotBook, inst: Instrument, day:
 }
 
 /** Value one position. `override` = intra-day trade price (instrument currency, quote units). */
-export function valuePosition(ledger: Ledger, book: LotBook, inst: Instrument, day: number, fxDay: number, override?: number): PositionValue {
+export function valuePosition(ledger: Ledger, book: BookView, inst: Instrument, day: number, fxDay: number, override?: number): PositionValue {
   const ctx = ledger.ctx;
   const { base, market } = ctx;
   const q = book.quantity;
