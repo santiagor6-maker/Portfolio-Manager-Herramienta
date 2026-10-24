@@ -1,0 +1,29 @@
+{
+  "id": "web-r9",
+  "score": 8.3,
+  "competitorScore": 8.0,
+  "competitor": "Sharesight",
+  "approved": true,
+  "fixed": [
+    "W68",
+    "W69",
+    "W70"
+  ],
+  "gaps": [
+    {
+      "id": "W71",
+      "severity": "media",
+      "text": "«Todos» aplica a todos los portafolios el método de costo del primero (analysis.ts:215: costMethod de ds.portfolios[0]; lots.ts:66: PortfolioBooks crea todos sus LotBook con un solo método). Con «Trii COP» en FIFO y «XP BRL» en costo promedio, ECOPETROL cuesta $ 11.762.500 en «Todos» frente a $ 11.312.500 en su portafolio; la ganancia no realizada y el efecto precio de «Todos» quedan $ 450.001 por debajo de la suma, y la ganancia realizada se desplaza lo mismo. El valor, la ganancia total, la TWR, la tabla mensual y los dividendos cuadran. Qué método se usa depende del orden de ds.portfolios. Corrección: pasar el método de cada portafolio en EngineOptions y crear cada LotBook con él, con una e2e FIFO + promedio."
+    },
+    {
+      "id": "W72",
+      "severity": "baja",
+      "text": "Limitación declarada: en «Todos», los informes de impuestos aproximan el efectivo por fracciones y las fusiones, porque packages/tax está congelado y lib/consolidate.ts solo une las copias de un evento. En las pruebas, Bens e Direitos de «Todos» da cantidades y costos correctos (30 AMER3, 1.699,5 ITUB4, 1.500 NVDA). Fuera del alcance de la web."
+    },
+    {
+      "id": "W10",
+      "severity": "baja",
+      "text": "Sigue sin haber sincronización entre dispositivos ni con corredores o B3, salvo IBKR y el buzón de correo con servidor propio."
+    }
+  ]
+}
