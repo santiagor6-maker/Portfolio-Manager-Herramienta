@@ -2,6 +2,7 @@
  * Adapter over @pm/tax. Builds the common TaxInput from local data and runs the reports with
  * per-report error isolation.
  */
+import { mergeCorporateEvents } from '../lib/consolidate';
 import * as core from '@pm/core';
 import {
   brazilApuracaoCsv,
@@ -44,7 +45,8 @@ export async function buildTaxInput(portfolioId: string): Promise<TaxInput> {
   const ds = await loadDataset();
   const market = core.createMarketData({ prices: ds.prices, fx: ds.fx, manualPrices: ds.manualPrices });
   return {
-    transactions: portfolioId === 'all' ? ds.transactions : ds.transactions.filter((t) => t.portfolioId === portfolioId),
+    // W68: in "Todos", each corporate event once (the tax ledgers also scale the instrument's whole book).
+    transactions: portfolioId === 'all' ? mergeCorporateEvents(ds.transactions) : ds.transactions.filter((t) => t.portfolioId === portfolioId),
     instruments: ds.instruments,
     market,
   };

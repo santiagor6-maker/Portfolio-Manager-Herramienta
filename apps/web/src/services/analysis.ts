@@ -6,6 +6,7 @@
  * Every engine call is isolated with try/catch so one failing computation (or an engine function
  * that is not implemented yet) degrades a single widget instead of the whole app.
  */
+import { mergeCorporateEvents, scopeImportHashes } from '../lib/consolidate';
 import { reviewKey } from '../lib/pendingEvents';
 import * as core from '@pm/core';
 import type {
@@ -215,7 +216,9 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
       createdAt: ds.portfolios.map((p) => p.createdAt).sort()[0] ?? ds.asOf,
       benchmarks: ds.benchmarks,
     };
-    return { portfolio: consolidated, transactions: ds.transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options };
+    // W68: one ledger for every portfolio — each corporate event once, import hashes per portfolio.
+    const transactions = scopeImportHashes(mergeCorporateEvents(ds.transactions));
+    return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options };
   }
   const portfolio = ds.portfolios.find((p) => p.id === ds.selectedPortfolioId);
   if (!portfolio) return undefined;
