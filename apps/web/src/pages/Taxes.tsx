@@ -6,7 +6,7 @@ import { once } from '../lib/writeGuard';
 import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
-import { Banner, Card, Field, Kpi, Modal, Money, PageHeader, Segmented, Skeleton } from '../components/ui';
+import { Banner, Card, CountryTag, Field, Kpi, Modal, Money, PageHeader, Segmented, Skeleton } from '../components/ui';
 import { parseDecimal, toInputNumber } from '../lib/parse';
 import { tidyTaxIssues, YEARLY_NOTICES } from '../lib/taxText';
 import { useApp, useFmt } from '../store/app';
@@ -17,13 +17,24 @@ import { brazilApuracaoCsv, colombiaAccountantCsv, darfDueOn, pendingRedemptions
 import { useInstrumentLabel } from '../hooks/useAnalysis';
 import type { Lang } from '../lib/format';
 
+/** W66: CO or BR for a portfolio: explicit tax residence, else the country of its base currency. */
+function jurisdictionOf(p: { taxResidence?: string; baseCurrency?: string } | undefined): 'CO' | 'BR' {
+  if (p?.taxResidence === 'BR' || p?.taxResidence === 'CO') return p.taxResidence;
+  return p?.baseCurrency === 'BRL' ? 'BR' : 'CO';
+}
+
 export default function TaxesPage() {
   const { t } = useTranslation();
   const f = useFmt();
   const portfolios = usePortfolios();
   const pid = useApp((s) => s.settings.selectedPortfolioId);
-  const current = portfolios.find((p) => p.id === pid) ?? portfolios[0];
-  const [country, setCountry] = useState<'CO' | 'BR'>(current?.taxResidence === 'BR' ? 'BR' : 'CO');
+  // W66: the jurisdiction of the viewed portfolio — its tax residence, else its base currency (BRL →
+  // Brasil); in "Todos", the first real portfolio. The user's pick wins until the portfolio changes.
+  const current = portfolios.find((p) => p.id === pid) ?? portfolios.find((p) => !p.isDemo) ?? portfolios[0];
+  const defaultCountry = jurisdictionOf(current);
+  const [picked, setPicked] = useState<{ pid: string; country: 'CO' | 'BR' }>();
+  const country = picked?.pid === pid ? picked.country : defaultCountry;
+  const setCountry = (c: 'CO' | 'BR') => setPicked({ pid, country: c });
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear - 1);
   const [reports, setReports] = useState<TaxReports>();
@@ -59,8 +70,22 @@ export default function TaxesPage() {
               value={country}
               onChange={setCountry}
               options={[
-                { value: 'CO', label: '🇨🇴 Colombia' },
-                { value: 'BR', label: '🇧🇷 Brasil' },
+                {
+                  value: 'CO',
+                  label: (
+                    <span className="inline-flex items-center gap-1.5">
+                      <CountryTag code="CO" /> {t('tax.countryCO')}
+                    </span>
+                  ),
+                },
+                {
+                  value: 'BR',
+                  label: (
+                    <span className="inline-flex items-center gap-1.5">
+                      <CountryTag code="BR" /> {t('tax.countryBR')}
+                    </span>
+                  ),
+                },
               ]}
             />
             <select className="select !w-auto" aria-label={t('tax.year')} value={year} onChange={(e) => setYear(Number(e.target.value))}>

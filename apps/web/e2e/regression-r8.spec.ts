@@ -188,3 +188,19 @@ for (const [locale, width, ccys] of [['es-CO', 390, ['COP', 'USD']], ['pt-BR', 3
     });
   });
 }
+
+test('W66: Impuestos opens on Brasil for a BRL portfolio (no tax residence set) and names the tabs in the language', async ({ page }) => {
+  await mockProvider(page, {}, {});
+  await onboard(page, 'BRL', '10.000', '2025-01-02');
+  await page.goto('/impuestos');
+  const tabs = page.getByRole('group', { name: /residencia fiscal/i });
+  await expect(tabs.getByRole('button', { name: /Brasil/ })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
+  await expect(tabs.getByRole('button', { name: /Colombia/ })).toHaveAttribute('aria-pressed', 'false');
+  // Portuguese names the tab «Colômbia».
+  await page.goto('/ajustes');
+  await page.getByLabel(/Idioma/).selectOption('pt');
+  await page.goto('/impuestos');
+  await expect(page.getByRole('heading', { name: 'Impostos' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: /Colômbia/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Brasil/ })).toHaveAttribute('aria-pressed', 'true');
+});

@@ -56,6 +56,8 @@ export const ptR5: typeof esR5 = {
     qualityImplicit: 'Aporte implícito: houve compras sem aporte registrado; os aportes e a rentabilidade do mês podem estar distorcidos.',
   },
   tax: {
+    countryCO: 'Colômbia',
+    countryBR: 'Brasil',
     gotIt: 'Entendi, não mostrar de novo',
     co: {
       maturedTitle: 'O CDT {{symbol}} venceu em {{date}} e o resgate não está registrado.',

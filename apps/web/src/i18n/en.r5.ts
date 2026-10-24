@@ -56,6 +56,8 @@ export const enR5: typeof esR5 = {
     qualityImplicit: 'Implicit deposit: there were purchases with no recorded deposit; the month’s contributions and return may be distorted.',
   },
   tax: {
+    countryCO: 'Colombia',
+    countryBR: 'Brazil',
     gotIt: 'Got it, don’t show again',
     co: {
       maturedTitle: 'CDT {{symbol}} matured on {{date}} and its redemption is not recorded.',
