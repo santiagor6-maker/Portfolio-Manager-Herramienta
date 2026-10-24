@@ -9,6 +9,7 @@ import { hydrateMarketState, refreshMarketData } from './services/marketData';
 import { ensureDefaultAlerts, evaluateAlerts } from './services/alerts';
 import { checkIbkrInboxes } from './services/ibkrSync';
 import { checkEmailDrafts } from './services/emailInbox';
+import { warmEngine } from './services/engineClient';
 
 /** PWA: cache the app shell for offline use (production builds only). */
 function registerServiceWorker() {
@@ -32,6 +33,7 @@ async function start() {
     return;
   }
   try {
+    warmEngine();
     const settings = await bootstrap();
     await setLanguage(settings.language);
     document.documentElement.lang = settings.language;

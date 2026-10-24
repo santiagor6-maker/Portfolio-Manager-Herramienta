@@ -113,7 +113,8 @@ test('W20: the Resumen paints its figures before the charting library loads', as
   // ECharts (~570 kB) is requested only after the figures are painted (it used to be ~1.25 MB of JS
   // before the KPIs).
   expect(r.chartsAt).toBeGreaterThan(r.kpiAt);
-  expect(r.before).toBeLessThan(900 * 1024);
+  // R7: the demo seed imports only the core demo module and the worker boots with the database (~750 kB).
+  expect(r.before).toBeLessThan(800 * 1024);
 });
 
 test('W10: read-only share link (data in the URL fragment), optionally encrypted', async ({ page, browser }) => {

@@ -46,6 +46,11 @@ function getWorker(): Worker | null {
   return worker;
 }
 
+/** W20: start downloading and booting the engine worker while the database opens (not after it). */
+export function warmEngine(): void {
+  getWorker();
+}
+
 export function isWorkerActive(): boolean {
   return !!worker;
 }

@@ -4,7 +4,10 @@
  * fund (a Colombian FIC) so the month-end close flow has something to show: its manual
  * prices stop one month before the last demo month.
  */
-import { createDemoData, type DemoData, type Instrument, type Transaction } from '@pm/core';
+import type { DemoData, Instrument, Transaction } from '@pm/core';
+// W20: the demo generator only (plus its market/date helpers), not the whole engine: the first visit
+// seeds the example before the KPIs, and the engine itself already runs in the worker.
+import { createDemoData } from '../../../../packages/core/src/demo';
 import type { SeedData } from '../db/repo';
 import { addMonths, monthEnd } from '../lib/ids';
 
