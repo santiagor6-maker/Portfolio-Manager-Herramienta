@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, CalendarClock, Plus, Upload, Wallet } from '
 import type { AllocationDimension } from '@pm/core';
 import { Banner, Card, Delta, EmptyState, Kpi, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { AllocationDonut, ReturnBars, ValueChart } from '../components/charts';
-import { monthWithoutPrices, seriesForPeriod, unpricedMonths, useAnalysis, useInstrumentLabel, type ChartPeriod } from '../hooks/useAnalysis';
+import { monthWithoutPrices, seriesForPeriod, unpricedMonths, useAnalysis, useInstrumentLabel, usePendingEvents, type ChartPeriod } from '../hooks/useAnalysis';
 import { useSliceLabel } from '../lib/labels';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMonth } from '../lib/format';
@@ -18,7 +18,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { renamedPair } from '../lib/diagnosticText';
 import { recordSplit, renameInstrumentRows } from '../components/DiagnosticsPanel';
 import { acceptSuggestions } from '../services/suggestions';
-import { pendingEvents, type PendingSplit } from '../lib/pendingEvents';
+import type { PendingSplit } from '../lib/pendingEvents';
 import { formatSplitRatio } from '../lib/corporateText';
 import { db } from '../db/schema';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
@@ -286,14 +286,13 @@ export default function DashboardPage() {
 function PendingSplitsBanner() {
   const { t } = useTranslation();
   const f = useFmt();
-  const { analysis: a } = useAnalysis();
   const label = useInstrumentLabel();
   const [busy, setBusy] = useState(false);
   // Splits already recorded from this banner stay hidden until the worker's next analysis drops them,
   // so a second click cannot record the same split twice.
   const [applied, setApplied] = useState<ReadonlySet<string>>(new Set());
   const key = (p: PendingSplit) => `${p.instrumentId}|${p.date}`;
-  const splits = pendingEvents(a).splits.filter((p) => !applied.has(key(p)));
+  const splits = usePendingEvents().splits.filter((p) => !applied.has(key(p)));
   if (!splits.length) return null;
   const apply = async (list: PendingSplit[]) => {
     setBusy(true);
@@ -311,7 +310,6 @@ function PendingSplitsBanner() {
       setBusy(false);
     }
   };
-  const ratio = (r: number) => formatSplitRatio(r, f.locale);
   return (
     <div className="mb-3" data-testid="pending-splits">
       <Banner
@@ -331,7 +329,7 @@ function PendingSplitsBanner() {
         <span className="text-ink-2">
           {splits
             .slice(0, 3)
-            .map((p) => t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: ratio(p.ratio), date: formatDate(p.date, f.locale) }))
+            .map((p) => t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) }))
             .join(' · ')}
           {splits.length > 3 ? ` · ${t('pending.more', { count: splits.length - 3 })}` : ''} {t('pending.splitsBody')}
         </span>
@@ -352,7 +350,7 @@ function DividendsCard() {
   const label = useInstrumentLabel();
   // Announced by the provider first, then projected from last year's payments.
   const upcoming = (a?.upcomingDividends ?? []).filter((d) => d.payDate <= addDays(a!.asOf, 90)).slice(0, 4).map((d) => ({ ...d, date: d.payDate }));
-  const pendingIncome = pendingEvents(a).income.length;
+  const pendingIncome = usePendingEvents().income.length;
   const last = useMemo(() => [...(a?.income ?? [])].filter((e) => e.date <= (a?.asOf ?? '')).sort((x, y) => (x.date < y.date ? 1 : -1)).slice(0, 4), [a]);
 
   return (
@@ -447,7 +445,7 @@ function WarningsCard() {
   // down…); the analysis already leaves out the frozen sample.
   const staleMarket = a?.staleMarket ?? [];
   // W55: inbox items and valuation-changing warnings are never "Todo en orden".
-  const pendingEv = pendingEvents(a);
+  const pendingEv = usePendingEvents();
   const otherPending = pendingEv.total - pendingEv.splits.filter((p) => p.suggestion).length;
   const valuationOnly = pendingEv.valuationWarnings.filter((d) => d.code === 'TRADE_PRICE_UNIT_SUSPECT');
   const staleSince = staleMarket.reduce<string | undefined>((m, h) => (h.priceDate && (!m || h.priceDate < m) ? h.priceDate : m), undefined);

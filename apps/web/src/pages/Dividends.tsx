@@ -5,8 +5,7 @@ import type { IncomeEvent } from '@pm/core';
 import { Card, CountryTag, EmptyState, Kpi, Money, PageHeader, Pct, Skeleton } from '../components/ui';
 import { GroupedBars } from '../components/charts';
 import { SuggestionsInbox } from '../components/SuggestionsInbox';
-import { pendingEvents } from '../lib/pendingEvents';
-import { useAnalysis, useInstrumentLabel } from '../hooks/useAnalysis';
+import { useAnalysis, useInstrumentLabel, usePendingEvents } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatMonth, formatPct, monthName } from '../lib/format';
 import { addDays, addMonths } from '../lib/ids';
@@ -22,7 +21,7 @@ export default function DividendsPage() {
   const { t } = useTranslation();
   const f = useFmt();
   const { analysis: a, loading } = useAnalysis();
-  const pendingIncome = pendingEvents(a).income.length;
+  const pendingIncome = usePendingEvents().income.length;
   const label = useInstrumentLabel();
   const events = useMemo(() => [...(a?.income ?? [])].sort((x, y) => (x.date < y.date ? 1 : -1)), [a]);
   const years = useMemo(() => [...new Set(events.map((e) => e.date.slice(0, 4)))].sort().reverse(), [events]);

@@ -72,19 +72,18 @@ export function DataTable<T>({
   const allSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(rowKey(r)));
   // W56: zero-only or duplicate columns (by their numeric sort value) give way first; only columns
   // listed in dropOrder can ever be hidden.
-  const redundant = useMemo(
-    () =>
-      redundantColumns(
-        columns.map((c) => c.id),
-        rows,
-        (id, r) => {
-          const v = columns.find((c) => c.id === id)?.sortValue?.(r as T);
-          return typeof v === 'number' ? v : undefined;
-        },
-        dropOrder,
-      ),
-    [columns, rows, dropOrder.join('|')], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  const redundant = useMemo(() => {
+    const byId = new Map(columns.map((c) => [c.id, c]));
+    return redundantColumns(
+      columns.map((c) => c.id),
+      rows,
+      (id, r) => {
+        const v = byId.get(id)?.sortValue?.(r as T);
+        return typeof v === 'number' ? v : undefined;
+      },
+      dropOrder,
+    );
+  }, [columns, rows, dropOrder.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
   const fit = useFitColumns(dropOrder, rows.length, redundant);
   const allColumns = columns;
   columns = columns.filter((c) => !fit.hidden.has(c.id));

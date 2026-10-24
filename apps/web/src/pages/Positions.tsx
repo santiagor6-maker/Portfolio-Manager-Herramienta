@@ -6,13 +6,12 @@ import { Download, Layers, Search } from 'lucide-react';
 import type { AllocationDimension, Holding, Instrument, PositionPerformance } from '@pm/core';
 import { Card, CountryTag, Delta, EmptyState, Money, PageHeader, Pct, Segmented, Skeleton } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
-import { useAnalysis } from '../hooks/useAnalysis';
+import { useAnalysis, usePendingEvents } from '../hooks/useAnalysis';
 import { useInstrumentMap } from '../hooks/useData';
 import { useApp, useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPct, formatPrice, formatQuantity } from '../lib/format';
 import { countryName, useSliceLabel } from '../lib/labels';
 import { exchangeLabel } from '../lib/exchanges';
-import { pendingEvents } from '../lib/pendingEvents';
 import { downloadText, toCsv } from '../lib/export';
 import { parseDecimal, toInputNumber } from '../lib/parse';
 import { rebalance } from '../lib/rebalance';
@@ -31,7 +30,8 @@ export default function PositionsPage() {
   const navigate = useNavigate();
   const { analysis: a, loading } = useAnalysis();
   // W55: positions whose quantity is wrong until a pending split is recorded.
-  const pendingSplitIds = new Set(pendingEvents(a).splits.map((p) => p.instrumentId));
+  const { splits: pendingSplits } = usePendingEvents();
+  const pendingSplitIds = useMemo(() => new Set(pendingSplits.map((p) => p.instrumentId)), [pendingSplits]);
   const map = useInstrumentMap();
   const f = useFmt();
   const [view, setView] = useState<View>('value');

@@ -5,6 +5,7 @@ import type { Analysis, SeriesPoint } from '../services/analysis';
 import { useInstrumentMap } from './useData';
 import { addDays } from '../lib/ids';
 import { useConversion } from './useConversion';
+import { pendingEvents, type PendingEvents } from '../lib/pendingEvents';
 
 export function useAnalysis(): { analysis?: Analysis; loading: boolean; stale: boolean } {
   const analysis = useApp((s) => s.analysis);
@@ -17,6 +18,12 @@ export function useAnalysis(): { analysis?: Analysis; loading: boolean; stale: b
   // page shows skeletons, never the previous currency's figures or the engine's zeros.
   const converting = useConversion().pending;
   return { analysis, loading: !ready || !analysis || converting, stale: stale || (computing && !analysis) };
+}
+
+/** W55: pending splits / income / inbox of the current analysis, computed once per analysis. */
+export function usePendingEvents(): PendingEvents {
+  const analysis = useApp((s) => s.analysis);
+  return useMemo(() => pendingEvents(analysis), [analysis]);
 }
 
 export type ChartPeriod = 'MTD' | 'YTD' | '1Y' | '3Y' | 'ALL';
