@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { once } from '../lib/writeGuard';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -48,7 +49,8 @@ export default function AlertsPage() {
       if (kind === 'dayMove') th = th / 100;
       if (!map.has(inst.id)) await upsertInstruments([inst]);
     }
-    await addAlert({ kind, instrumentId: needsInstrument ? inst!.id : undefined, threshold: th });
+    // W61: a double submit creates one rule.
+    await once(`alert|${kind}|${needsInstrument ? inst!.id : ''}|${th ?? ''}`, () => addAlert({ kind, instrumentId: needsInstrument ? inst!.id : undefined, threshold: th }));
     setThreshold('');
     void evaluateAlerts();
   };
