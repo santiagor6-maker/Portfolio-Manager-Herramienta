@@ -472,3 +472,18 @@ Revisión: `reviews/web-r3.md`.
   - La nota de columnas ocultas usa el nombre corto de la columna.
 - **Pruebas:** `src/__tests__/r8.test.ts` (unitarias) y `e2e/regression-r8.spec.ts` (doble clic, AMER3, NVDA en dos portafolios, importar a un portafolio nuevo, KPIs en el teléfono, Impuestos).
   Totales: 146 pruebas unitarias de la web, 1.301 en el resto de paquetes (19 omitidas) y 66 e2e (1 omitida, la prueba en vivo).
+
+## Respuesta a la revisión ronda 8 (`reviews/web-r8.md`)
+
+- **W68 (alta):** «Todos» ya es la suma de los portafolios.
+  - **Causa:** la vista consolidada pasa al motor los movimientos de todos los portafolios en un solo libro, y el motor aplicaba un split o una bonificação al libro entero del activo, una vez por cada portafolio que lo registraba. NVDA 10:1 en dos portafolios quedaba ×100.
+  - **Corrección en `packages/core`:** una opción nueva y compatible, `isolatePortfolios`. Con ella, el motor guarda un libro de lotes por portafolio (`PortfolioBooks`) y la caja de cada portafolio, con sus cuentas y su caja sin asignar.
+  - **Qué cambia:** un split, una bonificação, una venta FIFO o una reestructuración solo tocan los lotes de su portafolio. La caja de un portafolio ya no paga las compras de otro, y la conversión implícita usa la moneda de financiación de cada portafolio.
+  - **Vencimientos:** la redención automática al vencimiento se hace por portafolio.
+  - La valoración y las posiciones leen la suma.
+  - **En la web:** `buildEngineInput` activa la opción en «Todos», y los *hashes* de importación van por portafolio, así que ya no aparece «Posible duplicado… ya se importó» entre portafolios.
+  - **Impuestos:** el paquete de impuestos está congelado; para sus informes consolidados, `lib/consolidate.ts` une las copias de un mismo evento antes de pasarlas.
+  - **Pruebas:** unitarias en el motor y en la web, y e2e con NVDA registrado desde «Todos» y desde cada portafolio, la bonificação de ITUB4 y el grupamento de AMER3 en dos portafolios. Comprueban que el valor de «Todos» es la suma de los dos.
+- **W69:** dos eventos del mismo activo a menos de 7 días solo se consideran el mismo con la misma razón (1/3 y 0,3333 cuentan como la misma). Si se omite uno porque ya estaba registrado, se avisa.
+- **W70:** si la razón es menor que 1, el texto usa la variante de contrasplit: «grupamento» en pt, «contrasplit» en es y «reverse split» en en. Se aplica al aviso del Resumen, a Avisos, a la *chip* de Posiciones y al Diagnóstico. Avisos presenta un split deducido de los precios como «posible».
+- **Totales:** 155 pruebas unitarias en la web, 1.317 en el resto de paquetes (19 omitidas) y 69 e2e (1 omitida, la prueba en vivo).

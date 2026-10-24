@@ -891,10 +891,15 @@ export class Ledger {
     return inst;
   }
 
+  /** isolatePortfolios: each portfolio's lots and cash are kept apart (consolidated inputs). */
+  private get isolated(): boolean {
+    return this.ctx.fundingByPortfolio !== undefined;
+  }
+
   /** The book a transaction mutates: the instrument's, or its portfolio's part with isolatePortfolios. */
   book(id: string): LotBook {
     let b = this.books.get(id);
-    if (this.ctx.fundingByPortfolio) {
+    if (this.isolated) {
       if (!b) this.books.set(id, (b = new PortfolioBooks(this.ctx.options.costMethod)));
       return (b as PortfolioBooks).part(this.curPid);
     }
@@ -906,7 +911,7 @@ export class Ledger {
   private peek(id: string): LotBook | undefined {
     const b = this.books.get(id);
     if (!b) return undefined;
-    return this.ctx.fundingByPortfolio ? (b as PortfolioBooks).parts.get(this.curPid) : (b as LotBook);
+    return this.isolated ? (b as PortfolioBooks).parts.get(this.curPid) : (b as LotBook);
   }
 
   /** Market FX (base per unit) used for cash valuation; same function everywhere. */
@@ -980,7 +985,7 @@ export class Ledger {
   /** Cash key of a transaction: its account, scoped by portfolio with isolatePortfolios. */
   private cashAcct(tx: Transaction): string {
     const acct = tx.account ?? NO_ACCOUNT;
-    return this.ctx.fundingByPortfolio ? `${tx.portfolioId}${PF_SEP}${acct}` : acct;
+    return this.isolated ? `${tx.portfolioId}${PF_SEP}${acct}` : acct;
   }
 
   /** The unassigned-cash key that `acct` may draw on (the portfolio's, with isolatePortfolios). */
@@ -991,7 +996,7 @@ export class Ledger {
 
   /** Total cash in `ccy` that an unassigned row can use (the portfolio's, with isolatePortfolios). */
   private cashOfScope(ccy: CurrencyCode, acct: string): number {
-    if (!this.ctx.fundingByPortfolio) return this.cash.get(ccy) ?? 0;
+    if (!this.isolated) return this.cash.get(ccy) ?? 0;
     const prefix = this.unassignedOf(acct);
     let s = 0;
     for (const [k, v] of this.cashByAccount.get(ccy) ?? []) if (k.startsWith(prefix)) s += v;
