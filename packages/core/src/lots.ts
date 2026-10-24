@@ -57,7 +57,7 @@ export interface BookView {
 }
 
 /**
- * Web review R8 (W68), isolatePortfolioCash: one LotBook per portfolio for an instrument, so a
+ * Web review R8 (W68), isolatePortfolios: one LotBook per portfolio for an instrument, so a
  * portfolio's split, bonificação, sale or restructuring touches only its own lots; valuation reads
  * the sum (same lots, quantity and cost as the portfolios computed one by one).
  */

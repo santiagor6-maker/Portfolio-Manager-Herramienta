@@ -1,5 +1,5 @@
 /**
- * W68: the engine keeps each portfolio's lots apart in "Todos" (isolatePortfolioCash), but the tax
+ * W68: the engine keeps each portfolio's lots apart in "Todos" (isolatePortfolios), but the tax
  * package (frozen) runs one book per instrument over every portfolio's rows: a corporate event
  * recorded once per portfolio (the correct way) would be applied once per portfolio there — NVDA
  * 10:1 in two portfolios became ×100. This is used for the consolidated tax reports only.

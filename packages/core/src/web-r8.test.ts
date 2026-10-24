@@ -1,5 +1,5 @@
 /**
- * Web review R8 (W68): a consolidated input (rows of several portfolios) with isolatePortfolioCash
+ * Web review R8 (W68): a consolidated input (rows of several portfolios) with isolatePortfolios
  * gives the sum of the portfolios computed one by one — one portfolio's cash never funds another's
  * purchase, and each portfolio's implicit FX conversions use its own funding currency.
  */
@@ -19,9 +19,9 @@ const pf = (id: string, base = 'USD') => ({ id, name: id, baseCurrency: base, co
 const A = [tx({ portfolioId: 'A', date: '2023-01-02', type: 'DEPOSIT', amount: 10_000 }), tx({ portfolioId: 'A', date: '2023-01-05', type: 'BUY', instrumentId: 'S', quantity: 50, price: 100, amount: 5000, account: 'XP' })];
 const B = [tx({ portfolioId: 'B', date: '2023-01-05', type: 'BUY', instrumentId: 'S', quantity: 80, price: 100, amount: 8000, account: 'Clear' })];
 const one = (id: string, txs: Transaction[]): EngineInput => ({ portfolio: pf(id), instruments: [S], market, transactions: txs, options: { asOf: '2024-01-05' } });
-const all = (isolate: boolean): EngineInput => ({ portfolio: pf('all'), instruments: [S], market, transactions: [...A, ...B], options: { asOf: '2024-01-05', isolatePortfolioCash: isolate } });
+const all = (isolate: boolean): EngineInput => ({ portfolio: pf('all'), instruments: [S], market, transactions: [...A, ...B], options: { asOf: '2024-01-05', isolatePortfolios: isolate } });
 
-describe('W68 — isolatePortfolioCash', () => {
+describe('W68 — isolatePortfolios', () => {
   it('consolidated value = sum of the portfolios (B does not spend A\'s cash)', () => {
     const sum = valuePortfolio(one('A', A), '2024-01-05').totalMarketValueBase + valuePortfolio(one('B', B), '2024-01-05').totalMarketValueBase;
     expect(valuePortfolio(all(true), '2024-01-05').totalMarketValueBase).toBeCloseTo(sum, 6);
@@ -46,7 +46,7 @@ describe('W68 — isolatePortfolioCash', () => {
 
 describe('W68 — corporate events apply to their own portfolio\'s lots', () => {
   const split = (pid: string, ratio = 10) => tx({ portfolioId: pid, date: '2023-06-01', type: 'SPLIT', instrumentId: 'S', ratio });
-  const input = (txs: Transaction[]): EngineInput => ({ portfolio: pf('all'), instruments: [S], market, transactions: txs, options: { asOf: '2024-01-05', isolatePortfolioCash: true } });
+  const input = (txs: Transaction[]): EngineInput => ({ portfolio: pf('all'), instruments: [S], market, transactions: txs, options: { asOf: '2024-01-05', isolatePortfolios: true } });
   const qty = (inp: EngineInput) => valuePortfolio(inp, '2024-01-05').holdings.find((h) => h.instrumentId === 'S')?.quantity;
 
   it('a split recorded in each portfolio is applied once to each portfolio\'s lots', () => {

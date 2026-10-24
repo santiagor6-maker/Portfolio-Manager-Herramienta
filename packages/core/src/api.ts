@@ -93,12 +93,13 @@ export interface EngineOptions {
   tickerRenames?: boolean;
   /**
    * Consolidated views (rows of several portfolios in one input, by `portfolioId`): keep each
-   * portfolio's cash apart — its accounts and its unassigned cash — and fund implicit FX conversions
-   * from each portfolio's own funding currency, so the result equals the sum of the portfolios
-   * computed one by one (one portfolio's cash never funds another's purchase). Default false.
+   * portfolio's lots and cash apart — a portfolio's split, bonificação, sale or restructuring touches
+   * only its own lots, its cash never funds another's purchase, and implicit FX conversions use its
+   * own funding currency — so the result equals the sum of the portfolios computed one by one.
+   * Default false.
    */
-  isolatePortfolioCash?: boolean;
-  /** With isolatePortfolioCash: each portfolio's base currency (its funding fallback without deposits). */
+  isolatePortfolios?: boolean;
+  /** With isolatePortfolios: each portfolio's base currency (its funding fallback without deposits). */
   portfolioBaseCurrencies?: Record<string, CurrencyCode>;
 }
 

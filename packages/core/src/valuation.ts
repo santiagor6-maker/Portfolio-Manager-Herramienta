@@ -238,7 +238,7 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     const byAcct = ledger.cashByAccount.get(ccy);
     if (byAcct) {
       const aa: Record<string, number> = {};
-      // isolatePortfolioCash keys carry the portfolio: the same account label adds up across portfolios.
+      // isolatePortfolios keys carry the portfolio: the same account label adds up across portfolios.
       for (const [k, v] of byAcct) if (v !== 0) aa[cashAccountLabel(k)] = (aa[cashAccountLabel(k)] ?? 0) + v;
       if (Object.keys(aa).length) cb.accountAmounts = aa;
     }

@@ -214,7 +214,7 @@ export interface EngineContext {
    * of the first recorded DEPOSIT, else the portfolio base. Independent of the reporting view.
    */
   fundingCurrency: CurrencyCode;
-  /** isolatePortfolioCash: funding currency per portfolioId. */
+  /** isolatePortfolios: funding currency per portfolioId. */
   fundingByPortfolio?: Map<string, CurrencyCode>;
 }
 
@@ -690,7 +690,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     portfolioBase: input.portfolio.baseCurrency,
     taxResidence: residenceOf(input.portfolio.taxResidence, input.portfolio.baseCurrency),
     fundingCurrency: raw.fundingCurrency ?? sorted.find((x) => x.tx.type === 'DEPOSIT')?.tx.currency ?? input.portfolio.baseCurrency,
-    ...(raw.isolatePortfolioCash ? { fundingByPortfolio: fundingByPortfolio(sorted.map((x) => x.tx), raw, input.portfolio.baseCurrency) } : {}),
+    ...(raw.isolatePortfolios ? { fundingByPortfolio: fundingByPortfolio(sorted.map((x) => x.tx), raw, input.portfolio.baseCurrency) } : {}),
     market,
     instruments,
     options,
@@ -749,7 +749,7 @@ interface CouponPlan {
   conv: number;
 }
 const NO_ACCOUNT = '';
-/** isolatePortfolioCash: cash keys are `${portfolioId}${PF_SEP}${account}`; `${portfolioId}${PF_SEP}` is its unassigned cash. */
+/** isolatePortfolios: cash keys are `${portfolioId}${PF_SEP}${account}`; `${portfolioId}${PF_SEP}` is its unassigned cash. */
 const PF_SEP = '\u0000';
 
 function fundingByPortfolio(txs: Transaction[], raw: EngineOptions, fallback: CurrencyCode): Map<string, CurrencyCode> {
@@ -760,7 +760,7 @@ function fundingByPortfolio(txs: Transaction[], raw: EngineOptions, fallback: Cu
   return out;
 }
 
-/** Account part of a cash key (drops the portfolio scope of isolatePortfolioCash). */
+/** Account part of a cash key (drops the portfolio scope of isolatePortfolios). */
 export function cashAccountLabel(key: string): string {
   const i = key.indexOf(PF_SEP);
   return i < 0 ? key : key.slice(i + 1);
@@ -777,9 +777,9 @@ type Buckets = Omit<Attribution, 'day' | 'instrumentId' | 'rateDiff' | 'cashBase
 const emptyBuckets = (): Buckets => ({ realized: 0, realizedFx: 0, income: 0, otherCosts: 0, fxConversion: 0, spread: 0, transfer: 0, corporate: 0 });
 
 export class Ledger {
-  /** Position books by instrument (PortfolioBooks with isolatePortfolioCash: read the sum). */
+  /** Position books by instrument (PortfolioBooks with isolatePortfolios: read the sum). */
   readonly books = new Map<string, BookView>();
-  /** portfolioId of the transaction being applied (isolatePortfolioCash). */
+  /** portfolioId of the transaction being applied (isolatePortfolios). */
   private curPid = '';
   readonly instrumentOf = new Map<string, Instrument>();
   readonly accountQty = new Map<string, Map<string, number>>();
@@ -891,7 +891,7 @@ export class Ledger {
     return inst;
   }
 
-  /** The book a transaction mutates: the instrument's, or its portfolio's part with isolatePortfolioCash. */
+  /** The book a transaction mutates: the instrument's, or its portfolio's part with isolatePortfolios. */
   book(id: string): LotBook {
     let b = this.books.get(id);
     if (this.ctx.fundingByPortfolio) {
@@ -977,19 +977,19 @@ export class Ledger {
     if (amount !== 0) this.moveCash(ccy, this.cashAcct(tx), amount);
   }
 
-  /** Cash key of a transaction: its account, scoped by portfolio with isolatePortfolioCash. */
+  /** Cash key of a transaction: its account, scoped by portfolio with isolatePortfolios. */
   private cashAcct(tx: Transaction): string {
     const acct = tx.account ?? NO_ACCOUNT;
     return this.ctx.fundingByPortfolio ? `${tx.portfolioId}${PF_SEP}${acct}` : acct;
   }
 
-  /** The unassigned-cash key that `acct` may draw on (the portfolio's, with isolatePortfolioCash). */
+  /** The unassigned-cash key that `acct` may draw on (the portfolio's, with isolatePortfolios). */
   private unassignedOf(acct: string): string {
     const i = acct.indexOf(PF_SEP);
     return i < 0 ? NO_ACCOUNT : acct.slice(0, i + 1);
   }
 
-  /** Total cash in `ccy` that an unassigned row can use (the portfolio's, with isolatePortfolioCash). */
+  /** Total cash in `ccy` that an unassigned row can use (the portfolio's, with isolatePortfolios). */
   private cashOfScope(ccy: CurrencyCode, acct: string): number {
     if (!this.ctx.fundingByPortfolio) return this.cash.get(ccy) ?? 0;
     const prefix = this.unassignedOf(acct);
@@ -1841,7 +1841,7 @@ export class Ledger {
   private redeemAtMaturity(id: string, day: number): void {
     const all = this.books.get(id);
     if (!all) return;
-    // isolatePortfolioCash: each portfolio's lots are redeemed into that portfolio's cash.
+    // isolatePortfolios: each portfolio's lots are redeemed into that portfolio's cash.
     if (all instanceof PortfolioBooks) {
       for (const [pid, part] of all.parts) if (part.quantity > 0) this.redeemPart(id, day, part, pid);
     } else this.redeemPart(id, day, all as LotBook, '');
