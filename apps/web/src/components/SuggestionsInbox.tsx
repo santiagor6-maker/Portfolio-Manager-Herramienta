@@ -8,7 +8,7 @@ import { formatDate, formatMoney, formatQuantity } from '../lib/format';
 import type { Suggestion } from '../services/analysis';
 import { acceptSuggestions, dismiss } from '../services/suggestions';
 import { TxTypeBadge } from '../pages/Transactions';
-import { corporateNote, formatRatio, formatTxRatio } from '../lib/corporateText';
+import { corporateNote, formatTxRatio } from '../lib/corporateText';
 import { INCOME_TYPES } from '../lib/pendingEvents';
 
 /**
@@ -95,8 +95,8 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
                   <span className="chip">{t('ca.review')}</span>
                 </td>
                 <td colSpan={3} className="!whitespace-normal">
-                  <span className="font-semibold">{label(a.instrumentId).symbol}</span> · {a.type}
-                  {a.subtype ? ` (${a.subtype})` : ''} {a.ratio ? formatRatio(a.ratio, f.locale) : ''} — <span className="text-xs">{t('ca.reviewHint')}</span>
+                  {/* W62: the event in words ("Escisión: confirma…"), not the internal codes "SPLIT (SPINOFF)". */}
+                  <span className="font-semibold">{label(a.instrumentId).symbol}</span> · {corporateNote(a, t, f.locale) ?? a.type} — <span className="text-xs">{t('ca.reviewHint')}</span>
                 </td>
               </tr>
             ))}

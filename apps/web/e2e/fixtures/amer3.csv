@@ -1,0 +1,2 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2022-12-05,BUY,BVMF:AMER3,AMER3,BVMF,Americanas ON,,,2000,11.50,BRL,,1,,,,,,XP,

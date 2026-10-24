@@ -39,7 +39,8 @@ describe('W55: pending corporate events reach the Resumen', () => {
     const p = pendingEvents(a);
     expect(p.splits).toHaveLength(1);
     expect(p.splits[0]).toMatchObject({ instrumentId: NVDA.id, date: '2024-06-10', ratio: 10 });
-    expect(p.splits[0]!.suggestion).toBeDefined();
+    expect(p.splits[0]!.suggestions).toHaveLength(1);
+    expect(p.splits[0]!.source).toBe('provider');
     expect(p.total).toBeGreaterThan(0);
   });
 
@@ -52,7 +53,8 @@ describe('W55: pending corporate events reach the Resumen', () => {
     );
     const p = pendingEvents(a);
     expect(p.splits.map((x) => [x.instrumentId, x.ratio])).toEqual([[NVDA.id, 10]]);
-    expect(p.splits[0]!.suggestion).toBeUndefined();
+    expect(p.splits[0]!.suggestions).toEqual([]);
+    expect(p.splits[0]!.source).toBe('prices');
   });
 
   it('announced Brazilian proventos are pending income, not "no hay proventos"', () => {
@@ -137,8 +139,9 @@ describe('W55 review: only confirmed valuation warnings count', () => {
     const diag = (over: Record<string, unknown>) => ({ code: 'POSSIBLE_UNRECORDED_SPLIT', severity: 'warning', message: 'x', data, ...over }) as never;
     expect(pendingEvents({ ...base, diagnostics: [diag({ severity: 'info' })] }).splits).toEqual([]);
     expect(pendingEvents({ ...base, diagnostics: [diag({})] }).splits).toHaveLength(1);
-    const unit = (message: string) => diag({ code: 'TRADE_PRICE_UNIT_SUSPECT', message, data: undefined });
-    expect(pendingEvents({ ...base, diagnostics: [unit('Trade price 14265 vs 142.65 — accepted because 3 consistent prices on distinct days confirm the new level')] }).valuationWarnings).toEqual([]);
-    expect(pendingEvents({ ...base, diagnostics: [unit('Trade price 14265 vs 142.65')] }).valuationWarnings).toHaveLength(1);
+    // W67: structured core data, not the English message.
+    const unit = (accepted: number) => diag({ code: 'TRADE_PRICE_UNIT_SUSPECT', message: 'any wording', data: { unitFactor: 100, accepted } });
+    expect(pendingEvents({ ...base, diagnostics: [unit(1)] }).valuationWarnings).toEqual([]);
+    expect(pendingEvents({ ...base, diagnostics: [unit(0)] }).valuationWarnings).toHaveLength(1);
   });
 });

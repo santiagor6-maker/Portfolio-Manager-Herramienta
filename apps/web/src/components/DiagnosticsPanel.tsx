@@ -141,6 +141,7 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const { analysis } = useAnalysis();
   // W61: one guarded action at a time; every button below is disabled while it runs.
   const { busy, run } = useGuardedAction();
+  const [userOpen, setUserOpen] = useState<boolean>();
   const list = analysis?.diagnostics ?? [];
   const implicit = analysis?.implicitFunding ?? [];
   const instruments = useInstrumentMap();
@@ -154,7 +155,14 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const warnings = list.filter((d) => d.severity === 'warning').length + implicit.length;
   const sorted = [...list].sort((a, b) => rank(a) - rank(b) || (a.date < b.date ? 1 : -1));
   return (
-    <details className="card mb-3 group" open={errors > 0 || implicit.length > 0} data-testid="diagnostics">
+    <details
+      className="card mb-3 group"
+      // Opens by itself when something needs action; once the user opens or closes it, it stays so
+      // (it no longer folds under the cursor after a fix).
+      open={userOpen ?? (errors > 0 || implicit.length > 0)}
+      onToggle={(e) => setUserOpen((e.currentTarget as HTMLDetailsElement).open)}
+      data-testid="diagnostics"
+    >
       <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer list-none">
         <Stethoscope size={15} className="text-accent" aria-hidden />
         <span className="font-semibold text-[13.5px] flex-1">{t('diag.title')}</span>
@@ -211,15 +219,15 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
             </span>
             {(d.code === 'TRADE_PRICE_UNIT_SUSPECT' || d.code === 'TRADE_PRICE_CONFIRMED_BY_RUN') && d.transactionId && txs?.get(d.transactionId) && !txs.get(d.transactionId)!.priceConfirmed && (
               <>
-                {d.code === 'TRADE_PRICE_UNIT_SUSPECT' && unitFactor(d.message) && (
+                {d.code === 'TRADE_PRICE_UNIT_SUSPECT' && factorOf(d) && (
                   <button
                     className="btn btn-sm btn-primary"
                     data-testid="fix-unit"
                     title={t('diag.fixUnitHint')}
                     disabled={busy}
-                    onClick={() => void run(`unit|${d.transactionId}`, () => fixUnit(txs.get(d.transactionId!)!, unitFactor(d.message)!))}
+                    onClick={() => void run(`unit|${d.transactionId}`, () => fixUnit(txs.get(d.transactionId!)!, factorOf(d)!))}
                   >
-                    {t('diag.fixUnit', { price: formatPrice((txs.get(d.transactionId)!.price ?? 0) / unitFactor(d.message)!, txs.get(d.transactionId)!.currency, f.locale) })}
+                    {t('diag.fixUnit', { price: formatPrice((txs.get(d.transactionId)!.price ?? 0) / factorOf(d)!, txs.get(d.transactionId)!.currency, f.locale) })}
                   </button>
                 )}
                 <button className="btn btn-sm" data-testid="confirm-price-diag" disabled={busy} onClick={() => void run(`confirm|${d.transactionId}`, () => db.transactions.update(d.transactionId!, { priceConfirmed: true }))}>
@@ -264,6 +272,12 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
       </ul>
     </details>
   );
+}
+
+/** W67: the suspected unit factor from core's structured data (older analyses: from the message). */
+function factorOf(d: Diagnostic): number | undefined {
+  const v = d.data?.unitFactor;
+  return typeof v === 'number' && v > 0 ? v : unitFactor(d.message);
 }
 
 function rank(d: Diagnostic): number {

@@ -17,9 +17,10 @@ import { refreshMarketData } from '../services/marketData';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { renamedPair } from '../lib/diagnosticText';
 import { recordSplit, renameInstrumentRows } from '../components/DiagnosticsPanel';
-import { acceptSuggestions } from '../services/suggestions';
-import type { PendingSplit } from '../lib/pendingEvents';
-import { formatSplitRatio } from '../lib/corporateText';
+import { acceptSuggestions, dismiss } from '../services/suggestions';
+import { duplicateSplits, reviewKey, type PendingSplit } from '../lib/pendingEvents';
+import { corporateNote, formatSplitRatio } from '../lib/corporateText';
+import { once, useGuardedAction } from '../lib/writeGuard';
 import { db } from '../db/schema';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
 import { describeIssue } from '../lib/diagnosticText';
@@ -280,60 +281,123 @@ export default function DashboardPage() {
 }
 
 /**
- * W55: a split of a held position that is not recorded makes the quantity and the value wrong (10.000
- * NVDA valued as if they were 100.000 after a 10:1). Shown above the KPIs with a one-click fix.
+ * W55/W62/W64/W67: corporate events that make the headline value wrong, above the KPIs.
+ * - Provider splits (NVDA 10:1, AMER3 grupamento 1:100): red, recorded in one click in every portfolio
+ *   that held the instrument (one suggestion per portfolio).
+ * - Splits only inferred from a jump in the closes: "Posible split", recorded after an explicit confirm.
+ * - Provider events that could not be classified (spin-off?): listed with Revisar / Ignorar.
+ * Recorded or ignored items hide at once (per portfolio view) until the worker's next analysis.
  */
 function PendingSplitsBanner() {
   const { t } = useTranslation();
   const f = useFmt();
   const label = useInstrumentLabel();
-  const [busy, setBusy] = useState(false);
-  // Splits already recorded from this banner stay hidden until the worker's next analysis drops them,
-  // so a second click cannot record the same split twice.
+  const scope = useApp((s) => s.settings.selectedPortfolioId);
+  const { busy, run } = useGuardedAction();
+  const [confirming, setConfirming] = useState(false);
   const [applied, setApplied] = useState<ReadonlySet<string>>(new Set());
-  const key = (p: PendingSplit) => `${p.instrumentId}|${p.date}`;
-  const splits = usePendingEvents().splits.filter((p) => !applied.has(key(p)));
-  if (!splits.length) return null;
-  const apply = async (list: PendingSplit[]) => {
-    setBusy(true);
-    try {
-      const provider = list.flatMap((p) => (p.suggestion ? [p.suggestion] : []));
-      if (provider.length) await acceptSuggestions(provider, t, f.locale);
-      for (const p of list) {
-        if (p.suggestion) continue;
-        // Only the portfolio whose history shows the jump (same rule as the diagnostics panel).
-        const tx = p.diagnostic?.transactionId ? await db.transactions.get(p.diagnostic.transactionId) : undefined;
-        await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date }, tx?.portfolioId);
-      }
+  const key = (p: { instrumentId: string; date: string }) => `${scope}|${p.instrumentId}|${p.date}`;
+  const ev = usePendingEvents();
+  const open = ev.splits.filter((p) => !applied.has(key(p)));
+  const provider = open.filter((p) => p.source === 'provider');
+  const inferred = open.filter((p) => p.source === 'prices');
+  const review = ev.review.filter((r) => !applied.has(key(r)));
+  if (!provider.length && !inferred.length && !review.length) return null;
+  const apply = (list: PendingSplit[]) =>
+    run(`banner|${list.map(key).join(',')}`, async () => {
+      const sugs = list.flatMap((p) => p.suggestions);
+      if (sugs.length) await acceptSuggestions(sugs, t, f.locale);
+      // Without a provider suggestion: the viewed portfolio, or every holder when viewing "Todos".
+      for (const p of list) if (!p.suggestions.length) await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date }, scope === 'all' ? undefined : scope);
       setApplied((s) => new Set([...s, ...list.map(key)]));
-    } finally {
-      setBusy(false);
-    }
-  };
+      setConfirming(false);
+    });
+  const ignore = (list: typeof review) =>
+    run(`ignore|${list.map(key).join(',')}`, async () => {
+      await dismiss(list.map(reviewKey));
+      setApplied((s) => new Set([...s, ...list.map(key)]));
+    });
+  const where = (p: PendingSplit) => (p.suggestions.length > 1 ? ` (${t('pending.inPortfolios', { count: p.suggestions.length })})` : '');
+  const line = (p: PendingSplit, k: 'splitLine' | 'inferredLine') => t(`pending.${k}`, { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) }) + where(p);
+  const lines = (list: PendingSplit[], k: 'splitLine' | 'inferredLine') =>
+    list.slice(0, 3).map((p) => line(p, k)).join(' · ') + (list.length > 3 ? ` · ${t('pending.more', { count: list.length - 3 })}` : '');
   return (
-    <div className="mb-3" data-testid="pending-splits">
-      <Banner
-        tone="error"
-        action={
-          <div className="flex gap-2 flex-wrap sm:justify-end">
-            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void apply(splits)} data-testid="apply-splits">
-              {t('pending.applySplits', { count: splits.length })}
-            </button>
-            <Link to="/movimientos" className="btn btn-sm">
-              {t('pending.review')}
-            </Link>
-          </div>
-        }
-      >
-        <strong className="font-semibold">{t('pending.splitsTitle', { count: splits.length })}</strong>{' '}
-        <span className="text-ink-2">
-          {splits
-            .slice(0, 3)
-            .map((p) => t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) }))
-            .join(' · ')}
-          {splits.length > 3 ? ` · ${t('pending.more', { count: splits.length - 3 })}` : ''} {t('pending.splitsBody')}
-        </span>
-      </Banner>
+    <div className="mb-3 flex flex-col gap-2" data-testid="pending-splits">
+      {provider.length > 0 && (
+        <Banner
+          tone="error"
+          action={
+            <div className="flex gap-2 flex-wrap sm:justify-end">
+              <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void apply(provider)} data-testid="apply-splits">
+                {t('pending.applySplits', { count: provider.length })}
+              </button>
+              <Link to="/movimientos" className="btn btn-sm">
+                {t('pending.review')}
+              </Link>
+            </div>
+          }
+        >
+          <strong className="font-semibold">{t('pending.splitsTitle', { count: provider.length })}</strong>{' '}
+          <span className="text-ink-2">
+            {lines(provider, 'splitLine')} {t('pending.splitsBody')}
+          </span>
+        </Banner>
+      )}
+      {inferred.length > 0 && (
+        <Banner
+          tone="warn"
+          action={
+            confirming ? (
+              <div className="flex gap-2 flex-wrap sm:justify-end items-center">
+                <span className="text-[13px]">{t('pending.confirmQuestion', { list: inferred.map((p) => `${label(p.instrumentId).symbol} ${formatSplitRatio(p.ratio, f.locale)}`).join(', ') })}</span>
+                <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void apply(inferred)} data-testid="confirm-inferred">
+                  {t('pending.confirmYes')}
+                </button>
+                <button className="btn btn-sm" onClick={() => setConfirming(false)}>
+                  {t('pending.cancel')}
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-sm" disabled={busy} onClick={() => setConfirming(true)} data-testid="check-inferred">
+                {t('pending.checkAndRecord')}
+              </button>
+            )
+          }
+        >
+          <span data-testid="inferred-splits">
+            <strong className="font-semibold">{t('pending.inferredTitle', { count: inferred.length })}</strong>{' '}
+            <span className="text-ink-2">
+              {lines(inferred, 'inferredLine')} {t('pending.inferredBody')}
+            </span>
+          </span>
+        </Banner>
+      )}
+      {review.length > 0 && (
+        <Banner
+          tone="warn"
+          action={
+            <div className="flex gap-2 flex-wrap sm:justify-end">
+              <Link to="/movimientos" className="btn btn-sm">
+                {t('pending.review')}
+              </Link>
+              <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void ignore(review)} data-testid="ignore-review">
+                {t('pending.ignore')}
+              </button>
+            </div>
+          }
+        >
+          <span data-testid="review-events">
+            <strong className="font-semibold">{t('pending.reviewTitle', { count: review.length })}</strong>{' '}
+            <span className="text-ink-2">
+              {review
+                .slice(0, 3)
+                .map((r) => t('pending.reviewLine', { symbol: label(r.instrumentId).symbol, event: corporateNote(r, t, f.locale) ?? r.type, date: formatDate(r.date, f.locale) }))
+                .join(' · ')}{' '}
+              {t('pending.reviewBody')}
+            </span>
+          </span>
+        </Banner>
+      )}
     </div>
   );
 }
@@ -446,11 +510,15 @@ function WarningsCard() {
   const staleMarket = a?.staleMarket ?? [];
   // W55: inbox items and valuation-changing warnings are never "Todo en orden".
   const pendingEv = usePendingEvents();
-  const otherPending = pendingEv.total - pendingEv.splits.filter((p) => p.suggestion).length;
+  const otherPending = pendingEv.total - pendingEv.splits.reduce((n, p) => n + p.suggestions.length, 0);
   const valuationOnly = pendingEv.valuationWarnings.filter((d) => d.code === 'TRADE_PRICE_UNIT_SUSPECT');
   const staleSince = staleMarket.reduce<string | undefined>((m, h) => (h.priceDate && (!m || h.priceDate < m) ? h.priceDate : m), undefined);
   const demoPriced = a?.demoPriced ?? [];
-  const total = missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0) + pendingEv.splits.length + (otherPending > 0 ? 1 : 0) + (valuationOnly.length ? 1 : 0);
+  // W61: the same split recorded twice (data written before the write guard) multiplies the quantity.
+  const scope = useApp((s) => s.settings.selectedPortfolioId);
+  const dupSplits = useLiveQuery(async () => duplicateSplits(await db.transactions.where('type').equals('SPLIT').toArray(), scope), [scope], []);
+  const total =
+    missing.length + missingFx.length + issues.length + manualStaleOnly.length + pending.length + market.failedSymbols.length + (diagErrors.length ? 1 : 0) + (demoPriced.length ? 1 : 0) + (staleMarket.length ? 1 : 0) + pendingEv.splits.length + (otherPending > 0 ? 1 : 0) + (valuationOnly.length ? 1 : 0) + pendingEv.review.length + dupSplits.length;
   return (
     <Card title={t('dashboard.warnings')} subtitle={total ? t('dashboard.warningsCount', { count: total }) : t('dashboard.allGood')}>
       {total === 0 ? (
@@ -473,6 +541,28 @@ function WarningsCard() {
               <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">
                 {t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) })} {t('pending.splitsBody')}
+              </span>
+            </li>
+          ))}
+          {dupSplits.map((d) => (
+            <li key={d.ids.join()} className="flex items-start gap-2" data-testid="warning-duplicate-split">
+              <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('pending.duplicateSplit', { symbol: label(d.instrumentId).symbol, date: formatDate(d.date, f.locale), count: d.ids.length - 1 })}{' '}
+                <button className="text-accent hover:underline" onClick={() => void once(`dedupe|${d.ids.join()}`, () => db.transactions.bulkDelete(d.ids.slice(1)))}>
+                  {t('pending.removeDuplicates')}
+                </button>
+              </span>
+            </li>
+          ))}
+          {pendingEv.review.map((r) => (
+            <li key={`${r.instrumentId}|${r.date}`} className="flex items-start gap-2" data-testid="warning-review">
+              <AlertTriangle size={14} className="text-warn mt-0.5 shrink-0" aria-hidden />
+              <span className="flex-1">
+                {t('pending.reviewLine', { symbol: label(r.instrumentId).symbol, event: corporateNote(r, t, f.locale) ?? r.type, date: formatDate(r.date, f.locale) })}.{' '}
+                <Link className="text-accent hover:underline" to="/movimientos">
+                  {t('pending.review')}
+                </Link>
               </span>
             </li>
           ))}

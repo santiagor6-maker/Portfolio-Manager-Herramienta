@@ -6,6 +6,7 @@
  * Every engine call is isolated with try/catch so one failing computation (or an engine function
  * that is not implemented yet) degrades a single widget instead of the whole app.
  */
+import { reviewKey } from '../lib/pendingEvents';
 import * as core from '@pm/core';
 import type {
   AllocationDimension,
@@ -541,7 +542,7 @@ function suggestions(ds: Dataset, txs: Transaction[]): { suggestions: Suggestion
       const key = `${pid}|${t.id}`;
       if (!dismissed.has(key)) outS.push({ key, transaction: t });
     }
-    for (const a of r.review) review.set(`${a.instrumentId}|${a.type}|${a.date}`, a);
+    for (const a of r.review) if (!dismissed.has(reviewKey(a))) review.set(`${a.instrumentId}|${a.type}|${a.date}`, a);
   }
   return { suggestions: outS.sort((a, b) => (a.transaction.date < b.transaction.date ? 1 : -1)), review: [...review.values()] };
 }
