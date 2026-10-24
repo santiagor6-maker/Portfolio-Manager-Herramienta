@@ -6,7 +6,7 @@ import { once } from '../lib/writeGuard';
 import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
-import { Banner, Card, Field, Kpi, Modal, PageHeader, Segmented, Skeleton } from '../components/ui';
+import { Banner, Card, Field, Kpi, Modal, Money, PageHeader, Segmented, Skeleton } from '../components/ui';
 import { parseDecimal, toInputNumber } from '../lib/parse';
 import { tidyTaxIssues, YEARLY_NOTICES } from '../lib/taxText';
 import { useApp, useFmt } from '../store/app';
@@ -226,10 +226,10 @@ function ColombiaView({ r, money }: { r: NonNullable<TaxReports['colombia']>; mo
   return (
     <>
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <Kpi label={t('tax.co.patrimonio', { date: formatDate(r.patrimonio.date, f.locale) })} value={money(r.patrimonio.patrimonioBrutoCop, 'COP')} sub={<span className="text-xs text-muted">{t('tax.co.market')}: {money(r.patrimonio.marketValueCop, 'COP')}</span>} />
-        <Kpi label={t('tax.co.dividends')} value={money(r.ingresos.totals.nationalDividendsCop + r.ingresos.totals.foreignDividendsCop, 'COP')} sub={<span className="text-xs text-muted">{t('tax.co.withheld')}: {money(r.ingresos.totals.nationalDividendWithholdingCop + r.ingresos.totals.foreignDividendTaxPaidCop, 'COP')}</span>} />
-        <Kpi label={t('tax.co.go')} value={money(v.gananciaOcasional.gananciaGravableCop, 'COP')} sub={<span className="text-xs text-muted">{t('tax.co.estimatedTax')}: {money(v.gananciaOcasional.impuestoEstimadoCop, 'COP')} ({formatPct(v.gananciaOcasional.rate, f.locale, { decimals: 0 })})</span>} />
-        <Kpi label={t('tax.co.fx')} value={money(r.diferenciaEnCambio.netCop, 'COP')} sub={<span className="text-xs text-muted">{t('tax.co.foreignAssets')}: {money(r.patrimonio.foreignAssetsCop, 'COP')}</span>} />
+        <Kpi label={t('tax.co.patrimonio', { date: formatDate(r.patrimonio.date, f.locale) })} value={<Money value={r.patrimonio.patrimonioBrutoCop} currency="COP" />} sub={<span className="text-xs text-muted">{t('tax.co.market')}: {money(r.patrimonio.marketValueCop, 'COP')}</span>} />
+        <Kpi label={t('tax.co.dividends')} value={<Money value={r.ingresos.totals.nationalDividendsCop + r.ingresos.totals.foreignDividendsCop} currency="COP" />} sub={<span className="text-xs text-muted">{t('tax.co.withheld')}: {money(r.ingresos.totals.nationalDividendWithholdingCop + r.ingresos.totals.foreignDividendTaxPaidCop, 'COP')}</span>} />
+        <Kpi label={t('tax.co.go')} value={<Money value={v.gananciaOcasional.gananciaGravableCop} currency="COP" />} sub={<span className="text-xs text-muted">{t('tax.co.estimatedTax')}: {money(v.gananciaOcasional.impuestoEstimadoCop, 'COP')} ({formatPct(v.gananciaOcasional.rate, f.locale, { decimals: 0 })})</span>} />
+        <Kpi label={t('tax.co.fx')} value={<Money value={r.diferenciaEnCambio.netCop} currency="COP" />} sub={<span className="text-xs text-muted">{t('tax.co.foreignAssets')}: {money(r.patrimonio.foreignAssetsCop, 'COP')}</span>} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
         <Card title={t('tax.co.f160')}>
@@ -336,12 +336,12 @@ function BrazilView({ r, money, portfolioId }: { r: TaxReports; money: MoneyFn; 
         {/* W34: "DARF a pagar" counts only DARFs not paid yet (overdue ones with their charges). */}
         <Kpi
           label={t('tax.br.darfTotal')}
-          value={money(unpaid.reduce((x, d) => x + (d.late?.total ?? d.amount), 0), 'BRL')}
+          value={<Money value={unpaid.reduce((x, d) => x + (d.late?.total ?? d.amount), 0)} currency="BRL" />}
           sub={<span className="text-xs text-muted" data-testid="darf-kpi-sub">{t('tax.br.darfs', { count: unpaid.length })}</span>}
         />
-        <Kpi label={t('tax.br.exempt')} value={money(a.totals.exemptGain, 'BRL')} sub={<span className="text-xs text-muted">{t('tax.br.exemptSub')}</span>} />
-        <Kpi label={t('tax.br.losses')} value={money(a.lossesAtEnd.comum + a.lossesAtEnd.dayTrade + a.lossesAtEnd.fii, 'BRL')} sub={<span className="text-xs text-muted">{t('tax.br.lossesSub')}</span>} />
-        <Kpi label={t('tax.br.proventos')} value={money(p ? p.totals.dividendos + p.totals.jcpGross + p.totals.rendimentosFii : undefined, 'BRL')} sub={<span className="text-xs text-muted">JCP IRRF: {money(p?.totals.jcpIrrf, 'BRL')}</span>} />
+        <Kpi label={t('tax.br.exempt')} value={<Money value={a.totals.exemptGain} currency="BRL" />} sub={<span className="text-xs text-muted">{t('tax.br.exemptSub')}</span>} />
+        <Kpi label={t('tax.br.losses')} value={<Money value={a.lossesAtEnd.comum + a.lossesAtEnd.dayTrade + a.lossesAtEnd.fii} currency="BRL" />} sub={<span className="text-xs text-muted">{t('tax.br.lossesSub')}</span>} />
+        <Kpi label={t('tax.br.proventos')} value={<Money value={p ? p.totals.dividendos + p.totals.jcpGross + p.totals.rendimentosFii : undefined} currency="BRL" />} sub={<span className="text-xs text-muted">JCP IRRF: {money(p?.totals.jcpIrrf, 'BRL')}</span>} />
       </div>
       <Card className="mt-3" title={t('tax.br.monthly')} subtitle={t('tax.br.monthlySub')} bodyClassName="!p-0">
         <div className="overflow-x-auto">

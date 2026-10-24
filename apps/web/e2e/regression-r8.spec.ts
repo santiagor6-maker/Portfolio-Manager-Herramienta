@@ -138,3 +138,53 @@ test('W64/W65: "+ Nuevo portafolio" creates a portfolio; from "Todos" the split 
   await expect(page.getByTestId('kpis')).toContainText(/\d/, { timeout: 30_000 });
   await expect(page.getByTestId('pending-splits')).toHaveCount(0);
 });
+
+/**
+ * W63: on the phone every KPI figure, on every page, is at least 16 px, on one line, never cut and
+ * never with an ellipsis; labels are not cut either.
+ */
+async function phoneKpiProblems(page: Page): Promise<string[]> {
+  return page.locator('.kpi-value').evaluateAll((els) =>
+    els.flatMap((el) => {
+      const e = el as HTMLElement;
+      if (!e.offsetParent) return [];
+      const text = (e.textContent ?? '').trim();
+      const out: string[] = [];
+      const size = parseFloat(getComputedStyle(e).fontSize);
+      if (size < 16) out.push(`${text}: ${size}px`);
+      if (e.scrollWidth > e.clientWidth + 1) out.push(`${text}: cut ${e.scrollWidth}>${e.clientWidth}`);
+      if (e.dataset.ellipsis) out.push(`${text}: ellipsis`);
+      const range = document.createRange();
+      range.selectNodeContents(e);
+      const tops = new Set(Array.from(range.getClientRects()).filter((r) => r.width > 0).map((r) => Math.round(r.top / 6)));
+      if (tops.size > 1) out.push(`${text}: ${tops.size} lines`);
+      const label = e.closest('.card')?.firstElementChild as HTMLElement | null;
+      if (label && (label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1)) out.push(`label «${label.textContent}» cut`);
+      return out;
+    }),
+  );
+}
+
+for (const [locale, width, ccys] of [['es-CO', 390, ['COP', 'USD']], ['pt-BR', 360, ['BRL', 'COP']]] as const) {
+  test.describe(`W63 in ${locale}`, () => {
+    test.use({ locale });
+    test(`every KPI card at ${width} px keeps its figure whole and ≥ 16 px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto('/');
+      await expect(page.getByTestId('kpis')).toContainText(/\d/, { timeout: 30_000 });
+      for (const ccy of ccys) {
+        await page.getByTestId('currency-switch').selectOption(ccy);
+        for (const path of ['/', '/rendimiento', '/divisas', '/dividendos', '/mensual', '/impuestos']) {
+          await page.goto(path);
+          await expect(page.locator('.kpi-value').first()).toBeVisible({ timeout: 30_000 });
+          await expect(page.locator('.kpi-value').first()).toContainText(/\d|—/);
+          await page.waitForTimeout(250);
+          expect(await phoneKpiProblems(page), `${locale} ${ccy} ${path} ${width}px`).toEqual([]);
+        }
+      }
+      await page.goto('/impuestos');
+      await expect(page.locator('.kpi-value').first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${SHOTS}/r8-phone-taxes-${locale}.png` });
+    });
+  });
+}

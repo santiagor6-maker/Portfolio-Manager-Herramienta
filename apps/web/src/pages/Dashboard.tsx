@@ -111,6 +111,7 @@ export default function DashboardPage() {
         />
         {lastClosed ? (
           <Kpi
+            rowOnPhone
             loading={loading}
             label={t('monthly.lastClosed', { month: formatMonth(lastClosed.month, f.locale) })}
             value={<Money value={lastClosed.gainBase} signed />}
@@ -123,9 +124,10 @@ export default function DashboardPage() {
             }
           />
         ) : (
-          <Kpi loading={loading} label={t('dashboard.month')} value={<Money value={mtd?.gainBase} signed />} valueCompact={<Money value={mtd?.gainBase} signed compact />} sub={<Pct value={mtd?.twr} signed colored />} />
+          <Kpi rowOnPhone loading={loading} label={t('dashboard.month')} value={<Money value={mtd?.gainBase} signed />} valueCompact={<Money value={mtd?.gainBase} signed compact />} sub={<Pct value={mtd?.twr} signed colored />} />
         )}
         <Kpi
+          rowOnPhone
           loading={loading}
           label={t('dashboard.ytd')}
           value={<Money value={ytd?.gainBase} signed />}
@@ -133,6 +135,7 @@ export default function DashboardPage() {
           sub={<Pct value={ytd?.twr} signed colored />}
         />
         <Kpi
+          rowOnPhone
           loading={loading}
           label={t('dashboard.totalGain')}
           value={<Money value={si?.gainBase} signed />}

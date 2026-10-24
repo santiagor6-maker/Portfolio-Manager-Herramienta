@@ -93,7 +93,8 @@ export function DataTable<T>({
     <HiddenColumnsNote
       labels={fit.hiddenList.map((id) => {
         const c = allColumns.find((x) => x.id === id);
-        return c?.headerTitle ?? (typeof c?.header === 'string' ? c.header : id);
+        // W67: the column's short name ("Ef. precio"), not its long tooltip.
+        return typeof c?.header === 'string' ? c.header : (c?.headerTitle ?? id);
       })}
       showAll={fit.showAll}
       onToggle={fit.setShowAll}

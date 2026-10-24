@@ -157,6 +157,7 @@ export function Kpi({
   primary,
   className,
   valueCompact,
+  rowOnPhone,
 }: {
   label: ReactNode;
   value: ReactNode;
@@ -169,6 +170,11 @@ export function Kpi({
   className?: string;
   /** D1/W57: the same figure in compact notation, used only when the full one cannot fit at the floor size (Money values derive it automatically). */
   valueCompact?: ReactNode;
+  /**
+   * W54/W63: on the phone, label left and figure right in one row. Only for cards that span the whole
+   * width there (the Resumen's one-column grid); cards of two-column grids keep the figure under the label.
+   */
+  rowOnPhone?: boolean;
 }) {
   return (
     <div
@@ -176,7 +182,7 @@ export function Kpi({
         'card px-3 sm:px-4 py-2.5 sm:py-3.5 min-w-0',
         // W54: on the phone a secondary card is one row (label and sub-line left, figure right), so the
         // first chart's trace starts within the first screen.
-        !primary && 'max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] max-sm:gap-x-3 max-sm:items-center',
+        rowOnPhone && !primary && 'max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] max-sm:gap-x-3 max-sm:items-center',
         primary && 'kpi-primary',
         primary && !className && 'col-span-2',
         className,
@@ -191,7 +197,7 @@ export function Kpi({
         </>
       ) : (
         <>
-          <FitValue compact={valueCompact} primary={primary} className={primary ? undefined : 'max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2 max-sm:text-right'}>
+          <FitValue compact={valueCompact} primary={primary} className={rowOnPhone && !primary ? 'max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2 max-sm:text-right' : undefined}>
             {value}
           </FitValue>
           {sub && <div className="mt-1 text-[13px] max-sm:col-start-1 max-sm:mt-0.5">{sub}</div>}
@@ -202,10 +208,11 @@ export function Kpi({
 }
 
 /**
- * D1/W57/W58: a headline figure is never cut nor broken inside the number ("+COP 21.081.⏎632").
+ * D1/W57/W58/W63: a headline figure is never cut nor broken inside the number ("+COP 21.081.⏎632").
  * - It stays on one line and its font shrinks to the card, but never below a floor clearly larger than
- *   the label (16 px, 20 px for the headline card); below that it switches to compact notation
- *   ("+$ 8.568 M"), with the full figure always in the tooltip.
+ *   the label (16 px, 20 px for the headline card), on every card; below that it switches to compact
+ *   notation ("+$ 8.568 M"), with the full figure always in the tooltip. If even that does not fit,
+ *   the floor size with an ellipsis (`data-ellipsis`), never a silent cut.
  * - Cards of one row share the smallest size, so a row never mixes 16 / 17 / 14 px figures.
  * - The decision is re-made on every fit from a hidden copy of the full figure (no sticky state), and a
  *   zero-width measurement (full-page capture, hidden tab) is ignored.
@@ -228,14 +235,20 @@ function FitValue({ children, compact, primary, className }: { children: ReactNo
       const base = parseFloat(getComputedStyle(full).fontSize) || 22;
       const floor = primary ? 20 : 16;
       const needed = full.scrollWidth ? Math.floor(base * (avail / full.scrollWidth) * 10) / 10 - 0.2 : base;
-      let size = Math.min(base, needed);
+      // W63: never below the floor, on every card. Too wide at the floor: compact notation; still too
+      // wide (or no compact form): the floor size with an ellipsis and the full figure in the tooltip.
+      let size = Math.max(floor, Math.min(base, needed));
       let compactNow = false;
-      if (needed < floor && compactNode && compactProbe.current?.scrollWidth) {
+      let fits = needed >= floor;
+      if (!fits && compactNode && compactProbe.current?.scrollWidth) {
         compactNow = true;
-        // The compact figure is never cut: it may go under the floor only when even it does not fit.
-        size = Math.max(MIN_FIT, Math.min(base, Math.floor(base * (avail / compactProbe.current.scrollWidth) * 10) / 10 - 0.2));
-      } else size = Math.max(MIN_FIT, size);
+        const neededCompact = Math.floor(base * (avail / compactProbe.current.scrollWidth) * 10) / 10 - 0.2;
+        size = Math.max(floor, Math.min(base, neededCompact));
+        fits = neededCompact >= floor;
+      }
       if (compactNow !== useCompact) setUseCompact(compactNow);
+      if (fits) delete el.dataset.ellipsis;
+      else el.dataset.ellipsis = '1';
       el.dataset.fit = String(size);
       el.style.fontSize = `${size}px`;
       if (!primary) syncRow(el);
@@ -247,7 +260,7 @@ function FitValue({ children, compact, primary, className }: { children: ReactNo
   });
   return (
     <div className={clsx('relative overflow-hidden', className)}>
-      <div ref={box} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden" data-compact={useCompact || undefined}>
+      <div ref={box} className="kpi-value font-semibold tracking-tight mt-1 text-ink whitespace-nowrap overflow-hidden text-ellipsis" data-compact={useCompact || undefined}>
         {useCompact ? compactNode : children}
       </div>
       {/* Invisible copies at the natural size, for measuring only (outside .kpi-value so they never count as its text). */}
@@ -276,7 +289,6 @@ function syncRow(el: HTMLElement) {
   for (const v of row) v.style.fontSize = `${min}px`;
 }
 
-const MIN_FIT = 12;
 
 export function Skeleton({ className }: { className?: string }) {
   return <div className={clsx('skeleton', className)} aria-hidden />;
