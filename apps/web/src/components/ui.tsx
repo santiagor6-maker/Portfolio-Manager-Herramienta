@@ -232,7 +232,8 @@ function FitValue({ children, compact, primary, className }: { children: ReactNo
       let compactNow = false;
       if (needed < floor && compactNode && compactProbe.current?.scrollWidth) {
         compactNow = true;
-        size = Math.max(floor - 2, Math.min(base, Math.floor(base * (avail / compactProbe.current.scrollWidth) * 10) / 10 - 0.2));
+        // The compact figure is never cut: it may go under the floor only when even it does not fit.
+        size = Math.max(MIN_FIT, Math.min(base, Math.floor(base * (avail / compactProbe.current.scrollWidth) * 10) / 10 - 0.2));
       } else size = Math.max(MIN_FIT, size);
       if (compactNow !== useCompact) setUseCompact(compactNow);
       el.dataset.fit = String(size);

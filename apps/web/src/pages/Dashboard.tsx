@@ -19,6 +19,7 @@ import { renamedPair } from '../lib/diagnosticText';
 import { recordSplit, renameInstrumentRows } from '../components/DiagnosticsPanel';
 import { acceptSuggestions } from '../services/suggestions';
 import { pendingEvents, type PendingSplit } from '../lib/pendingEvents';
+import { formatSplitRatio } from '../lib/corporateText';
 import { db } from '../db/schema';
 import { primaryBenchmark, benchmarkName } from '../lib/benchmarks';
 import { describeIssue } from '../lib/diagnosticText';
@@ -288,19 +289,29 @@ function PendingSplitsBanner() {
   const { analysis: a } = useAnalysis();
   const label = useInstrumentLabel();
   const [busy, setBusy] = useState(false);
-  const { splits } = pendingEvents(a);
+  // Splits already recorded from this banner stay hidden until the worker's next analysis drops them,
+  // so a second click cannot record the same split twice.
+  const [applied, setApplied] = useState<ReadonlySet<string>>(new Set());
+  const key = (p: PendingSplit) => `${p.instrumentId}|${p.date}`;
+  const splits = pendingEvents(a).splits.filter((p) => !applied.has(key(p)));
   if (!splits.length) return null;
   const apply = async (list: PendingSplit[]) => {
     setBusy(true);
     try {
       const provider = list.flatMap((p) => (p.suggestion ? [p.suggestion] : []));
       if (provider.length) await acceptSuggestions(provider, t, f.locale);
-      for (const p of list) if (!p.suggestion) await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date });
+      for (const p of list) {
+        if (p.suggestion) continue;
+        // Only the portfolio whose history shows the jump (same rule as the diagnostics panel).
+        const tx = p.diagnostic?.transactionId ? await db.transactions.get(p.diagnostic.transactionId) : undefined;
+        await recordSplit({ instrumentId: p.instrumentId, ratio: p.ratio, date: p.date }, tx?.portfolioId);
+      }
+      setApplied((s) => new Set([...s, ...list.map(key)]));
     } finally {
       setBusy(false);
     }
   };
-  const ratio = (r: number) => (r >= 1 ? `${Math.round(r * 1000) / 1000}:1` : `1:${Math.round((1 / r) * 1000) / 1000}`);
+  const ratio = (r: number) => formatSplitRatio(r, f.locale);
   return (
     <div className="mb-3" data-testid="pending-splits">
       <Banner
@@ -463,7 +474,7 @@ function WarningsCard() {
             <li key={`${p.instrumentId}|${p.date}`} className="flex items-start gap-2" data-testid="warning-split">
               <AlertTriangle size={14} className="text-neg mt-0.5 shrink-0" aria-hidden />
               <span className="flex-1">
-                {t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: p.ratio >= 1 ? `${p.ratio}:1` : `1:${Math.round(1 / p.ratio)}`, date: formatDate(p.date, f.locale) })} {t('pending.splitsBody')}
+                {t('pending.splitLine', { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale) })} {t('pending.splitsBody')}
               </span>
             </li>
           ))}

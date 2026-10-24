@@ -14,6 +14,12 @@ export function formatRatio(ratio: number, locale: string): string {
   return `×${new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(ratio)}`;
 }
 
+/** A split as investors write it, in the locale: "10:1", "1,5:1", "1:10" (reverse). */
+export function formatSplitRatio(ratio: number, locale: string): string {
+  const n = (x: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }).format(x);
+  return ratio >= 1 ? `${n(ratio)}:1` : `1:${n(1 / ratio)}`;
+}
+
 /** Ratio column of a transaction: a stock dividend shows the share bonus (+10 %), a split its factor. */
 export function formatTxRatio(x: Pick<Transaction, 'type' | 'ratio'>, locale: string): string {
   if (x.type === 'STOCK_DIVIDEND' && x.ratio) return `+${formatPct(x.ratio, locale, { decimals: 2 })}`;

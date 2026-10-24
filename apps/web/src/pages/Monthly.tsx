@@ -235,11 +235,12 @@ export default function MonthlyPage() {
   const droppable: ColKey[] = ['cumulative', 'pctIndex', 'inflation', 'real', 'alpha', 'bench', 'local', 'fx', 'start'];
   const redundantCols = useMemo(
     () =>
-      redundantColumns(['twr', ...cols.filter((c) => c !== 'twr')], tableRows, (c, r: MonthlyRow) => {
+      // The month's return goes first (when shown) so "Ef. precio" equal to it is the copy that gives way.
+      redundantColumns(cols.includes('twr') ? ['twr', ...cols.filter((c) => c !== 'twr')] : cols, tableRows, (c, r: MonthlyRow) => {
         const v = colDef[c].csv(r);
         return typeof v === 'number' ? v : undefined;
       }, droppable),
-    [cols.join(), tableRows], // eslint-disable-line react-hooks/exhaustive-deps
+    [cols.join(), tableRows, bench, pctIndexId, mode], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const fit = useFitColumns<ColKey>(droppable, `${cols.join()}|${rows.length}|${f.currency}`, redundantCols);
   const shownCols = cols.filter((c) => !fit.hidden.has(c));

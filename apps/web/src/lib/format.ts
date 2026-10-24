@@ -76,7 +76,11 @@ export function formatMoney(
  */
 function compactEs(amount: number, currency: CurrencyCode, locale: string, opts: MoneyOptions): string {
   const abs = Math.abs(amount);
-  const [div, unit, digits] = abs >= 1e9 ? [1e6, 'M', 0] : abs >= 1e6 ? [1e6, 'M', opts.compactDigits ?? 1] : abs >= 1e3 ? [1e3, 'mil', opts.compactDigits ?? 1] : [1, '', 0];
+  const d = opts.compactDigits ?? 1;
+  // The unit is chosen on the rounded value: 999.960 is "$ 1 M", not "$ 1.000 mil".
+  const rounds = (div: number, digits: number) => Math.round((abs / div) * 10 ** digits) / 10 ** digits;
+  const [div, unit, digits] =
+    abs >= 1e9 ? [1e6, 'M', opts.compactDigits ?? 0] : abs >= 1e6 || rounds(1e3, d) >= 1000 ? [1e6, 'M', d] : abs >= 1e3 || rounds(1, 0) >= 1000 ? [1e3, 'mil', d] : [1, '', 0];
   const scaled = formatMoney(amount / div, currency, locale, { decimals: digits, signed: opts.signed });
   if (!unit) return scaled;
   // Keep trailing zeros out ("$ 12 mil", not "$ 12,0 mil").

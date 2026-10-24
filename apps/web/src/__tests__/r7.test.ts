@@ -95,6 +95,16 @@ describe('W57: compact amounts', () => {
     expect(c(12_000)).toMatch(/^\$\s12\smil$/);
     expect(c(3_730.04)).toMatch(/^\$\s3,7\smil$/);
     expect(formatMoney(3_730.04, 'BRL', 'pt-BR', { compact: true })).toMatch(/R\$\s3,7\smil/);
+    // The unit follows the rounded value.
+    expect(c(999_960)).toMatch(/^\$\s1\sM$/);
+    expect(c(999.7)).toMatch(/^\$\s1\smil$/);
+  });
+
+  it('split ratios read in the locale', async () => {
+    const { formatSplitRatio } = await import('../lib/corporateText');
+    expect(formatSplitRatio(10, 'es-CO')).toBe('10:1');
+    expect(formatSplitRatio(1.5, 'es-CO')).toBe('1,5:1');
+    expect(formatSplitRatio(0.1, 'pt-BR')).toBe('1:10');
   });
 });
 
@@ -117,5 +127,18 @@ describe('W60: residual strings', () => {
       expect(inst.t('imp.doneBody', { count: 0 })).not.toMatch(/\b0\b/);
       expect(inst.t('market.offlineBody')).not.toContain('npm');
     }
+  });
+});
+
+describe('W55 review: only confirmed valuation warnings count', () => {
+  it('ignores weak (info) split hints and unit suspects the engine already accepted', () => {
+    const data = { splitRatio: 2, instrumentId: 'XNAS:NVDA', dateTo: '2024-06-10' };
+    const base = { suggestions: [], valuation: { holdings: [{ instrumentId: 'XNAS:NVDA', quantity: 10 }] } };
+    const diag = (over: Record<string, unknown>) => ({ code: 'POSSIBLE_UNRECORDED_SPLIT', severity: 'warning', message: 'x', data, ...over }) as never;
+    expect(pendingEvents({ ...base, diagnostics: [diag({ severity: 'info' })] }).splits).toEqual([]);
+    expect(pendingEvents({ ...base, diagnostics: [diag({})] }).splits).toHaveLength(1);
+    const unit = (message: string) => diag({ code: 'TRADE_PRICE_UNIT_SUSPECT', message, data: undefined });
+    expect(pendingEvents({ ...base, diagnostics: [unit('Trade price 14265 vs 142.65 — accepted because 3 consistent prices on distinct days confirm the new level')] }).valuationWarnings).toEqual([]);
+    expect(pendingEvents({ ...base, diagnostics: [unit('Trade price 14265 vs 142.65')] }).valuationWarnings).toHaveLength(1);
   });
 });

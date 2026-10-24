@@ -374,11 +374,9 @@ async function doRefresh(): Promise<void> {
       const retry = Number((e as MarketDataApiError).details && ((e as MarketDataApiError).details as { retryAfter?: number }).retryAfter) || 300;
       await db.meta.put({ key: 'refreshBackoffUntil', value: Date.now() + retry * 1000 });
     }
-    // W60: the health check just passed, so a 5xx here is one failing upstream (e.g. a single FX pair),
-    // not an unreachable server: keep the cached data, flag it as partial and retry on the next refresh.
-    const next: MarketStatus = status !== undefined && status >= 500 ? 'partial' : 'offline';
-    setMarket({ status: next, error: { status, code, message }, sources: { server: { ok: false, message } } });
-    await persistStatus(next);
+    // Per-symbol failures come back inside the batch (ok: false); reaching here means the whole refresh failed.
+    setMarket({ status: 'offline', error: { status, code, message }, sources: { server: { ok: false, message } } });
+    await persistStatus('offline');
   }
 }
 

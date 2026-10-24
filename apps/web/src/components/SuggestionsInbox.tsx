@@ -9,6 +9,7 @@ import type { Suggestion } from '../services/analysis';
 import { acceptSuggestions, dismiss } from '../services/suggestions';
 import { TxTypeBadge } from '../pages/Transactions';
 import { corporateNote, formatRatio, formatTxRatio } from '../lib/corporateText';
+import { INCOME_TYPES } from '../lib/pendingEvents';
 
 /**
  * Corporate-action inbox: dividends, splits and bonificações announced by the data provider for
@@ -21,7 +22,7 @@ export function SuggestionsInbox({ kind = 'all' }: { kind?: 'all' | 'income' }) 
   const label = useInstrumentLabel();
   const [busy, setBusy] = useState(false);
   // W55: Proventos shows only the announced cash events.
-  const income = (s: Suggestion) => ['DIVIDEND', 'INTEREST', 'RETURN_OF_CAPITAL'].includes(s.transaction.type);
+  const income = (s: Suggestion) => INCOME_TYPES.includes(s.transaction.type);
   const list = (analysis?.suggestions ?? []).filter((s) => kind === 'all' || income(s));
   const review = kind === 'all' ? (analysis?.reviewActions ?? []) : [];
   if (!list.length && !review.length) return null;

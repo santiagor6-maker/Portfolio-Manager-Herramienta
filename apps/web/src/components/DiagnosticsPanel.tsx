@@ -11,6 +11,7 @@ import type { ImplicitFunding } from '../services/analysis';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useInstrumentMap } from '../hooks/useData';
 import { describeDiagnostic, splitSuggestion, unitFactor } from '../lib/diagnosticText';
+import { formatSplitRatio } from '../lib/corporateText';
 
 /** Core R7: divides the price by the suspected unit factor (×10, ×100, pence…) and recomputes the amount. */
 export async function fixUnit(tx: { id: string; price?: number; quantity?: number }, factor: number): Promise<void> {
@@ -185,7 +186,7 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
               (() => {
                 const sp = splitSuggestion(d.message, d.data);
                 if (!sp) return null;
-                const ratio = sp.ratio >= 1 ? `${Math.round(sp.ratio)}:1` : `1:${Math.round(1 / sp.ratio)}`;
+                const ratio = formatSplitRatio(sp.ratio, f.locale);
                 return (
                   <button className="btn btn-sm btn-primary" data-testid="record-split" onClick={() => void recordSplit(sp, d.transactionId ? txs?.get(d.transactionId)?.portfolioId : undefined)}>
                     {t('diag.recordSplit', { ratio })}
