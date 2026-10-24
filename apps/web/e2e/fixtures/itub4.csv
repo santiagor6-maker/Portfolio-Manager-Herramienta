@@ -1,0 +1,2 @@
+date,type,instrument_id,symbol,exchange,name,isin,asset_class,quantity,price,currency,amount,fees,taxes,ratio,to_currency,to_amount,fx_rate_to_base,account,note
+2023-01-05,BUY,BVMF:ITUB4,ITUB4,BVMF,Itaú Unibanco PN,,,100,25,BRL,,,,,,,,XP,

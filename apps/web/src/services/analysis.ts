@@ -218,7 +218,10 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
     };
     // W68: one ledger for every portfolio — each corporate event once, import hashes per portfolio.
     const transactions = scopeImportHashes(mergeCorporateEvents(ds.transactions));
-    return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options };
+    // W68: and each portfolio's cash apart (one portfolio's cash never funds another's purchase), so
+    // "Todos" is the sum of the portfolios.
+    const portfolioBaseCurrencies = Object.fromEntries(ds.portfolios.map((p) => [p.id, p.baseCurrency]));
+    return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options: { ...options, isolatePortfolioCash: true, portfolioBaseCurrencies } };
   }
   const portfolio = ds.portfolios.find((p) => p.id === ds.selectedPortfolioId);
   if (!portfolio) return undefined;
