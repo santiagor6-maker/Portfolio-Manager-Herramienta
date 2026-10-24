@@ -367,6 +367,13 @@ describe('M7 bonificações and spin-offs are not splits (reviewer splits.mts)',
     expect(ge).toMatchObject({ type: 'SPLIT', subtype: 'SPINOFF', ratio: 0.25, targetInstrumentId: 'XNYS:GEV', reviewRequired: true });
     expect(ge.costFraction).toBeCloseTo(0.2019, 4);
     expect(c('MMM', '2024-04-01', 1196, 1000)).toMatchObject({ subtype: 'SPINOFF', targetInstrumentId: 'XNYS:SOLV' });
+    // W62 (web R7): reverse splits of any size, B3 grupamentos included, are splits, not spin-offs.
+    expect(c('AMER3.SA', '2024-08-27', 1, 100)).toMatchObject({ type: 'SPLIT', ratio: 0.01, priceFactor: 0.01 });
+    expect(c('IRBR3.SA', '2023-01-25', 1, 30)).toMatchObject({ type: 'SPLIT', ratio: 1 / 30 });
+    expect(c('BHIA3.SA', '2023-12-15', 1, 25)).toMatchObject({ type: 'SPLIT', ratio: 0.04 });
+    expect(c('CMG', '2024-06-26', 50, 1)).toMatchObject({ type: 'SPLIT', ratio: 50 });
+    expect(c('AMER3.SA', '2024-08-27', 1, 100).subtype).toBeUndefined();
+    expect(c('XYZ.SA', '2025-01-01', 3, 100)).toMatchObject({ type: 'SPLIT', ratio: 0.03 });
     const unknown = c('XYZ', '2025-01-01', 1105, 1000);
     expect(unknown).toMatchObject({ subtype: 'SPINOFF', reviewRequired: true });
     expect(unknown.targetInstrumentId).toBeUndefined();

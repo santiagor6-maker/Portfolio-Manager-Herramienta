@@ -3,7 +3,8 @@
  *
  * Yahoo reports every share-count or price-factor event as a "split" with numerator/denominator.
  * Verified on live data (2026-10-05):
- *  - real splits:        NVDA 10:1, AAPL 4:1, WEGE3 2:1, GE 1:8 (reverse)
+ *  - real splits:        NVDA 10:1, AAPL 4:1, WEGE3 2:1, CMG 50:1, GE 1:8 (reverse)
+ *  - grupamentos (B3):   BHIA3 1:25 (2023-12-15), IRBR3 1:30 (2023-01-25), AMER3 1:100 (2024-08-27)
  *  - bonificações (B3):  ITUB4 11:10, 3:2 (2018), 110:100 (2025), 103:100; WEGE3 13:10
  *  - spin-offs (US):     GE 1281:1000 (2023-01-04, GE HealthCare), GE 1253:1000 (2024-04-02,
  *                        GE Vernova), MMM 1196:1000 (2024-04-01, Solventum) — here the "ratio"
@@ -72,7 +73,10 @@ export function classifySplit(yahooSymbol: string, s: RawSplit, instrumentId: st
       note: `Bonificação ${num}:${den} (${round4((factor - 1) * 100)} % em ações). For IR the new shares carry the "custo atribuído" announced by the company.`,
     };
   }
-  if (num <= 20 && den <= 20) {
+  // Plain splits and reverse splits at any size: k:1 (CMG 50:1) and 1:k — B3 grupamentos 1:25 (BHIA3),
+  // 1:30 (IRBR3), 1:100 (AMER3). `ratio` is new shares per old share (core SPLIT contract): 1:100 -> 0.01.
+  // On B3 every factor below 1 is a grupamento (spin-offs there never reduce the price factor).
+  if ((num <= 20 && den <= 20) || num === 1 || den === 1 || (isB3 && factor < 1)) {
     return { ...base, type: 'SPLIT', ratio: factor };
   }
   // Odd factor such as 1253:1000 outside Brazil: almost always a spin-off or special distribution.
