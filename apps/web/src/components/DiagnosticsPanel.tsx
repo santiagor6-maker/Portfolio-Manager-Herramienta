@@ -147,8 +147,14 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const f = useFmt();
   const { analysis } = useAnalysis();
   // W61: one guarded action at a time; every button below is disabled while it runs.
-  const { busy, run } = useGuardedAction();
+  const guarded = useGuardedAction();
+  const busy = guarded.busy;
   const [userOpen, setUserOpen] = useState<boolean>();
+  // Acting inside the panel keeps it open: it does not fold under the cursor once the fix lands.
+  const run = <T,>(key: string, fn: () => Promise<T>) => {
+    setUserOpen((o) => o ?? true);
+    return guarded.run(key, fn);
+  };
   const list = analysis?.diagnostics ?? [];
   const implicit = analysis?.implicitFunding ?? [];
   const instruments = useInstrumentMap();
