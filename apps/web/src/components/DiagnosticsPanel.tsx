@@ -7,7 +7,7 @@ import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPrice } from '../lib/format';
 import { db } from '../db/schema';
 import { addTransactionsOnce } from '../db/repo';
-import { once, useGuardedAction } from '../lib/writeGuard';
+import { useGuardedAction } from '../lib/writeGuard';
 import type { ImplicitFunding } from '../services/analysis';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useInstrumentMap } from '../hooks/useData';
@@ -31,14 +31,12 @@ export async function fixUnit(tx: { id: string; price?: number; quantity?: numbe
  * Returns the portfolios written to.
  */
 export async function recordSplit(sp: { instrumentId: string; ratio: number; date: string }, portfolioId?: string, note = 'Split sugerido por el historial de precios'): Promise<string[]> {
-  return once(`split|${portfolioId ?? '*'}|${sp.instrumentId}|${sp.date}`, async () => {
-    const inst = await db.instruments.get(sp.instrumentId);
-    const pids = portfolioId ? [portfolioId] : await holdersBefore(sp.instrumentId, sp.date);
-    const written = await addTransactionsOnce(
-      pids.map((pid) => ({ portfolioId: pid, date: sp.date, type: 'SPLIT' as const, instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note })),
-    );
-    return written.map((x) => x.portfolioId);
-  });
+  const inst = await db.instruments.get(sp.instrumentId);
+  const pids = portfolioId ? [portfolioId] : await holdersBefore(sp.instrumentId, sp.date);
+  const written = await addTransactionsOnce(
+    pids.map((pid) => ({ portfolioId: pid, date: sp.date, type: 'SPLIT' as const, instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note })),
+  );
+  return written.map((x) => x.portfolioId);
 }
 
 /** W64: portfolios with a positive quantity of the instrument on the day before `date`. */
@@ -84,11 +82,7 @@ export async function relabelAccount(portfolioId: string, from: string | undefin
 }
 
 /** W22: books the deposit the engine had to assume, on the purchase date, in its portfolio (W61: once). */
-export function createDepositFor(f: ImplicitFunding, note: string): Promise<void> {
-  return once(`deposit|${f.transactionId}|${f.date}`, () => bookDeposit(f, note));
-}
-
-async function bookDeposit(f: ImplicitFunding, note: string): Promise<void> {
+export async function createDepositFor(f: ImplicitFunding, note: string): Promise<void> {
   const tx = f.transactionId ? await db.transactions.get(f.transactionId) : undefined;
   if (!tx) return;
   const base = (await db.portfolios.get(tx.portfolioId))?.baseCurrency;
