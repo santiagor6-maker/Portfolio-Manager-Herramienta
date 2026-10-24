@@ -16,7 +16,7 @@ import {
   type StoredTransaction,
 } from './schema';
 import { newId, todayIso } from '../lib/ids';
-import { EVENT_DATE_TOLERANCE_DAYS, isEventType, txDedupeKey } from '../lib/writeGuard';
+import { EVENT_DATE_TOLERANCE_DAYS, isEventType, sameRatio, txDedupeKey } from '../lib/writeGuard';
 import { BENCHMARK_IDS } from '../lib/benchmarks';
 import type { Lang } from '../lib/format';
 
@@ -205,7 +205,7 @@ export async function addTransactionsOnce(rows: (Omit<StoredTransaction, 'id'> &
           e.type === r.type &&
           e.instrumentId === r.instrumentId &&
           (e.subtype ?? '') === (r.subtype ?? '') &&
-          Math.abs((e.ratio ?? 0) - (r.ratio ?? 0)) <= 1e-9 * Math.max(1, Math.abs(r.ratio ?? 0)) && // W69: same ratio only
+          sameRatio(e.ratio, r.ratio) && // W69: same ratio only (1/3 entered as 0.3333 is the same)
           Math.abs(Date.parse(e.date) - Date.parse(r.date)) <= EVENT_DATE_TOLERANCE_DAYS * 86_400_000,
       );
     const fresh = norm.filter((r) => {

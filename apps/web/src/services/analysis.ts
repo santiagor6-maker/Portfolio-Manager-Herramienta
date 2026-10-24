@@ -6,7 +6,7 @@
  * Every engine call is isolated with try/catch so one failing computation (or an engine function
  * that is not implemented yet) degrades a single widget instead of the whole app.
  */
-import { mergeCorporateEvents, scopeImportHashes } from '../lib/consolidate';
+import { scopeImportHashes } from '../lib/consolidate';
 import { reviewKey } from '../lib/pendingEvents';
 import * as core from '@pm/core';
 import type {
@@ -216,10 +216,11 @@ export function buildEngineInput(ds: Dataset, market: MarketData): EngineInput |
       createdAt: ds.portfolios.map((p) => p.createdAt).sort()[0] ?? ds.asOf,
       benchmarks: ds.benchmarks,
     };
-    // W68: one ledger for every portfolio — each corporate event once, import hashes per portfolio.
-    const transactions = scopeImportHashes(mergeCorporateEvents(ds.transactions));
-    // W68: and each portfolio's cash apart (one portfolio's cash never funds another's purchase), so
-    // "Todos" is the sum of the portfolios.
+    // W68: one ledger for every portfolio, but each portfolio's lots and cash kept apart by the engine
+    // (isolatePortfolioCash): a portfolio's split, sale or bonificação touches only its own lots and its
+    // cash never funds another's purchase, so "Todos" is the sum of the portfolios. Import hashes are
+    // per portfolio (the same file in two portfolios is not a "possible duplicate").
+    const transactions = scopeImportHashes(ds.transactions);
     const portfolioBaseCurrencies = Object.fromEntries(ds.portfolios.map((p) => [p.id, p.baseCurrency]));
     return { portfolio: consolidated, transactions, instruments: ds.instruments, market, baseCurrency: ds.reportingCurrency, options: { ...options, isolatePortfolioCash: true, portfolioBaseCurrencies } };
   }

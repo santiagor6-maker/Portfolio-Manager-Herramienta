@@ -47,6 +47,12 @@ export function txDedupeKey(t: Keyed): string {
 
 export const isEventType = (type: Transaction['type']) => EVENT_TYPES.has(type);
 
+/** Two ratios of one event entered with different precision (1/3 vs 0.3333) are the same ratio. */
+export function sameRatio(a: number | undefined, b: number | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return Math.abs(a - b) <= 1e-3 * Math.max(Math.abs(a), Math.abs(b));
+}
+
 /** The same split recorded from the price history and from the provider can be a few days apart. */
 export const EVENT_DATE_TOLERANCE_DAYS = 7;
 

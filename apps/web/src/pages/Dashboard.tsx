@@ -331,7 +331,7 @@ function PendingSplitsBanner() {
   const line = (p: PendingSplit, k: 'splitLine' | 'inferredLine') =>
     t(`pending.${k}`, { symbol: label(p.instrumentId).symbol, ratio: formatSplitRatio(p.ratio, f.locale), date: formatDate(p.date, f.locale), context: splitContext(p.ratio) }) + where(p);
   // W70: a group of grupamentos is named as such ("grupamento", "contrasplit"), never "desdobramento".
-  const ctx = (list: PendingSplit[]) => (list.every((p) => p.ratio < 1) ? 'reverse' : undefined);
+  const ctx = (list: PendingSplit[]) => (list.every((p) => splitContext(p.ratio)) ? 'reverse' : undefined);
   const lines = (list: PendingSplit[], k: 'splitLine' | 'inferredLine') =>
     list.slice(0, 3).map((p) => line(p, k)).join(' · ') + (list.length > 3 ? ` · ${t('pending.more', { count: list.length - 3 })}` : '');
   return (
