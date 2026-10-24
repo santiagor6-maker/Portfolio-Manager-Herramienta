@@ -8,7 +8,8 @@ import type { CostMethod } from '@pm/core';
 import { Field, Modal } from './ui';
 import { useApp } from '../store/app';
 import { CURRENCY_CODES } from '../lib/currencies';
-import { createPortfolio, getMeta, removeDemoData, saveTransaction, setMeta } from '../db/repo';
+import { addTransactionsOnce, createPortfolio, getMeta, removeDemoData, setMeta } from '../db/repo';
+import { once } from '../lib/writeGuard';
 import { db } from '../db/schema';
 import { parseDecimal } from '../lib/parse';
 import { todayIso } from '../lib/ids';
@@ -41,7 +42,9 @@ export function OnboardingWizard() {
     setStep(0);
   };
 
-  const create = async () => {
+  // W61: the wizard's writes run once even on a double submit.
+  const create = () => once('onboarding|create', createNow);
+  const createNow = async () => {
     if (!keepDemo) await removeDemoData();
     const p = await createPortfolio({ name: name.trim() || t('portfolio.defaultName'), baseCurrency: ccy, costMethod: method, taxResidence: residence || undefined, createdAt: todayIso() });
     setPid(p.id);
@@ -52,13 +55,14 @@ export function OnboardingWizard() {
     setStep(1);
   };
 
-  const saveDeposit = async () => {
-    const amount = parseDecimal(deposit, locale === 'en' ? 'en-US' : 'es-CO');
-    if (pid && amount && amount > 0) {
-      await saveTransaction({ portfolioId: pid, date: depositDate && depositDate <= todayIso() ? depositDate : todayIso(), type: 'DEPOSIT', currency: ccy, amount, account: broker || undefined, note: t('onboarding.initialDeposit') });
-    }
-    setStep(2);
-  };
+  const saveDeposit = () =>
+    once('onboarding|deposit', async () => {
+      const amount = parseDecimal(deposit, locale === 'en' ? 'en-US' : 'es-CO');
+      if (pid && amount && amount > 0) {
+        await addTransactionsOnce([{ portfolioId: pid, date: depositDate && depositDate <= todayIso() ? depositDate : todayIso(), type: 'DEPOSIT', currency: ccy, amount, account: broker || undefined, note: t('onboarding.initialDeposit') }]);
+      }
+      setStep(2);
+    });
 
   return (
     <Modal open={open} onClose={close} title={t('onboarding.title')} wide>

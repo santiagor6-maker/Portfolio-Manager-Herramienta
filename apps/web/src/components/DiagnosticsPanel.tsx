@@ -6,7 +6,8 @@ import { useAnalysis } from '../hooks/useAnalysis';
 import { useFmt } from '../store/app';
 import { formatDate, formatMoney, formatPrice } from '../lib/format';
 import { db } from '../db/schema';
-import { saveTransaction } from '../db/repo';
+import { addTransactionsOnce } from '../db/repo';
+import { once, useGuardedAction } from '../lib/writeGuard';
 import type { ImplicitFunding } from '../services/analysis';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useInstrumentMap } from '../hooks/useData';
@@ -17,15 +18,49 @@ import { formatSplitRatio } from '../lib/corporateText';
 export async function fixUnit(tx: { id: string; price?: number; quantity?: number }, factor: number): Promise<void> {
   if (tx.price === undefined) return;
   const price = tx.price / factor;
-  await db.transactions.update(tx.id, { price, amount: tx.quantity !== undefined ? tx.quantity * price : undefined, priceConfirmed: undefined });
+  // W61: only while the row still has the price that was shown (a second click must not divide again).
+  await db.transaction('rw', db.transactions, async () => {
+    if ((await db.transactions.get(tx.id))?.price !== tx.price) return;
+    await db.transactions.update(tx.id, { price, amount: tx.quantity !== undefined ? tx.quantity * price : undefined, priceConfirmed: undefined });
+  });
 }
 
-/** Core R7: records the split the price history suggests (one transaction, in the affected portfolio). */
-export async function recordSplit(sp: { instrumentId: string; ratio: number; date: string }, portfolioId?: string): Promise<void> {
-  const inst = await db.instruments.get(sp.instrumentId);
-  const pids = portfolioId ? [portfolioId] : [...new Set((await db.transactions.where('instrumentId').equals(sp.instrumentId).toArray()).map((t) => t.portfolioId))];
-  for (const pid of pids)
-    await saveTransaction({ portfolioId: pid, date: sp.date, type: 'SPLIT', instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note: 'Split sugerido por el historial de precios' });
+/**
+ * Core R7 / W61 / W64: records a split in the given portfolio, or else in every portfolio that holds the
+ * instrument the day before; never twice (same portfolio, instrument and date — see addTransactionsOnce).
+ * Returns the portfolios written to.
+ */
+export async function recordSplit(sp: { instrumentId: string; ratio: number; date: string }, portfolioId?: string, note = 'Split sugerido por el historial de precios'): Promise<string[]> {
+  return once(`split|${portfolioId ?? '*'}|${sp.instrumentId}|${sp.date}`, async () => {
+    const inst = await db.instruments.get(sp.instrumentId);
+    const pids = portfolioId ? [portfolioId] : await holdersBefore(sp.instrumentId, sp.date);
+    const written = await addTransactionsOnce(
+      pids.map((pid) => ({ portfolioId: pid, date: sp.date, type: 'SPLIT' as const, instrumentId: sp.instrumentId, ratio: sp.ratio, currency: inst?.currency ?? 'USD', note })),
+    );
+    return written.map((x) => x.portfolioId);
+  });
+}
+
+/** W64: portfolios with a positive quantity of the instrument on the day before `date`. */
+export async function holdersBefore(instrumentId: string, date: string): Promise<string[]> {
+  const rows = (await db.transactions.where('instrumentId').equals(instrumentId).toArray()).filter((x) => x.date < date).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const qty = new Map<string, number>();
+  for (const x of rows) {
+    const q = qty.get(x.portfolioId) ?? 0;
+    const n = x.quantity ?? 0;
+    const next =
+      x.type === 'BUY' || x.type === 'TRANSFER_IN'
+        ? q + n
+        : x.type === 'SELL' || x.type === 'TRANSFER_OUT'
+          ? q - n
+          : x.type === 'SPLIT' && x.ratio && !x.subtype
+            ? q * x.ratio
+            : x.type === 'STOCK_DIVIDEND' && x.ratio
+              ? q * (1 + x.ratio)
+              : q;
+    qty.set(x.portfolioId, next);
+  }
+  return [...qty].filter(([, q]) => q > 1e-9).map(([pid]) => pid);
 }
 
 /** Core R8: rows still under an old ticker move to the current id (same security, renamed). */
@@ -41,8 +76,12 @@ export async function relabelAccount(portfolioId: string, from: string | undefin
   await db.transactions.bulkPut(txs.map((t) => ({ ...t, account: to || undefined })));
 }
 
-/** W22: books the deposit the engine had to assume, on the purchase date, in its portfolio. */
-export async function createDepositFor(f: ImplicitFunding, note: string): Promise<void> {
+/** W22: books the deposit the engine had to assume, on the purchase date, in its portfolio (W61: once). */
+export function createDepositFor(f: ImplicitFunding, note: string): Promise<void> {
+  return once(`deposit|${f.transactionId}|${f.date}`, () => bookDeposit(f, note));
+}
+
+async function bookDeposit(f: ImplicitFunding, note: string): Promise<void> {
   const tx = f.transactionId ? await db.transactions.get(f.transactionId) : undefined;
   if (!tx) return;
   const base = (await db.portfolios.get(tx.portfolioId))?.baseCurrency;
@@ -51,8 +90,9 @@ export async function createDepositFor(f: ImplicitFunding, note: string): Promis
   if (base && rate) {
     // W39: the investor deposited in the base currency and converted it (FX effect measured from here).
     const baseAmount = round(f.amount / rate, base);
-    await saveTransaction({ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: base, amount: baseAmount, account: tx.account, note });
-    await saveTransaction({
+    await addTransactionsOnce([
+      { portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: base, amount: baseAmount, account: tx.account, note },
+      {
       portfolioId: tx.portfolioId,
       date: f.date,
       type: 'FX_CONVERSION',
@@ -62,10 +102,11 @@ export async function createDepositFor(f: ImplicitFunding, note: string): Promis
       toAmount: round(f.amount, f.currency),
       account: tx.account,
       note,
-    });
+      },
+    ]);
     return;
   }
-  await saveTransaction({ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: f.currency, amount: round(f.amount, f.currency), account: tx.account, note });
+  await addTransactionsOnce([{ portfolioId: tx.portfolioId, date: f.date, type: 'DEPOSIT', currency: f.currency, amount: round(f.amount, f.currency), account: tx.account, note }]);
 }
 
 /** Units of `to` per unit of `from` on or before `date`, from the cached FX series (direct or inverse). */
@@ -98,6 +139,8 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const { t } = useTranslation();
   const f = useFmt();
   const { analysis } = useAnalysis();
+  // W61: one guarded action at a time; every button below is disabled while it runs.
+  const { busy, run } = useGuardedAction();
   const list = analysis?.diagnostics ?? [];
   const implicit = analysis?.implicitFunding ?? [];
   const instruments = useInstrumentMap();
@@ -144,13 +187,14 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                   className="btn btn-sm btn-primary"
                   data-testid="use-account"
                   title={t('diag.useAccountHint', { from: tx.account || '—', to: other || '—' })}
-                  onClick={() => void relabelAccount(tx.portfolioId, tx.account, other)}
+                  disabled={busy}
+                  onClick={() => void run(`relabel|${tx.portfolioId}`, () => relabelAccount(tx.portfolioId, tx.account, other))}
                 >
                   {t('diag.useAccount', { account: other || t('diag.noAccount') })}
                 </button>
               ) : null;
             })()}
-            <button className="btn btn-sm" onClick={() => void createDepositFor(x, t('diag.implicitNote'))} data-testid="create-deposit">
+            <button className="btn btn-sm" disabled={busy} onClick={() => void run(`deposit|${x.transactionId}`, () => createDepositFor(x, t('diag.implicitNote')))} data-testid="create-deposit">
               <Plus size={13} /> {t('diag.createDeposit')}
             </button>
           </li>
@@ -172,12 +216,13 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                     className="btn btn-sm btn-primary"
                     data-testid="fix-unit"
                     title={t('diag.fixUnitHint')}
-                    onClick={() => void fixUnit(txs.get(d.transactionId!)!, unitFactor(d.message)!)}
+                    disabled={busy}
+                    onClick={() => void run(`unit|${d.transactionId}`, () => fixUnit(txs.get(d.transactionId!)!, unitFactor(d.message)!))}
                   >
                     {t('diag.fixUnit', { price: formatPrice((txs.get(d.transactionId)!.price ?? 0) / unitFactor(d.message)!, txs.get(d.transactionId)!.currency, f.locale) })}
                   </button>
                 )}
-                <button className="btn btn-sm" data-testid="confirm-price-diag" onClick={() => void db.transactions.update(d.transactionId!, { priceConfirmed: true })}>
+                <button className="btn btn-sm" data-testid="confirm-price-diag" disabled={busy} onClick={() => void run(`confirm|${d.transactionId}`, () => db.transactions.update(d.transactionId!, { priceConfirmed: true }))}>
                   {t('pw.confirm')}
                 </button>
               </>
@@ -188,19 +233,24 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
                 if (!sp) return null;
                 const ratio = formatSplitRatio(sp.ratio, f.locale);
                 return (
-                  <button className="btn btn-sm btn-primary" data-testid="record-split" onClick={() => void recordSplit(sp, d.transactionId ? txs?.get(d.transactionId)?.portfolioId : undefined)}>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    data-testid="record-split"
+                    disabled={busy}
+                    onClick={() => void run(`split|${sp.instrumentId}|${sp.date}`, () => recordSplit(sp, d.transactionId ? txs?.get(d.transactionId)?.portfolioId : undefined))}
+                  >
                     {t('diag.recordSplit', { ratio })}
                   </button>
                 );
               })()}
             {d.code === 'INSTRUMENT_RENAMED' && d.data?.fromId && d.data?.toId && (
-              <button className="btn btn-sm" data-testid="rename-rows" onClick={() => void renameInstrumentRows(String(d.data!.fromId), String(d.data!.toId))}>
+              <button className="btn btn-sm" data-testid="rename-rows" disabled={busy} onClick={() => void run(`rename|${d.data!.fromId}`, () => renameInstrumentRows(String(d.data!.fromId), String(d.data!.toId)))}>
                 {t('diag.renameRows', { to: String(d.data.toId).split(':').pop() })}
               </button>
             )}
             {d.code === 'COST_FRACTION_ESTIMATED' && d.transactionId && <CostFractionEditor txId={d.transactionId} estimate={Number(d.data?.costFraction ?? 0)} />}
             {d.code === 'INTEREST_POSSIBLY_NET' && d.transactionId && !txs?.get(d.transactionId)?.amountIsNet && (
-              <button className="btn btn-sm" data-testid="mark-net" onClick={() => void db.transactions.update(d.transactionId!, { amountIsNet: true })}>
+              <button className="btn btn-sm" data-testid="mark-net" disabled={busy} onClick={() => void run(`net|${d.transactionId}`, () => db.transactions.update(d.transactionId!, { amountIsNet: true }))}>
                 {t('diag.markNet')}
               </button>
             )}

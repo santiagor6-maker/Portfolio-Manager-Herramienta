@@ -218,10 +218,14 @@ export function TransactionForm({
     return draft.amount;
   }, [type, draft.quantity, draft.price, draft.fees, draft.taxes, draft.amount, amountIsNet]);
 
+  // W61: a synchronous lock — two clicks dispatched before the re-render still save one row.
+  const savingNow = useRef(false);
   const submit = async (again = false) => {
     setSubmitted(true);
     if (Object.keys(errors).length) return;
     if (manual && !manualResult?.instrument) return;
+    if (savingNow.current) return;
+    savingNow.current = true;
     setSaving(true);
     try {
       const inst = draft.instrument;
@@ -289,6 +293,7 @@ export function TransactionForm({
       } else onClose();
     } finally {
       setSaving(false);
+      savingNow.current = false;
     }
   };
 

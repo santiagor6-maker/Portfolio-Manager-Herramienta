@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
-import { getMeta, saveTransaction, setMeta } from '../db/repo';
+import { addTransactionsOnce, getMeta, setMeta } from '../db/repo';
+import { once } from '../lib/writeGuard';
 import { BensDireitosView, CryptoView, printTaxDocument, TaxDocumentView, TaxExports } from '../components/TaxPack';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Download, Info } from 'lucide-react';
@@ -148,7 +149,8 @@ function MaturedCdts({ portfolioId, year, version }: { portfolioId: string; year
   const record = async (r: PendingRedemption) => {
     setBusy(`${r.instrumentId}|${r.date}`);
     try {
-      for (const x of redemptionTransactions(r, t('tax.co.redemptionNote'))) await saveTransaction(x);
+      // W61: one guarded write; an already recorded redemption is skipped.
+      await once(`redeem|${r.instrumentId}|${r.date}`, () => addTransactionsOnce(redemptionTransactions(r, t('tax.co.redemptionNote'))));
       // Gone at once: a second click must not record it twice while the reports recompute.
       setList((l) => l.filter((x) => x !== r));
     } finally {
@@ -449,7 +451,8 @@ function DarfPaymentDialog({ darf, portfolioId, onClose }: { darf: Darf; portfol
   const value = parseDecimal(amount, f.locale);
   const save = async () => {
     if (!pid || value === undefined || value <= 0) return;
-    await saveTransaction({ portfolioId: pid, date, type: 'TAX', currency: 'BRL', amount: value, note: `DARF ${darf.code} ${darf.month}` });
+    // W61: a double submit records the payment once.
+    await once(`darf|${pid}|${darf.code}|${darf.month}`, () => addTransactionsOnce([{ portfolioId: pid, date, type: 'TAX', currency: 'BRL', amount: value, note: `DARF ${darf.code} ${darf.month}` }]));
     onClose();
   };
   return (

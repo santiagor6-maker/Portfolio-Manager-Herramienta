@@ -16,6 +16,7 @@ import {
   type StoredTransaction,
 } from './schema';
 import { newId, todayIso } from '../lib/ids';
+import { txDedupeKey } from '../lib/writeGuard';
 import { BENCHMARK_IDS } from '../lib/benchmarks';
 import type { Lang } from '../lib/format';
 
@@ -168,6 +169,40 @@ export async function bulkAddTransactions(rows: StoredTransaction[]): Promise<nu
     })),
   );
   return rows.length;
+}
+
+/**
+ * W61: writes only the events that are not recorded yet (same portfolio, type, instrument and date —
+ * and amount for cash movements — see `txDedupeKey`), also among `rows` themselves. The check and the
+ * write share one read-write transaction, so concurrent calls (double click, two tabs) are serialized.
+ * Returns the rows actually written.
+ */
+export async function addTransactionsOnce(rows: (Omit<StoredTransaction, 'id'> & { id?: string })[]): Promise<StoredTransaction[]> {
+  const now = Date.now();
+  const norm = rows.map(
+    (r) =>
+      ({
+        ...r,
+        ...(r.subtype === 'TICKER_CHANGE' ? {} : { instrumentId: canonicalId(r.instrumentId), targetInstrumentId: canonicalId(r.targetInstrumentId) }),
+        id: r.id || newId('tx'),
+        source: r.source ?? 'manual',
+        createdAt: r.createdAt ?? now,
+        updatedAt: now,
+      }) as StoredTransaction,
+  );
+  return db.transaction('rw', db.transactions, async () => {
+    const seen = new Set<string>();
+    const days = new Map(norm.map((r) => [`${r.portfolioId}|${r.date}`, [r.portfolioId, r.date] as [string, string]]));
+    for (const day of days.values()) for (const t of await db.transactions.where('[portfolioId+date]').equals(day).toArray()) seen.add(txDedupeKey(t));
+    const fresh = norm.filter((r) => {
+      const k = txDedupeKey(r);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    if (fresh.length) await db.transactions.bulkPut(fresh);
+    return fresh;
+  });
 }
 
 export async function deleteTransactions(ids: string[]): Promise<void> {
