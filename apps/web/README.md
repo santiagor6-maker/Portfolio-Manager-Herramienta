@@ -471,4 +471,4 @@ Revisión: `reviews/web-r3.md`.
   - Un split que solo se deduce de los precios se muestra como «Posible split» y pide confirmación antes de grabarse.
   - La nota de columnas ocultas usa el nombre corto de la columna.
 - **Pruebas:** `src/__tests__/r8.test.ts` (unitarias) y `e2e/regression-r8.spec.ts` (doble clic, AMER3, NVDA en dos portafolios, importar a un portafolio nuevo, KPIs en el teléfono, Impuestos).
-  Totales: 146 pruebas unitarias de la web, 1.297 en el resto de paquetes y 66 e2e (1 omitida, la prueba en vivo).
+  Totales: 146 pruebas unitarias de la web, 1.301 en el resto de paquetes (19 omitidas) y 66 e2e (1 omitida, la prueba en vivo).
