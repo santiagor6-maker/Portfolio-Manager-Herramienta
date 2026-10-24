@@ -13,7 +13,7 @@
  */
 import type { CashBalance, CurrencyCode, Holding, Instrument, Lot, Valuation } from './types';
 import { dayToIso } from './dates';
-import type { Ledger } from './ledger';
+import { cashAccountLabel, type Ledger } from './ledger';
 import { roundQty } from './lots';
 import { type PositionValue, quick, quickValue, valuePosition } from './pricing';
 import { fixedIncomeTax, taxRegimeFor } from './fitax';
@@ -238,7 +238,8 @@ export function buildValuation(ledger: Ledger, day: number): Valuation {
     const byAcct = ledger.cashByAccount.get(ccy);
     if (byAcct) {
       const aa: Record<string, number> = {};
-      for (const [k, v] of byAcct) if (v !== 0) aa[k] = v;
+      // isolatePortfolioCash keys carry the portfolio: the same account label adds up across portfolios.
+      for (const [k, v] of byAcct) if (v !== 0) aa[cashAccountLabel(k)] = (aa[cashAccountLabel(k)] ?? 0) + v;
       if (Object.keys(aa).length) cb.accountAmounts = aa;
     }
     cash.push(cb);

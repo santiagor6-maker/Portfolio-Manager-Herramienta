@@ -214,6 +214,8 @@ export interface EngineContext {
    * of the first recorded DEPOSIT, else the portfolio base. Independent of the reporting view.
    */
   fundingCurrency: CurrencyCode;
+  /** isolatePortfolioCash: funding currency per portfolioId. */
+  fundingByPortfolio?: Map<string, CurrencyCode>;
 }
 
 export function resolveOptions(input: EngineInput, extra?: EngineOptions): ResolvedOptions {
@@ -688,6 +690,7 @@ export function createContext(input: EngineInput, extra?: EngineOptions): Engine
     portfolioBase: input.portfolio.baseCurrency,
     taxResidence: residenceOf(input.portfolio.taxResidence, input.portfolio.baseCurrency),
     fundingCurrency: raw.fundingCurrency ?? sorted.find((x) => x.tx.type === 'DEPOSIT')?.tx.currency ?? input.portfolio.baseCurrency,
+    ...(raw.isolatePortfolioCash ? { fundingByPortfolio: fundingByPortfolio(sorted.map((x) => x.tx), raw, input.portfolio.baseCurrency) } : {}),
     market,
     instruments,
     options,
@@ -746,6 +749,22 @@ interface CouponPlan {
   conv: number;
 }
 const NO_ACCOUNT = '';
+/** isolatePortfolioCash: cash keys are `${portfolioId}${PF_SEP}${account}`; `${portfolioId}${PF_SEP}` is its unassigned cash. */
+const PF_SEP = '\u0000';
+
+function fundingByPortfolio(txs: Transaction[], raw: EngineOptions, fallback: CurrencyCode): Map<string, CurrencyCode> {
+  const out = new Map<string, CurrencyCode>();
+  for (const t of txs) if (t.type === 'DEPOSIT' && !out.has(t.portfolioId)) out.set(t.portfolioId, t.currency);
+  for (const t of txs) if (!out.has(t.portfolioId)) out.set(t.portfolioId, raw.fundingCurrency ?? raw.portfolioBaseCurrencies?.[t.portfolioId] ?? fallback);
+  if (raw.fundingCurrency) for (const k of out.keys()) out.set(k, raw.fundingCurrency);
+  return out;
+}
+
+/** Account part of a cash key (drops the portfolio scope of isolatePortfolioCash). */
+export function cashAccountLabel(key: string): string {
+  const i = key.indexOf(PF_SEP);
+  return i < 0 ? key : key.slice(i + 1);
+}
 
 interface InternalRealized extends RealizedGain {
   day: number;
@@ -940,7 +959,28 @@ export class Ledger {
   }
 
   private credit(tx: Transaction, ccy: CurrencyCode, amount: number): void {
-    if (amount !== 0) this.moveCash(ccy, tx.account ?? NO_ACCOUNT, amount);
+    if (amount !== 0) this.moveCash(ccy, this.cashAcct(tx), amount);
+  }
+
+  /** Cash key of a transaction: its account, scoped by portfolio with isolatePortfolioCash. */
+  private cashAcct(tx: Transaction): string {
+    const acct = tx.account ?? NO_ACCOUNT;
+    return this.ctx.fundingByPortfolio ? `${tx.portfolioId}${PF_SEP}${acct}` : acct;
+  }
+
+  /** The unassigned-cash key that `acct` may draw on (the portfolio's, with isolatePortfolioCash). */
+  private unassignedOf(acct: string): string {
+    const i = acct.indexOf(PF_SEP);
+    return i < 0 ? NO_ACCOUNT : acct.slice(0, i + 1);
+  }
+
+  /** Total cash in `ccy` that an unassigned row can use (the portfolio's, with isolatePortfolioCash). */
+  private cashOfScope(ccy: CurrencyCode, acct: string): number {
+    if (!this.ctx.fundingByPortfolio) return this.cash.get(ccy) ?? 0;
+    const prefix = this.unassignedOf(acct);
+    let s = 0;
+    for (const [k, v] of this.cashByAccount.get(ccy) ?? []) if (k.startsWith(prefix)) s += v;
+    return s;
   }
 
   private acctCash(ccy: CurrencyCode, acct: string): number {
@@ -953,25 +993,27 @@ export class Ledger {
    */
   private availableFor(ccy: CurrencyCode, acct: string): number {
     const pending = this.receivables.length ? this.pendingReceivable(ccy, this.curDay, acct) : 0;
-    if (acct === NO_ACCOUNT) return Math.max((this.cash.get(ccy) ?? 0) - pending, 0);
-    return Math.max(this.acctCash(ccy, acct) + Math.max(this.acctCash(ccy, NO_ACCOUNT), 0) - pending, 0);
+    const free = this.unassignedOf(acct);
+    if (acct === free) return Math.max(this.cashOfScope(ccy, acct) - pending, 0);
+    return Math.max(this.acctCash(ccy, acct) + Math.max(this.acctCash(ccy, free), 0) - pending, 0);
   }
 
   /** C56: merger cash credited on the ex-date but paid later (not yet available on `day`). */
   pendingReceivable(ccy: CurrencyCode, day: number, acct?: string): number {
     let s = 0;
-    for (const r of this.receivables) if (r.currency === ccy && r.payDay > day && (acct === undefined || r.account === acct || r.account === NO_ACCOUNT)) s += r.amount;
+    for (const r of this.receivables) if (r.currency === ccy && r.payDay > day && (acct === undefined || r.account === acct || r.account === this.unassignedOf(acct))) s += r.amount;
     return s;
   }
 
   /** Move unassigned cash ('' account) into `acct` (bookkeeping only; totals unchanged). */
   private pullUnassigned(ccy: CurrencyCode, acct: string, need: number): void {
-    if (acct === NO_ACCOUNT || need <= 0) return;
-    const free = Math.max(this.acctCash(ccy, NO_ACCOUNT), 0);
+    const unassigned = this.unassignedOf(acct);
+    if (acct === unassigned || need <= 0) return;
+    const free = Math.max(this.acctCash(ccy, unassigned), 0);
     const take = Math.min(free, need);
     if (take <= 0) return;
     const m = this.cashByAccount.get(ccy)!;
-    m.set(NO_ACCOUNT, (m.get(NO_ACCOUNT) ?? 0) - take);
+    m.set(unassigned, (m.get(unassigned) ?? 0) - take);
     m.set(acct, (m.get(acct) ?? 0) + take);
   }
 
@@ -983,12 +1025,12 @@ export class Ledger {
    */
   private debit(tx: Transaction, day: number, ccy: CurrencyCode, amount: number, opts: { implicit?: boolean; fx?: boolean } = {}): void {
     if (amount === 0 || !Number.isFinite(amount)) return;
-    const acct = tx.account ?? NO_ACCOUNT;
+    const acct = this.cashAcct(tx);
     const implicit = (opts.implicit ?? true) && this.ctx.options.implicitCashFlows;
     if (amount > 0) this.pullUnassigned(ccy, acct, amount - Math.max(this.acctCash(ccy, acct), 0));
     if (amount > 0 && implicit) {
       let shortfall = amount - this.availableFor(ccy, acct);
-      const pb = this.ctx.fundingCurrency;
+      const pb = this.ctx.fundingByPortfolio?.get(tx.portfolioId) ?? this.ctx.fundingCurrency;
       if (shortfall > CASH_EPS && (opts.fx ?? true) && this.ctx.options.implicitFx === 'fromBaseCash' && ccy !== pb) {
         const avail = this.availableFor(pb, acct);
         const r = this.ctx.market.fxAt(ccy, pb, day) ?? this.ctx.market.fxNearest(ccy, pb, day); // pb per ccy
@@ -1002,7 +1044,7 @@ export class Ledger {
           this.bk.fxConversion += this.txCash - before;
           shortfall -= got;
           this.diag(tx, day, 'IMPLICIT_FX_CONVERSION', `Converted ${usePb.toFixed(2)} ${pb} to ${got.toFixed(2)} ${ccy} at market rate to fund ${tx.type}`, 'info');
-        } else if ((this.cash.get(pb) ?? 0) > CASH_EPS && acct !== NO_ACCOUNT) {
+        } else if (this.cashOfScope(pb, acct) > CASH_EPS && acct !== this.unassignedOf(acct)) {
           this.diag(tx, day, 'IMPLICIT_FX_OTHER_ACCOUNT', `${pb} cash exists only in other accounts; not used to fund ${tx.type} in '${acct}' (implicit deposit booked instead)`, 'info');
         }
       }
@@ -1333,7 +1375,7 @@ export class Ledger {
       }
       this.credit(tx, tx.currency, cashPart);
       if (tx.cashPayDate && isStrictIsoDate(tx.cashPayDate) && isoToDay(tx.cashPayDate) > day) {
-        this.receivables.push({ currency: tx.currency, amount: cashPart, payDay: isoToDay(tx.cashPayDate), account: tx.account ?? NO_ACCOUNT });
+        this.receivables.push({ currency: tx.currency, amount: cashPart, payDay: isoToDay(tx.cashPayDate), account: this.cashAcct(tx) });
         this.diag(tx, day, 'MERGER_CASH_PENDING', `Merger cash of ${cashPart} ${tx.currency} for ${parent.id} is paid on ${tx.cashPayDate}; until then it is a receivable (counted in the value, not available to fund trades)`, 'info', { instrumentId: parent.id, amount: cashPart, currency: tx.currency, payDate: tx.cashPayDate });
       }
       this.positionFlow(parent.id, day).startOutBase += cashPart * this.X(tx.currency, day, this.hintFor(tx.currency));

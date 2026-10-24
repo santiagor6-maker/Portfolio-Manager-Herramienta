@@ -91,6 +91,15 @@ export interface EngineOptions {
    * INSTRUMENT_RENAMED info diagnostic. Default true.
    */
   tickerRenames?: boolean;
+  /**
+   * Consolidated views (rows of several portfolios in one input, by `portfolioId`): keep each
+   * portfolio's cash apart — its accounts and its unassigned cash — and fund implicit FX conversions
+   * from each portfolio's own funding currency, so the result equals the sum of the portfolios
+   * computed one by one (one portfolio's cash never funds another's purchase). Default false.
+   */
+  isolatePortfolioCash?: boolean;
+  /** With isolatePortfolioCash: each portfolio's base currency (its funding fallback without deposits). */
+  portfolioBaseCurrencies?: Record<string, CurrencyCode>;
 }
 
 export interface MarketDataInput {
