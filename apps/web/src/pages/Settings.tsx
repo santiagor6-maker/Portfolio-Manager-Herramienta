@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { once } from '../lib/writeGuard';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Database, Download, Plus, RotateCcw, Server, Trash2, Upload, XCircle } from 'lucide-react';
 import type { CostMethod } from '@pm/core';
@@ -208,12 +209,15 @@ function Portfolios() {
         <button
           className="btn btn-sm"
           onClick={async () => {
-            const p = await createPortfolio({
-              name: t('portfolio.newName', { n: portfolios.length + 1 }),
-              baseCurrency: defaults.reportingCurrency,
-              costMethod: defaults.defaultCostMethod,
-              createdAt: todayIso(),
-            });
+            // W61: a double click creates one portfolio.
+            const p = await once(`settings|new-portfolio|${portfolios.length}`, () =>
+              createPortfolio({
+                name: t('portfolio.newName', { n: portfolios.length + 1 }),
+                baseCurrency: defaults.reportingCurrency,
+                costMethod: defaults.defaultCostMethod,
+                createdAt: todayIso(),
+              }),
+            );
             set('selectedPortfolioId', p.id);
           }}
         >

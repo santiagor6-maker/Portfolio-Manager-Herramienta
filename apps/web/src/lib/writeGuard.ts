@@ -2,7 +2,8 @@
  * W61: every one-click write in the app (Registrar split, Crear aporte, Registrar todos, Aplicar,
  * Rescatar, Registrar pago, Importar…) goes through one guard, so a double click or a second tab
  * cannot record the same event twice:
- * - `once(key, fn)`: while an action with the same key is in flight, later calls get the same promise;
+ * - `once(key, fn)`: while an action with the same key is in flight (and for a moment after it ends),
+ *   later calls get the same promise;
  * - `txDedupeKey`: the identity of an event transaction (portfolio, type, instrument, date — plus the
  *   amount for cash movements), checked against the database inside one read-write transaction by
  *   `addTransactionsOnce` (db/repo.ts).
@@ -12,11 +13,16 @@ import type { Transaction } from '@pm/core';
 
 const inflight = new Map<string, Promise<unknown>>();
 
+/** A click that lands this long after the action finished is still the same double click. */
+const SETTLE_MS = 800;
+
 export function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const running = inflight.get(key);
   if (running) return running as Promise<T>;
-  const p = fn().finally(() => inflight.delete(key));
+  const p = fn();
   inflight.set(key, p);
+  const release = () => setTimeout(() => inflight.get(key) === p && inflight.delete(key), SETTLE_MS);
+  p.then(release, () => inflight.delete(key)); // a failure can be retried at once
   return p;
 }
 
