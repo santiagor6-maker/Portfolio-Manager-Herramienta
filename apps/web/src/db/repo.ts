@@ -16,7 +16,7 @@ import {
   type StoredTransaction,
 } from './schema';
 import { newId, todayIso } from '../lib/ids';
-import { txDedupeKey } from '../lib/writeGuard';
+import { EVENT_DATE_TOLERANCE_DAYS, isEventType, txDedupeKey } from '../lib/writeGuard';
 import { BENCHMARK_IDS } from '../lib/benchmarks';
 import type { Lang } from '../lib/format';
 
@@ -194,10 +194,17 @@ export async function addTransactionsOnce(rows: (Omit<StoredTransaction, 'id'> &
     const seen = new Set<string>();
     const days = new Map(norm.map((r) => [`${r.portfolioId}|${r.date}`, [r.portfolioId, r.date] as [string, string]]));
     for (const day of days.values()) for (const t of await db.transactions.where('[portfolioId+date]').equals(day).toArray()) seen.add(txDedupeKey(t));
+    // Splits and stock dividends: the same event a few days apart (inferred vs announced date) too.
+    const events: StoredTransaction[] = [];
+    for (const inst of new Set(norm.filter((r) => isEventType(r.type) && r.instrumentId).map((r) => r.instrumentId!)))
+      events.push(...(await db.transactions.where('instrumentId').equals(inst).toArray()).filter((t) => isEventType(t.type)));
+    const near = (r: StoredTransaction) =>
+      events.some((e) => e.portfolioId === r.portfolioId && e.type === r.type && e.instrumentId === r.instrumentId && Math.abs(Date.parse(e.date) - Date.parse(r.date)) <= EVENT_DATE_TOLERANCE_DAYS * 86_400_000);
     const fresh = norm.filter((r) => {
       const k = txDedupeKey(r);
-      if (seen.has(k)) return false;
+      if (seen.has(k) || (isEventType(r.type) && near(r))) return false;
       seen.add(k);
+      if (isEventType(r.type)) events.push(r);
       return true;
     });
     if (fresh.length) await db.transactions.bulkPut(fresh);

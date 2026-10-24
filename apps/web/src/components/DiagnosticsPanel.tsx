@@ -43,8 +43,15 @@ export async function recordSplit(sp: { instrumentId: string; ratio: number; dat
 
 /** W64: portfolios with a positive quantity of the instrument on the day before `date`. */
 export async function holdersBefore(instrumentId: string, date: string): Promise<string[]> {
-  const rows = (await db.transactions.where('instrumentId').equals(instrumentId).toArray()).filter((x) => x.date < date).sort((a, b) => (a.date < b.date ? -1 : 1));
+  // Same-day rows: what comes in before what goes out (a BUY and a SELL on one day never drop a holder).
+  const order = (x: { type: string }) => (x.type === 'BUY' || x.type === 'TRANSFER_IN' ? 0 : 1);
+  const rows = (await db.transactions.where('instrumentId').equals(instrumentId).toArray())
+    .filter((x) => x.date < date)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : order(a) - order(b)));
   const qty = new Map<string, number>();
+  // Positions received through a spin-off or merger (targetInstrumentId) hold the instrument too.
+  const received = new Set((await db.transactions.filter((x) => x.targetInstrumentId === instrumentId && x.date < date).toArray()).map((x) => x.portfolioId));
+  for (const pid of received) qty.set(pid, Number.POSITIVE_INFINITY);
   for (const x of rows) {
     const q = qty.get(x.portfolioId) ?? 0;
     const n = x.quantity ?? 0;
@@ -60,7 +67,7 @@ export async function holdersBefore(instrumentId: string, date: string): Promise
               : q;
     qty.set(x.portfolioId, next);
   }
-  return [...qty].filter(([, q]) => q > 1e-9).map(([pid]) => pid);
+  return [...qty].filter(([pid, q]) => q > 1e-9 || received.has(pid)).map(([pid]) => pid);
 }
 
 /** Core R8: rows still under an old ticker move to the current id (same security, renamed). */
@@ -154,13 +161,18 @@ export function DiagnosticsPanel({ onOpen }: { onOpen: (transactionId: string) =
   const errors = list.filter((d) => d.severity === 'error').length;
   const warnings = list.filter((d) => d.severity === 'warning').length + implicit.length;
   const sorted = [...list].sort((a, b) => rank(a) - rank(b) || (a.date < b.date ? 1 : -1));
+  const autoOpen = errors > 0 || implicit.length > 0;
   return (
     <details
       className="card mb-3 group"
       // Opens by itself when something needs action; once the user opens or closes it, it stays so
       // (it no longer folds under the cursor after a fix).
-      open={userOpen ?? (errors > 0 || implicit.length > 0)}
-      onToggle={(e) => setUserOpen((e.currentTarget as HTMLDetailsElement).open)}
+      open={userOpen ?? autoOpen}
+      onToggle={(e) => {
+        // Only the user's own toggles are remembered (React setting `open` also fires `toggle`).
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now !== (userOpen ?? autoOpen)) setUserOpen(now);
+      }}
       data-testid="diagnostics"
     >
       <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer list-none">

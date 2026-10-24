@@ -151,3 +151,32 @@ describe('W64 / W61: one event, every portfolio; duplicates flagged', () => {
     expect(duplicateSplits(rows, 'B')).toEqual([]);
   });
 });
+
+describe('R8 code review: the duplicate guard never drops a real movement', () => {
+  it('two DARFs paid the same day for the same amount are both recorded', async () => {
+    const darf = (note: string) => ({ portfolioId: 'p', date: '2025-03-10', type: 'TAX' as const, currency: 'BRL' as const, amount: 92.93, note });
+    await addTransactionsOnce([darf('DARF 6015 2025-01'), darf('DARF 6015 2025-02')]);
+    expect(await schema.db.transactions.count()).toBe(2);
+  });
+
+  it('the same split a few days apart (inferred vs announced) is recorded once; a later one is not blocked', async () => {
+    await buy('A', 10);
+    await recordSplit({ instrumentId: NVDA, ratio: 10, date: '2024-06-10' }, 'A');
+    await addTransactionsOnce([{ portfolioId: 'A', date: '2024-06-07', type: 'SPLIT', instrumentId: NVDA, ratio: 10, currency: 'USD' }]);
+    expect(await splits()).toEqual(['A']);
+    await addTransactionsOnce([{ portfolioId: 'A', date: '2025-06-10', type: 'SPLIT', instrumentId: NVDA, ratio: 2, currency: 'USD' }]);
+    expect(await splits()).toEqual(['A', 'A']);
+  });
+
+  it('duplicateSplits only flags exact copies (same ratio, no subtype)', async () => {
+    const { duplicateSplits } = await import('../lib/pendingEvents');
+    const row = (id: string, ratio: number, subtype?: string) => ({ id, portfolioId: 'A', instrumentId: NVDA, date: '2024-06-10', ratio, subtype, createdAt: 1 });
+    expect(duplicateSplits([row('a', 10), row('b', 100), row('c', 0.25, 'SPINOFF')], 'all')).toEqual([]);
+  });
+
+  it('holdersBefore keeps a portfolio that bought and sold part on the same day', async () => {
+    await saveTransaction({ portfolioId: 'D', date: '2024-01-05', type: 'SELL', instrumentId: NVDA, quantity: 5, price: 500, amount: 2500, currency: 'USD' });
+    await saveTransaction({ portfolioId: 'D', date: '2024-01-05', type: 'BUY', instrumentId: NVDA, quantity: 10, price: 500, amount: 5000, currency: 'USD' });
+    expect(await holdersBefore(NVDA, '2024-06-10')).toEqual(['D']);
+  });
+});

@@ -1,4 +1,5 @@
 import { db } from '../db/schema';
+import { jurisdictionForCurrency } from '../lib/currencyDefaults';
 import { createPortfolio, getMeta, loadSettings, removeDemoData, saveSetting, seedData, setMeta, type AppSettings } from '../db/repo';
 import { useApp } from '../store/app';
 import i18n from '../i18n';
@@ -42,7 +43,7 @@ export async function startEmptyPortfolio(name?: string): Promise<string> {
       name: name ?? i18n.t('portfolio.defaultName'),
       baseCurrency: settings.reportingCurrency,
       costMethod: settings.defaultCostMethod,
-      taxResidence: settings.reportingCurrency === 'BRL' ? 'BR' : 'CO',
+      taxResidence: jurisdictionForCurrency(settings.reportingCurrency),
     });
     id = p.id;
   }

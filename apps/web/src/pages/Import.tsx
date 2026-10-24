@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { defaultsForCurrency } from '../lib/currencyDefaults';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { localizeNumbers } from '../lib/taxText';
@@ -78,7 +79,7 @@ export default function ImportPage() {
     if (portfolioId !== NEW) return portfolioId;
     if (!create) return NEW;
     const p = await once(`import|new-portfolio|${newName}|${newCcy}`, () =>
-      createPortfolio({ name: newName.trim() || t('portfolio.defaultName'), baseCurrency: newCcy, costMethod: newCcy === 'BRL' ? 'AVERAGE' : 'FIFO', taxResidence: newCcy === 'BRL' ? 'BR' : newCcy === 'COP' ? 'CO' : undefined }),
+      createPortfolio({ name: newName.trim() || t('portfolio.defaultName'), baseCurrency: newCcy, ...defaultsForCurrency(newCcy) }),
     );
     setPortfolioId(p.id);
     return p.id;

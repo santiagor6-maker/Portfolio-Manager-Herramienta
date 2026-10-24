@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { jurisdictionOf } from '../lib/currencyDefaults';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
 import { addTransactionsOnce, getMeta, setMeta } from '../db/repo';
@@ -16,12 +17,6 @@ import { downloadText } from '../lib/export';
 import { brazilApuracaoCsv, colombiaAccountantCsv, darfDueOn, pendingRedemptions, redemptionTransactions, runTaxReports, TAX_DISCLAIMER, type PendingRedemption, type TaxReports } from '../services/tax';
 import { useInstrumentLabel } from '../hooks/useAnalysis';
 import type { Lang } from '../lib/format';
-
-/** W66: CO or BR for a portfolio: explicit tax residence, else the country of its base currency. */
-function jurisdictionOf(p: { taxResidence?: string; baseCurrency?: string } | undefined): 'CO' | 'BR' {
-  if (p?.taxResidence === 'BR' || p?.taxResidence === 'CO') return p.taxResidence;
-  return p?.baseCurrency === 'BRL' ? 'BR' : 'CO';
-}
 
 export default function TaxesPage() {
   const { t } = useTranslation();

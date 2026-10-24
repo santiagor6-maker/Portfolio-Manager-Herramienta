@@ -29,14 +29,25 @@ export function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
 /** Corporate events: one per portfolio, instrument and day whatever the amounts. */
 const EVENT_TYPES = new Set<Transaction['type']>(['SPLIT', 'STOCK_DIVIDEND']);
 
-type Keyed = Pick<Transaction, 'portfolioId' | 'type' | 'date'> & Partial<Pick<Transaction, 'instrumentId' | 'currency' | 'amount' | 'quantity' | 'toCurrency' | 'toAmount'>>;
+type Keyed = Pick<Transaction, 'portfolioId' | 'type' | 'date'> &
+  Partial<Pick<Transaction, 'instrumentId' | 'currency' | 'amount' | 'quantity' | 'toCurrency' | 'toAmount' | 'account' | 'note' | 'subtype'>>;
 
+/**
+ * Cash movements are the same only with the same amounts, account, subtype and note: two DARFs paid the
+ * same day for the same amount (different code in the note), deposits in two accounts, or a JCP and a
+ * dividend of equal value stay distinct.
+ */
 export function txDedupeKey(t: Keyed): string {
   const base = `${t.portfolioId}|${t.type}|${t.instrumentId ?? ''}|${t.date}`;
   if (EVENT_TYPES.has(t.type)) return base;
   const n = (v: number | undefined) => (v === undefined ? '' : String(Math.round(v * 1e6) / 1e6));
-  return `${base}|${t.currency ?? ''}|${n(t.amount)}|${n(t.quantity)}|${t.toCurrency ?? ''}|${n(t.toAmount)}`;
+  return `${base}|${t.currency ?? ''}|${n(t.amount)}|${n(t.quantity)}|${t.toCurrency ?? ''}|${n(t.toAmount)}|${t.account ?? ''}|${t.subtype ?? ''}|${t.note ?? ''}`;
 }
+
+export const isEventType = (type: Transaction['type']) => EVENT_TYPES.has(type);
+
+/** The same split recorded from the price history and from the provider can be a few days apart. */
+export const EVENT_DATE_TOLERANCE_DAYS = 7;
 
 /**
  * Button state for guarded actions: `busy` disables the buttons while `run` is in flight; the lock is
@@ -44,14 +55,18 @@ export function txDedupeKey(t: Keyed): string {
  */
 export function useGuardedAction(): { busy: boolean; run: <T>(key: string, fn: () => Promise<T>) => Promise<T | undefined> } {
   const [busy, setBusy] = useState(false);
-  const active = useRef(0);
+  const active = useRef(false);
   const run = useCallback(async <T,>(key: string, fn: () => Promise<T>) => {
-    active.current++;
+    // One action per group at a time: a second click on any button of the group (same frame, before
+    // the disabled state renders) is ignored.
+    if (active.current) return undefined;
+    active.current = true;
     setBusy(true);
     try {
       return await once(key, fn);
     } finally {
-      if (--active.current === 0) setBusy(false);
+      active.current = false;
+      setBusy(false);
     }
   }, []);
   return { busy, run };

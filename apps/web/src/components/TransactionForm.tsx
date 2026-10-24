@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { jurisdictionForCurrency } from '../lib/currencyDefaults';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from 'dexie-react-hooks';
 import clsx from 'clsx';
@@ -243,7 +244,7 @@ export function TransactionForm({
           name: t('portfolio.defaultName'),
           baseCurrency: f.currency,
           costMethod: defaultCostMethod,
-          taxResidence: f.currency === 'BRL' ? 'BR' : 'CO',
+          taxResidence: jurisdictionForCurrency(f.currency),
           createdAt: date,
         });
         targetPortfolio = p.id;

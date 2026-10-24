@@ -80,12 +80,15 @@ export function pendingEvents(
   return { splits: [...splits.values()].sort((x, y) => (x.date < y.date ? -1 : 1)), income, total: a.suggestions.length, valuationWarnings, review };
 }
 
-/** W61: SPLIT rows of one portfolio, instrument and day beyond the first (`ids[0]` is kept). */
-export function duplicateSplits(rows: { id: string; portfolioId: string; instrumentId?: string; date: string; createdAt?: number }[], scope: string) {
+/**
+ * W61: exact copies of a SPLIT row — same portfolio, instrument, day, ratio and no subtype (spin-offs,
+ * mergers and ticker changes are never "duplicates") — beyond the first (`ids[0]` is kept).
+ */
+export function duplicateSplits(rows: { id: string; portfolioId: string; instrumentId?: string; date: string; ratio?: number; subtype?: string; createdAt?: number }[], scope: string) {
   const groups = new Map<string, typeof rows>();
   for (const r of rows) {
-    if (scope !== 'all' && r.portfolioId !== scope) continue;
-    const k = `${r.portfolioId}|${r.instrumentId}|${r.date}`;
+    if ((scope !== 'all' && r.portfolioId !== scope) || r.subtype) continue;
+    const k = `${r.portfolioId}|${r.instrumentId}|${r.date}|${r.ratio}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
   return [...groups.values()]
